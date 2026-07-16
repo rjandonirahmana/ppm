@@ -1,0 +1,245 @@
+<style>
+        body {
+            font-family: 'Work Sans', sans-serif;
+            background-color: #f9f9ff;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(229, 231, 235, 0.5);
+        }
+    
+
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<div class="text-on-background min-h-screen pb-24 lg:pb-0 lg:pl-72">
+<!-- Desktop Navigation Drawer -->
+<aside class="hidden lg:flex flex-col fixed left-0 top-0 h-screen h-full w-72 rounded-r-xl bg-surface-container-low dark:bg-inverse-surface border-r border-outline-variant z-40">
+<div class="p-lg">
+<h1 class="font-display-lg text-display-lg text-primary">PPM AFM</h1>
+<p class="font-label-md text-label-md text-on-surface-variant">Dewan Guru Portal</p>
+</div>
+<nav class="flex-1 px-4 space-y-2 mt-md">
+<a class="flex items-center text-on-surface-variant dark:text-on-tertiary-container px-4 py-3 hover:bg-surface-variant dark:hover:bg-tertiary-container rounded-full transition-all duration-200" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="dashboard">dashboard</span>
+<span class="font-label-md text-label-md">Dashboard</span>
+</a>
+<a class="flex items-center text-on-surface-variant dark:text-on-tertiary-container px-4 py-3 hover:bg-surface-variant dark:hover:bg-tertiary-container rounded-full transition-all duration-200" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="stars">stars</span>
+<span class="font-label-md text-label-md">Student Points</span>
+</a>
+<a class="flex items-center bg-secondary-container dark:bg-primary-container text-on-secondary-container dark:text-on-primary-container rounded-full px-4 py-3 transition-all duration-200" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="verified_user" style="font-variation-settings: 'FILL' 1;">verified_user</span>
+<span class="font-label-md text-label-md">Verify</span>
+</a>
+<a class="flex items-center text-on-surface-variant dark:text-on-tertiary-container px-4 py-3 hover:bg-surface-variant dark:hover:bg-tertiary-container rounded-full transition-all duration-200" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="analytics">analytics</span>
+<span class="font-label-md text-label-md">Reports</span>
+</a>
+</nav>
+<div class="p-lg mt-auto border-t border-outline-variant">
+<div class="flex items-center gap-sm">
+<img class="w-10 h-10 rounded-full bg-surface-variant" data-alt="A professional headshot of a Muslim male teacher in a clean office setting, soft natural lighting, high-end photography, emerald green accents in the background, representing authority and wisdom." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAGQycHV8DfeHqt3YVsgKYHu-STK0eHr8NUSjAV5y7rQ9kNhkHGOmeeOoaajOAtBQCR7qdgOqNjIYQX4B2B9cKWzuqVw0QNYlsupXdwKxIeS8rGM7uXx-lUJ4MM5ZNWLMdTSnW3NWiWE2d_kBEZpU5oI4HpN2AZeugz3VVd4AYQvqH-H3cJ4IOteaS7Bnr3H4a0CVXBn4a7r6U_WhM3Jz52qztuZ4gIN-iwSSY0Y-rjVI-QAzNeoBguZ5z5mDnrFLQ57en59Yp9eWc"/>
+<div>
+<p class="font-label-md text-label-md text-on-surface font-bold">Ustadz Ahmad</p>
+<p class="text-[10px] text-on-surface-variant">Senior Administrator</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Top App Bar (Mobile-ish) -->
+<header class="w-full sticky top-0 z-30 bg-surface dark:bg-surface-dim shadow-sm flex items-center justify-between px-container-padding py-sm max-w-[1200px] mx-auto">
+<div class="flex items-center gap-sm">
+<img class="w-8 h-8 rounded-full" data-alt="A small circular profile icon for an administrator, professional and welcoming, with a soft green aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuA_gIQS33XL75kH1vVfmgvnmIoebTfw23kMfx-UtQXu0iXw1EuSHkKwTOSK_GO8Gu5txkN2wX0IUrqzczg2IT_6HPPe3jKfAxvqx3NELDaOtXu_eM-n4m0Y_7jBGTl5nQgTP0nKxWGjDrjq_4d8rvhWGS6v35b8gurB2XmvrGm9a8PrqkvJ6yocVrHwVYslra3BVNjKhQlc6Vq8_1kD8ET_zZArw_OpnFBamt1Gfn7VwLmHz7yWNJ5WFDnaWS7jyK5BCryeqL78wG8"/>
+<h2 class="font-headline-sm text-headline-sm-mobile md:text-headline-sm text-primary dark:text-primary-fixed">Verify Connection</h2>
+</div>
+<div class="flex items-center gap-md">
+<button class="material-symbols-outlined text-primary dark:text-primary-fixed cursor-pointer active:scale-95 transition-transform" data-icon="notifications">notifications</button>
+</div>
+</header>
+<main class="max-w-[1200px] mx-auto px-container-padding py-lg">
+<!-- Content Grid -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-lg">
+<!-- Parent Profile Section (Left Column) -->
+<section class="lg:col-span-4 space-y-lg">
+<div class="glass-card rounded-xl p-lg shadow-sm">
+<div class="flex flex-col items-center text-center">
+<div class="relative">
+<img class="w-32 h-32 rounded-full border-4 border-white shadow-md mb-md" data-alt="A portrait of a respectable Muslim parent, dressed in modest and clean professional attire, smiling warmly against a soft studio backdrop with elegant green lighting. The style is crisp, clean, and highly professional." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCAIwnWwjJSRM00kUku91UACyIhz0saDNCTiWNKP6k0oTdRkS0SjkOJE5KA1zze0HhLgZyhm1ZU3WttmBNxMbFeM-MtfDCJ2Vrvs-jfdUYENZ5gDucD2WWJoIno3WX1wtO7IeQk0cjodPi_9bzjQKYAS9t0oBG4yHnJiSwhhnv2LmFBGvAeeOp0GWhZBHuxUd6QmZR10N_AB6NwVBSbU48zL8FzR49zpuApw1J-XOEMTaW_u1EUAG5M6xWiTpBwZnIIPbag_M2Ucjw"/>
+<span class="absolute bottom-4 right-1 bg-primary text-white p-1 rounded-full border-2 border-white">
+<span class="material-symbols-outlined text-[16px]" data-icon="verified" style="font-variation-settings: 'FILL' 1;">verified</span>
+</span>
+</div>
+<h3 class="font-display-md text-display-md text-on-surface">Bpk. Sulaiman Hakim</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant mb-lg">Parent ID: #PRN-88219</p>
+<div class="w-full space-y-sm text-left">
+<div class="p-sm bg-surface-container-low rounded-lg flex items-center gap-sm">
+<span class="material-symbols-outlined text-secondary" data-icon="mail">mail</span>
+<div>
+<p class="text-[10px] uppercase font-bold text-outline">Email Address</p>
+<p class="font-label-md text-label-md">s.hakim@example.com</p>
+</div>
+</div>
+<div class="p-sm bg-surface-container-low rounded-lg flex items-center gap-sm">
+<span class="material-symbols-outlined text-secondary" data-icon="phone">phone</span>
+<div>
+<p class="text-[10px] uppercase font-bold text-outline">Phone Number</p>
+<p class="font-label-md text-label-md">+62 812 3456 7890</p>
+</div>
+</div>
+<div class="p-sm bg-surface-container-low rounded-lg flex items-center gap-sm">
+<span class="material-symbols-outlined text-secondary" data-icon="location_on">location_on</span>
+<div>
+<p class="text-[10px] uppercase font-bold text-outline">Resident City</p>
+<p class="font-label-md text-label-md">Surakarta, Indonesia</p>
+</div>
+</div>
+</div>
+<button class="mt-lg w-full py-md bg-secondary-container text-on-secondary-container font-label-md text-label-md rounded-lg flex items-center justify-center gap-sm hover:opacity-90 transition-opacity">
+<span class="material-symbols-outlined text-[20px]" data-icon="edit">edit</span>
+                            Edit Profile Info
+                        </button>
+</div>
+</div>
+<!-- Connect Search Area -->
+<div class="bg-primary-container text-on-primary-container rounded-xl p-lg shadow-md relative overflow-hidden">
+<div class="relative z-10">
+<h4 class="font-headline-sm text-headline-sm text-white mb-xs">Find Your Child</h4>
+<p class="font-body-sm text-body-sm text-primary-fixed-dim mb-md">Search by NIS (Student ID) to request a new connection.</p>
+<div class="flex gap-xs bg-white/10 p-1 rounded-lg border border-white/20">
+<input class="bg-transparent border-none focus:ring-0 text-white placeholder-white/50 w-full font-label-md text-label-md" placeholder="Enter NIS..." type="text"/>
+<button class="bg-white text-primary px-4 py-2 rounded-md font-bold text-[12px] whitespace-nowrap active:scale-95 transition-transform">SEARCH</button>
+</div>
+</div>
+<!-- Decorative element -->
+<div class="absolute -bottom-10 -right-10 w-32 h-32 bg-primary/30 rounded-full blur-2xl"></div>
+</div>
+</section>
+<!-- Connections List Section (Right Column) -->
+<section class="lg:col-span-8 space-y-lg">
+<!-- Connected Children -->
+<div class="space-y-md">
+<div class="flex items-center justify-between">
+<h3 class="font-display-md text-display-md text-on-surface">Connected Santri</h3>
+<span class="bg-secondary-fixed text-on-secondary-fixed px-3 py-1 rounded-full text-[12px] font-bold">2 CHILDREN</span>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-md">
+<!-- Student Card 1 -->
+<div class="bg-white rounded-xl border border-outline-variant shadow-sm overflow-hidden hover:border-primary transition-colors group">
+<div class="flex items-center p-md gap-md">
+<img class="w-16 h-16 rounded-full object-cover" data-alt="A portrait of a young Muslim student boy, wearing a white songkok, clean and bright lighting, high-end educational aesthetic, soft emerald green background, looking focused and positive." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAlk_3KvRWd9doiV5mhxxExbCkleRICY1NOP4dZ6dFyVl5LrQtkb1ofvQJZyXotRmTychf6F_ky8THIDDRrjz2El3aK6OhqPbdVEX_196Dme7gKevIKYZH4pyyNM3og2AXBwIECjX7d8QsyFttGltf_N98zfce5GQBpHB5bVKiRgVFhvK-6NV9Tn-t8R1Kh8dunWrwkCIaZzaCO2KnZbIu951jOXuc7CZzdLsnK1ogwHlLllzikGOIgYjH9D4C8Ibm6qKxAN10erEw"/>
+<div class="flex-1">
+<h4 class="font-headline-sm text-headline-sm text-on-surface">Muhammad Ali Hakim</h4>
+<p class="text-body-sm text-on-surface-variant">Class 10-A • NIS: 2024001</p>
+</div>
+<div class="w-1.5 h-12 bg-primary rounded-full"></div>
+</div>
+<div class="bg-surface-container-low px-md py-sm flex justify-between items-center border-t border-outline-variant/30">
+<div class="flex gap-xs">
+<span class="material-symbols-outlined text-primary text-[18px]" data-icon="verified" style="font-variation-settings: 'FILL' 1;">verified</span>
+<span class="text-[12px] font-bold text-primary">Connected</span>
+</div>
+<button class="text-primary text-[12px] font-bold flex items-center group-hover:underline">
+                                    View Stats
+                                    <span class="material-symbols-outlined text-[16px] ml-1" data-icon="chevron_right">chevron_right</span>
+</button>
+</div>
+</div>
+<!-- Student Card 2 -->
+<div class="bg-white rounded-xl border border-outline-variant shadow-sm overflow-hidden hover:border-primary transition-colors group">
+<div class="flex items-center p-md gap-md">
+<img class="w-16 h-16 rounded-full object-cover" data-alt="A portrait of a young Muslim student girl, wearing a clean white hijab, bright and clear photography, minimal and professional educational style, soft green tonal background, warm and inviting atmosphere." src="https://lh3.googleusercontent.com/aida-public/AB6AXuA9JEQHqf-GiM93QcqZFG_ggkI6A9fsavuG_ibDoWU1toqOqANDyOWGaFwdXPbWQJH7OndIGmbd1JMw-2AZ8cUpdesb3MChBqC-izH3eSeqbocd_dCwzPpjOjM7al6grDY4CEEq9i5ZIkAwliyNe6wVDAdRNAAQ9fRc8NbYWBNE1SwnPDNxQjxm6J0Y0GJsvvDEk-McXEbvLH46DC2GtN-660zqDXNK2ESpJu8MG8YEoqZ8ijJQqnn99gT0PHRGWyYP1462WBxyAQs"/>
+<div class="flex-1">
+<h4 class="font-headline-sm text-headline-sm text-on-surface">Fatimah Hakim</h4>
+<p class="text-body-sm text-on-surface-variant">Class 08-C • NIS: 2026045</p>
+</div>
+<div class="w-1.5 h-12 bg-primary rounded-full"></div>
+</div>
+<div class="bg-surface-container-low px-md py-sm flex justify-between items-center border-t border-outline-variant/30">
+<div class="flex gap-xs">
+<span class="material-symbols-outlined text-primary text-[18px]" data-icon="verified" style="font-variation-settings: 'FILL' 1;">verified</span>
+<span class="text-[12px] font-bold text-primary">Connected</span>
+</div>
+<button class="text-primary text-[12px] font-bold flex items-center group-hover:underline">
+                                    View Stats
+                                    <span class="material-symbols-outlined text-[16px] ml-1" data-icon="chevron_right">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Pending Requests -->
+<div class="space-y-md">
+<h3 class="font-display-md text-display-md text-on-surface">Pending Verification</h3>
+<div class="bg-white rounded-xl border border-dashed border-outline p-lg flex flex-col items-center justify-center text-center space-y-sm">
+<!-- Pending Item -->
+<div class="w-full flex items-center justify-between p-md bg-orange-50/50 rounded-lg border border-orange-100">
+<div class="flex items-center gap-md">
+<div class="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center">
+<span class="material-symbols-outlined text-orange-600" data-icon="hourglass_empty">hourglass_empty</span>
+</div>
+<div class="text-left">
+<h4 class="font-label-md text-label-md text-on-surface font-bold">Hasan Hakim (NIS: 2028002)</h4>
+<p class="text-[12px] text-on-surface-variant">Waiting for Administrator approval</p>
+</div>
+</div>
+<div class="flex items-center gap-sm">
+<div class="hidden md:block">
+<span class="px-2 py-1 rounded bg-orange-100 text-orange-800 text-[10px] font-bold">AWAITING REVIEW</span>
+</div>
+<button class="p-2 text-error hover:bg-error-container/20 rounded-full transition-colors">
+<span class="material-symbols-outlined" data-icon="cancel">cancel</span>
+</button>
+</div>
+</div>
+<!-- Empty State logic (Commented out visually) -->
+<!-- <p class="text-on-surface-variant font-body-sm italic">No other pending requests found.</p> -->
+</div>
+</div>
+<!-- Connection Progress Information -->
+<div class="bg-surface-container rounded-xl p-lg border border-outline-variant">
+<div class="flex items-start gap-md">
+<div class="bg-primary text-white p-sm rounded-lg">
+<span class="material-symbols-outlined" data-icon="info">info</span>
+</div>
+<div>
+<h4 class="font-headline-sm text-headline-sm text-primary">Verification Status</h4>
+<p class="font-body-md text-body-md text-on-surface-variant mt-xs">
+                                Your account is currently <strong>Fully Verified</strong>. You have instant access to academic reports, attendance, and point systems for all connected children. 
+                            </p>
+<div class="mt-md w-full bg-outline-variant h-2 rounded-full overflow-hidden">
+<div class="bg-primary h-full w-[100%]"></div>
+</div>
+<p class="text-[11px] text-primary font-bold mt-xs">100% COMPLETE ACCOUNT PROFILE</p>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+<!-- Bottom Navigation Bar (Mobile) -->
+<nav class="lg:hidden fixed bottom-0 left-0 w-full flex justify-around items-center px-4 py-3 pb-safe bg-surface-container dark:bg-surface-container-highest shadow-[0_-2px_10px_rgba(0,0,0,0.05)] z-50 rounded-t-xl">
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-tertiary-container px-5 py-1" href="#">
+<span class="material-symbols-outlined" data-icon="home">home</span>
+<span class="font-label-md text-label-md">Home</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-tertiary-container px-5 py-1" href="#">
+<span class="material-symbols-outlined" data-icon="grade">grade</span>
+<span class="font-label-md text-label-md">Points</span>
+</a>
+<a class="flex flex-col items-center justify-center bg-secondary-container dark:bg-primary-container text-on-secondary-container dark:text-on-primary-container rounded-2xl px-5 py-1 transition-transform duration-150 active:scale-90" href="#">
+<span class="material-symbols-outlined" data-icon="fact_check" style="font-variation-settings: 'FILL' 1;">fact_check</span>
+<span class="font-label-md text-label-md">Verify</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-tertiary-container px-5 py-1" href="#">
+<span class="material-symbols-outlined" data-icon="bar_chart">bar_chart</span>
+<span class="font-label-md text-label-md">Stats</span>
+</a>
+</nav>
+
+</div>

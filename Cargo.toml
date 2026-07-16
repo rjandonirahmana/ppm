@@ -1,0 +1,115 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# ppm — Absensi Santri PPM AFM. Satu crate: SSR (Axum) + Hydrate (WASM).
+# Leptos SSR: render cepat & hemat memori. Data di Postgres (lihat migration/).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+[package]
+name = "ppm"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ppm"
+path = "src/main.rs"
+
+[lib]
+name = "ppm"
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[package.metadata.leptos]
+name = "ppm"
+output-name = "ppm"
+site-root = "target/site"
+site-pkg-dir = "pkg"
+style-file = "style/main.css"
+assets-dir = "public"
+site-addr = "0.0.0.0:3000"
+reload-port = 3001
+browserquery = "defaults"
+env = "DEV"
+bin-features = ["ssr"]
+lib-features = ["hydrate"]
+lib-profile-release = "wasm-release"
+
+[features]
+default = ["ssr"]
+ssr = [
+    "leptos/ssr",
+    "leptos/nonce",
+    "leptos_meta/ssr",
+    "leptos_router/ssr",
+    "dep:leptos_axum",
+]
+hydrate = ["leptos/hydrate", "leptos/nonce"]
+
+# ── Shared deps (SEMUA target: native SSR + WASM) ──────────────────────────────
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde", "wasmbind"] }
+
+leptos = { version = "0.8", default-features = false }
+leptos_meta = { version = "0.8", default-features = false }
+leptos_router = { version = "0.8", default-features = false }
+leptos_axum = { version = "0.8", optional = true }
+
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Location",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "Storage",
+    "Event",
+    "MouseEvent",
+] }
+
+# ── Server-only deps (bukan wasm32) ────────────────────────────────────────────
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mimalloc = "0.1"
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["multipart"] }
+tower = "0.5"
+tower-http = { version = "0.7", features = ["fs", "compression-gzip", "compression-br", "trace"] }
+
+# Database
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"] }
+postgres-types = { version = "0.2", features = ["derive"] }
+deadpool-postgres = "0.14"
+
+# Auth
+bcrypt = "0.15"
+jsonwebtoken = "9"
+
+# Config / Logging
+dotenvy = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── WASM-only deps ─────────────────────────────────────────────────────────────
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+# ── Profiles ────────────────────────────────────────────────────────────────────
+[profile.dev]
+opt-level = 1
+debug = 1
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"

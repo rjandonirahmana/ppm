@@ -1,0 +1,246 @@
+<style>
+        body { font-family: 'Work Sans', sans-serif; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .glass-card { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(8px); }
+        .gradient-bg { background: linear-gradient(135deg, #003527 0%, #064e3b 100%); }
+        .status-chip-present { background: rgba(6, 78, 59, 0.1); color: #064e3b; }
+        .status-chip-late { background: rgba(245, 158, 11, 0.1); color: #b45309; }
+        .status-chip-absent { background: rgba(186, 26, 26, 0.1); color: #ba1a1a; }
+        .child-tab-active { @apply bg-secondary-container text-on-secondary-container ring-2 ring-primary ring-offset-2; }
+        .child-tab-inactive { @apply bg-surface-container text-on-surface-variant hover:bg-surface-container-high; }
+    </style>
+<div class="bg-background text-on-surface mb-24">
+<!-- Top App Bar -->
+<header class="w-full sticky top-0 z-50 bg-surface-container-lowest border-b border-outline-variant flex items-center justify-between px-container-padding py-md">
+<div class="flex items-center gap-base">
+<span class="material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">shield_person</span>
+<h1 class="font-headline-sm text-headline-sm text-on-surface">Pantauan Orang Tua</h1>
+</div>
+<div class="flex items-center gap-md">
+<!-- Mode Preview Badge -->
+<div class="hidden sm:flex items-center gap-xs px-base py-1 bg-surface-container-high rounded-full border border-outline-variant">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>
+<span class="text-[10px] font-bold text-on-surface-variant tracking-wider uppercase">Live View</span>
+</div>
+<div class="relative active:scale-95 duration-150 cursor-pointer">
+<span class="material-symbols-outlined text-on-surface-variant">notifications</span>
+<span class="absolute top-0 right-0 w-2 h-2 bg-error rounded-full border border-surface"></span>
+</div>
+</div>
+</header>
+<!-- Child Switcher (Horizontal Scroll) -->
+<section class="mt-md px-container-padding">
+<div class="flex overflow-x-auto no-scrollbar py-xs gap-sm items-center">
+<button class="flex-none px-lg py-sm rounded-full bg-secondary-container text-on-secondary-container font-label-md text-label-md ring-2 ring-primary ring-offset-2 transition-all shadow-sm flex items-center gap-xs">
+<span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+                Zaidan Al-Fatih
+            </button>
+<button class="flex-none px-lg py-sm rounded-full bg-surface-container text-on-surface-variant font-label-md text-label-md hover:bg-surface-container-high transition-all">
+                Aisyah Humaira
+            </button>
+<!-- Preview Account Example -->
+<button class="flex-none px-lg py-sm rounded-full border border-dashed border-outline-variant text-on-surface-variant/60 font-label-md text-label-md italic bg-surface-container-low">
+                Preview Mode
+            </button>
+<button class="flex-none w-10 h-10 flex items-center justify-center rounded-full bg-surface-container-highest text-on-surface-variant hover:bg-surface-container-high transition-all">
+<span class="material-symbols-outlined">add</span>
+</button>
+</div>
+</section>
+<main class="px-container-padding py-base space-y-lg">
+<!-- Active Child Profile Card -->
+<section class="gradient-bg rounded-xl p-md shadow-lg text-on-primary flex items-center gap-md relative overflow-hidden">
+<div class="absolute -right-4 -top-4 opacity-10">
+<span class="material-symbols-outlined text-[120px]" style="font-variation-settings: 'FILL' 1;">mosque</span>
+</div>
+<div class="w-20 h-20 rounded-xl overflow-hidden border-2 border-primary-fixed-dim shrink-0 shadow-md">
+<img class="w-full h-full object-cover" data-alt="Portrait of Zaidan" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCKc58N_kZYTQiId4HBtkc1hwpzdJCjUhvWKSZ7wuZq3XWagE3iP7RO4pXBxREvatw4HMQ2_QU7IQtNRz8Eq4yOtC0xmctjYQBOESSKmLwLWDZgahrTYopAB5b7fjGumFIsse8s9SKQw3RPpHF8pCYnsk8rtmDCmvikFPrASL9KqYf4Eulx9fnPjnN2h0amwoudoA8jcREuSsV-rJb2ycTkIlYxBYrPZ6HzxX3ChHBG6nJ7p3rGxZL7GLkHvSU06knZGtGfmHJ0hcU"/>
+</div>
+<div class="z-10">
+<h2 class="font-headline-sm text-headline-sm text-white mb-xs">Zaidan Al-Fatih</h2>
+<p class="font-body-sm text-body-sm text-primary-fixed-dim">Kelas 4 Madinah • NIS: 20240012</p>
+<div class="mt-base inline-flex items-center gap-xs px-base py-xs bg-white/10 rounded-lg text-xs font-medium backdrop-blur-sm border border-white/10">
+<span class="material-symbols-outlined text-sm">verified_user</span>
+                    Akademik Aktif
+                </div>
+</div>
+</section>
+<!-- Attendance Real-Time Status -->
+<section class="bg-surface-container-lowest border border-outline-variant rounded-xl p-md shadow-sm">
+<div class="flex justify-between items-center mb-md">
+<div class="flex items-center gap-xs">
+<span class="material-symbols-outlined text-primary text-xl">event_available</span>
+<h3 class="font-headline-sm text-headline-sm text-primary">Status Kehadiran</h3>
+</div>
+<span class="text-[10px] font-bold tracking-widest text-secondary-fixed-dim bg-primary-container px-base py-1 rounded-md uppercase">Live</span>
+</div>
+<div class="flex items-center justify-between bg-surface-container-low rounded-lg p-md border border-outline-variant/30">
+<div class="flex items-center gap-md">
+<div class="w-12 h-12 rounded-full bg-primary-container flex items-center justify-center text-on-primary-container shadow-inner">
+<span class="material-symbols-outlined text-2xl" style="font-variation-settings: 'FILL' 1;">login</span>
+</div>
+<div>
+<p class="font-headline-sm text-headline-sm text-on-surface">Masuk Sekolah</p>
+<div class="flex items-center gap-base mt-xs">
+<p class="font-body-sm text-body-sm text-on-surface-variant flex items-center gap-xs">
+<span class="material-symbols-outlined text-sm">schedule</span> 07:12 WIB
+                            </p>
+<span class="text-outline-variant">|</span>
+<p class="font-body-sm text-body-sm text-on-surface-variant flex items-center gap-xs">
+<span class="material-symbols-outlined text-sm">location_on</span> Pintu Utama
+                            </p>
+</div>
+</div>
+</div>
+<div class="bg-secondary-container/50 p-2 rounded-full">
+<span class="material-symbols-outlined text-primary">check_circle</span>
+</div>
+</div>
+</section>
+<!-- Statistics Bento Grid -->
+<section class="grid grid-cols-2 gap-md">
+<div class="bg-white border border-outline-variant rounded-xl p-md flex flex-col items-center justify-center">
+<p class="font-label-md text-label-md text-on-surface-variant mb-base text-center uppercase tracking-wider">Persentase Hadir</p>
+<div class="relative w-24 h-24 flex items-center justify-center">
+<svg class="w-full h-full transform -rotate-90">
+<circle class="text-surface-container-high" cx="48" cy="48" fill="transparent" r="40" stroke="currentColor" stroke-width="8"></circle>
+<circle class="text-primary transition-all duration-1000" cx="48" cy="48" fill="transparent" r="40" stroke="currentColor" stroke-dasharray="251.2" stroke-dashoffset="25.12" stroke-linecap="round" stroke-width="8"></circle>
+</svg>
+<div class="absolute flex flex-col items-center">
+<span class="font-headline-sm text-headline-sm text-primary leading-none">90%</span>
+</div>
+</div>
+</div>
+<div class="bg-white border border-outline-variant rounded-xl p-md space-y-sm">
+<div class="flex items-center justify-between">
+<span class="font-body-sm text-body-sm text-on-surface-variant">Hadir</span>
+<span class="font-headline-sm text-headline-sm text-primary">18</span>
+</div>
+<hr class="border-outline-variant/50"/>
+<div class="flex items-center justify-between">
+<span class="font-body-sm text-body-sm text-on-surface-variant">Terlambat</span>
+<span class="font-headline-sm text-headline-sm text-orange-600">2</span>
+</div>
+<hr class="border-outline-variant/50"/>
+<div class="flex items-center justify-between">
+<span class="font-body-sm text-body-sm text-on-surface-variant">Absen</span>
+<span class="font-headline-sm text-headline-sm text-error">0</span>
+</div>
+</div>
+</section>
+<!-- Leave Requests (Permohonan Izin) -->
+<section>
+<div class="flex justify-between items-center mb-md">
+<h3 class="font-headline-sm text-headline-sm text-on-surface">Permohonan Izin</h3>
+<button class="bg-primary text-on-primary px-md py-base rounded-lg font-label-md text-label-md flex items-center gap-xs active:scale-95 duration-150 shadow-sm">
+<span class="material-symbols-outlined text-sm">add</span> Izin Baru
+                </button>
+</div>
+<div class="space-y-sm">
+<div class="bg-white border border-outline-variant rounded-xl p-md flex items-center justify-between hover:border-primary/30 transition-colors">
+<div class="flex gap-md">
+<div class="w-10 h-10 rounded-lg bg-surface-container-low flex items-center justify-center text-primary border border-outline-variant/30">
+<span class="material-symbols-outlined">medical_services</span>
+</div>
+<div>
+<p class="font-body-md text-body-md font-semibold">Izin Sakit</p>
+<p class="font-body-sm text-body-sm text-on-surface-variant">12 - 13 Nov 2023</p>
+</div>
+</div>
+<span class="status-chip-present px-base py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider">Disetujui</span>
+</div>
+</div>
+</section>
+<!-- Weekly History -->
+<section>
+<h3 class="font-headline-sm text-headline-sm text-on-surface mb-md">Riwayat Pekan Ini</h3>
+<div class="space-y-4 relative before:absolute before:left-[17px] before:top-2 before:bottom-2 before:w-[2px] before:bg-outline-variant/40">
+<!-- Timeline Item 1 -->
+<div class="relative pl-12">
+<div class="absolute left-0 top-1 w-9 h-9 flex items-center justify-center">
+<div class="w-3 h-3 rounded-full bg-primary ring-4 ring-background z-10"></div>
+</div>
+<div class="bg-white border border-outline-variant rounded-xl p-md shadow-sm flex justify-between items-start">
+<div class="space-y-xs">
+<p class="font-body-md text-body-md font-bold">Senin, 13 Nov</p>
+<div class="flex items-center gap-sm text-on-surface-variant">
+<span class="font-body-sm text-body-sm flex items-center gap-xs">
+<span class="material-symbols-outlined text-xs">login</span> 07:05
+                                </span>
+<span class="font-body-sm text-body-sm flex items-center gap-xs">
+<span class="material-symbols-outlined text-xs">logout</span> 15:30
+                                </span>
+</div>
+</div>
+<span class="status-chip-present px-base py-xs rounded-full text-[9px] font-black uppercase tracking-widest">TEPAT WAKTU</span>
+</div>
+</div>
+<!-- Timeline Item 2 -->
+<div class="relative pl-12">
+<div class="absolute left-0 top-1 w-9 h-9 flex items-center justify-center">
+<div class="w-3 h-3 rounded-full bg-orange-500 ring-4 ring-background z-10"></div>
+</div>
+<div class="bg-white border border-outline-variant rounded-xl p-md shadow-sm flex justify-between items-start border-l-4 border-l-orange-500">
+<div class="space-y-xs">
+<p class="font-body-md text-body-md font-bold">Selasa, 14 Nov</p>
+<div class="flex items-center gap-sm text-on-surface-variant">
+<span class="font-body-sm text-body-sm flex items-center gap-xs">
+<span class="material-symbols-outlined text-xs">login</span> 07:18
+                                </span>
+<span class="font-body-sm text-body-sm flex items-center gap-xs">
+<span class="material-symbols-outlined text-xs">logout</span> 15:35
+                                </span>
+</div>
+</div>
+<span class="status-chip-late px-base py-xs rounded-full text-[9px] font-black uppercase tracking-widest">TERLAMBAT</span>
+</div>
+</div>
+<!-- Timeline Item 3 -->
+<div class="relative pl-12">
+<div class="absolute left-0 top-1 w-9 h-9 flex items-center justify-center">
+<div class="w-3 h-3 rounded-full bg-primary ring-4 ring-background z-10"></div>
+</div>
+<div class="bg-white border border-outline-variant rounded-xl p-md shadow-sm flex justify-between items-start">
+<div class="space-y-xs">
+<p class="font-body-md text-body-md font-bold">Rabu, 15 Nov</p>
+<div class="flex items-center gap-sm text-on-surface-variant">
+<span class="font-body-sm text-body-sm flex items-center gap-xs">
+<span class="material-symbols-outlined text-xs">login</span> 06:55
+                                </span>
+<span class="font-body-sm text-body-sm flex items-center gap-xs italic opacity-60">
+<span class="material-symbols-outlined text-xs">logout</span> --:--
+                                </span>
+</div>
+</div>
+<span class="status-chip-present px-base py-xs rounded-full text-[9px] font-black uppercase tracking-widest">TEPAT WAKTU</span>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- Bottom Navigation Bar -->
+<nav class="fixed bottom-0 left-0 w-full flex justify-around items-center py-base bg-surface border-t border-outline-variant z-50 px-md">
+<a class="flex flex-col items-center justify-center bg-secondary-container text-on-secondary-container rounded-xl px-4 py-2 active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined text-[24px]" style="font-variation-settings: 'FILL' 1;">dashboard</span>
+<span class="font-label-md text-label-md">Beranda</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-2 hover:text-primary transition-all active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined">group</span>
+<span class="font-label-md text-label-md">Siswa</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-2 hover:text-primary transition-all active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined">how_to_reg</span>
+<span class="font-label-md text-label-md">Presensi</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-2 hover:text-primary transition-all active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined">assessment</span>
+<span class="font-label-md text-label-md">Laporan</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-2 hover:text-primary transition-all active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined">person</span>
+<span class="font-label-md text-label-md">Profil</span>
+</a>
+</nav>
+
+</div>

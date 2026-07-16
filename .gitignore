@@ -1,0 +1,5 @@
+/target
+/.env
+/style/main.scss.map
+/public/pkg
+

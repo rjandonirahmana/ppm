@@ -1,0 +1,155 @@
+<style>
+        body { font-family: 'Work Sans', sans-serif; }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .recording-pulse {
+            animation: pulse-red 2s infinite;
+        }
+        @keyframes pulse-red {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(186, 26, 26, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 15px rgba(186, 26, 26, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(186, 26, 26, 0); }
+        }
+        .timer-glow {
+            text-shadow: 0 0 10px rgba(0, 53, 39, 0.1);
+        }
+    
+
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<div class="bg-surface text-on-surface">
+<!-- Top App Bar -->
+<header class="fixed top-0 w-full z-50 bg-surface border-b border-outline-variant flex items-center justify-between px-container-padding h-16">
+<div class="flex items-center gap-md">
+<button class="hover:bg-surface-container-high p-2 rounded-full transition-colors active:scale-95 duration-150">
+<span class="material-symbols-outlined text-primary">arrow_back</span>
+</button>
+<h1 class="text-headline-sm font-headline-sm font-bold text-primary">Halaqah Live</h1>
+</div>
+<div class="flex items-center gap-sm">
+<div class="hidden md:flex flex-col items-end">
+<span class="text-label-md font-label-md text-primary">Ustadz Ahmad</span>
+<span class="text-[10px] text-on-surface-variant">Pamong Putra</span>
+</div>
+<div class="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center overflow-hidden border border-outline-variant">
+<img class="w-full h-full object-cover" data-alt="A professional studio portrait of a middle-aged Indonesian male teacher wearing a neat white koko shirt and a black peci. He has a warm, welcoming expression and is set against a soft-focus background of an Islamic library with emerald green and gold accents. The lighting is bright and clear, reflecting a modern, spiritual professionalism." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAabLUAkFWQdE5t_GgEjfCCvXZrp5DwoqQs6jQkL8FyzJyzUGWAyeudrJL8iHnl-tzFmdwl_JS-lwnxn3FnPaxmgysNdHhla6czHooW-j4NtPttJZqP1Nnd8dyUBmIFAUR8ScdGp0eQdmx-2HcvWyHyj0NaqCjgyZiPzIzDnFiuR_CQcG_r4AbhcVgZkBrnlqzgI5o0OhUJZj5GAfFZ-BP4VzCh4Lo-sTO8xuo2TBv8G8HO7uah0QH75U4TAxHNJos3EuoG803RWiU"/>
+</div>
+</div>
+</header>
+<main class="pt-24 pb-32 px-container-padding max-w-[1200px] mx-auto min-h-screen">
+<!-- Recording Visualizer Area -->
+<section class="mb-lg">
+<div class="bg-surface-container-lowest rounded-xl p-xl shadow-sm border border-outline-variant flex flex-col items-center justify-center relative overflow-hidden min-h-[300px]">
+<!-- Decorative pattern background -->
+<div class="absolute inset-0 opacity-[0.03] pointer-events-none" style="background-image: radial-gradient(#003527 1px, transparent 1px); background-size: 20px 20px;"></div>
+<div class="hidden mb-md px-3 py-1 bg-error-container text-on-error-container rounded-full text-label-md font-label-md items-center gap-xs" id="recording-status-tag">
+<span class="w-2 h-2 rounded-full bg-error animate-pulse"></span>
+                    SEDANG MEREKAM
+                </div>
+<div class="text-display-lg font-display-lg text-primary timer-glow mb-lg tracking-widest tabular-nums" id="timer">00:00:00</div>
+<div class="flex flex-col items-center gap-md">
+<button class="w-24 h-24 rounded-full bg-error flex items-center justify-center text-white transition-all duration-300 hover:scale-105 active:scale-95 shadow-lg group" id="record-btn">
+<span class="material-symbols-outlined text-4xl" id="record-icon" style="font-variation-settings: 'FILL' 1;">mic</span>
+</button>
+<p class="text-body-md font-body-md text-on-surface-variant" id="record-instruction">Tekan untuk mulai merekam Halaqah</p>
+</div>
+<!-- Simple Waveform Animation Placeholder -->
+<div class="mt-xl w-full max-w-md h-12 flex items-center justify-center gap-1 opacity-0 transition-opacity duration-500" id="waveform">
+<div class="w-1 bg-primary rounded-full h-4 animate-[bounce_1s_infinite_0ms]"></div>
+<div class="w-1 bg-primary rounded-full h-8 animate-[bounce_1s_infinite_100ms]"></div>
+<div class="w-1 bg-primary rounded-full h-6 animate-[bounce_1s_infinite_200ms]"></div>
+<div class="w-1 bg-primary rounded-full h-10 animate-[bounce_1s_infinite_300ms]"></div>
+<div class="w-1 bg-primary rounded-full h-5 animate-[bounce_1s_infinite_400ms]"></div>
+<div class="w-1 bg-primary rounded-full h-9 animate-[bounce_1s_infinite_500ms]"></div>
+<div class="w-1 bg-primary rounded-full h-3 animate-[bounce_1s_infinite_600ms]"></div>
+<div class="w-1 bg-primary rounded-full h-7 animate-[bounce_1s_infinite_700ms]"></div>
+</div>
+</div>
+</section>
+<!-- Form Details Section -->
+<section class="grid grid-cols-1 lg:grid-cols-3 gap-lg mb-xl">
+<div class="lg:col-span-2 space-y-lg">
+<div class="bg-surface-container-lowest rounded-xl p-lg border border-outline-variant">
+<h3 class="text-headline-sm font-headline-sm text-primary mb-md">Detail Rekaman</h3>
+<div class="space-y-md">
+<div class="flex flex-col gap-xs">
+<label class="text-label-md font-label-md text-on-surface-variant px-1">Judul Pelajaran</label>
+<input class="w-full bg-surface-bright border border-outline-variant rounded-lg px-md py-sm focus:ring-2 focus:ring-primary-container focus:border-primary outline-none transition-all text-body-md font-body-md" placeholder="Contoh: Adab Penuntut Ilmu - Bab 1" type="text"/>
+</div>
+<div class="flex flex-col gap-xs">
+<label class="text-label-md font-label-md text-on-surface-variant px-1">Target Kelas</label>
+<select class="w-full bg-surface-bright border border-outline-variant rounded-lg px-md py-sm focus:ring-2 focus:ring-primary-container focus:border-primary outline-none transition-all text-body-md font-body-md appearance-none">
+<option disabled="" selected="" value="">Pilih Kelas</option>
+<option>Kelas 10 - Al Farabi</option>
+<option>Kelas 11 - Ibnu Sina</option>
+<option>Kelas 12 - Al Khawarizmi</option>
+<option>Halaqah Tahfidz Sore</option>
+</select>
+</div>
+</div>
+</div>
+<!-- Action Buttons -->
+<div class="flex flex-col sm:flex-row gap-md">
+<button class="flex-1 bg-primary text-on-primary font-bold py-md rounded-lg flex items-center justify-center gap-sm hover:opacity-90 active:scale-95 transition-all shadow-sm">
+<span class="material-symbols-outlined">cloud_upload</span>
+                        Simpan ke Server
+                    </button>
+<button class="flex-1 bg-surface-container-high text-on-surface-variant font-bold py-md rounded-lg flex items-center justify-center gap-sm hover:bg-surface-container-highest active:scale-95 transition-all">
+<span class="material-symbols-outlined">delete</span>
+                        Hapus Rekaman
+                    </button>
+</div>
+</div>
+<!-- Teacher Tips Section -->
+<div class="lg:col-span-1">
+<div class="bg-secondary-container text-on-secondary-container rounded-xl p-lg h-full border border-outline-variant">
+<div class="flex items-center gap-sm mb-md">
+<span class="material-symbols-outlined">lightbulb</span>
+<h3 class="text-headline-sm font-headline-sm">Tips Pengajaran</h3>
+</div>
+<ul class="space-y-md text-body-sm font-body-sm opacity-90">
+<li class="flex gap-sm">
+<span class="text-primary font-bold">1.</span>
+<span>Pastikan lingkungan tenang untuk kualitas audio yang jernih bagi santri.</span>
+</li>
+<li class="flex gap-sm">
+<span class="text-primary font-bold">2.</span>
+<span>Mulailah dengan Salam dan basmalah agar sesi Halaqah lebih berkah.</span>
+</li>
+<li class="flex gap-sm">
+<span class="text-primary font-bold">3.</span>
+<span>Gunakan intonasi yang jelas dan tempo bicara yang teratur.</span>
+</li>
+<li class="flex gap-sm">
+<span class="text-primary font-bold">4.</span>
+<span>Berikan jeda singkat setelah poin penting untuk memberi waktu santri mencatat.</span>
+</li>
+</ul>
+</div>
+</div>
+</section>
+</main>
+<!-- Bottom Nav Bar -->
+<nav class="md:hidden fixed bottom-0 w-full z-50 rounded-t-xl bg-surface-container-lowest shadow-[0_-2px_10px_rgba(0,0,0,0.05)] flex justify-around items-center h-20 pb-2 px-2">
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1 hover:opacity-80 active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="text-label-md font-label-md mt-1">Home</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1 hover:opacity-80 active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined">group</span>
+<span class="text-label-md font-label-md mt-1">Students</span>
+</a>
+<a class="flex flex-col items-center justify-center bg-secondary-container text-on-secondary-container rounded-full px-4 py-1 hover:opacity-80 active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">school</span>
+<span class="text-label-md font-label-md mt-1">Classes</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1 hover:opacity-80 active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined">analytics</span>
+<span class="text-label-md font-label-md mt-1">Reports</span>
+</a>
+</nav>
+
+</div>

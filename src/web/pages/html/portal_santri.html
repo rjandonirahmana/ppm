@@ -1,0 +1,174 @@
+<style>
+        body { font-family: 'Work Sans', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+        .glass-card { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(8px); }
+        .custom-scrollbar::-webkit-scrollbar { width: 0px; height: 0px; }
+    </style>
+<div class="bg-surface text-on-surface">
+<!-- Top App Bar -->
+<header class="fixed top-0 w-full z-50 bg-surface-bright shadow-sm flex items-center justify-between px-gutter h-16 border-b border-outline-variant/20">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full overflow-hidden border-2 border-primary-fixed">
+<img class="w-full h-full object-cover" data-alt="A portrait of a young male student wearing a neat white shirt and a traditional black songkok, looking friendly and professional. The background is a soft-focus Islamic library with high-key lighting, maintaining a spiritual yet corporate modern aesthetic in shades of emerald green and ivory." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD2I1M2wckz6ExtwmNw_ilKxz58Gbuua18vGe5fHn5CIByeiraM8yaZj9tLN_cS5b7fu8j7B8TYC_LNTkuQ_u2MCfUqof95AkuXGEFFv3XdfHeJSccRzeYTlp7HN8B2GSeD9J547R09YEDkfLUzWVvVRaTBo6kzyb0f98W7sbNSxfdE9tvgk0Dkv_ZCu29mjRPfPqQlLm0gRBSJBWULreRAcjKRl-19C2E5CN499rsqnlZ68qB8fcszzO48rImsRoJ3zHMn71V9Cek">
+</div>
+<div>
+<h1 class="font-headline-sm text-headline-sm text-primary leading-tight">Ajukan Perizinan</h1>
+<p class="font-label-md text-label-md text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">stars</span>
+                    850 Poin
+                </p>
+</div>
+</div>
+<button class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-high transition-colors active:scale-95">
+<span class="material-symbols-outlined text-primary">notifications</span>
+</button>
+</header>
+<main class="pt-20 pb-28 px-gutter max-w-[1200px] mx-auto space-y-lg">
+<!-- Quick Stats Bento Grid -->
+<section class="grid grid-cols-2 md:grid-cols-4 gap-md">
+<div class="col-span-2 bg-primary-container text-on-primary-container p-md rounded-xl shadow-sm flex flex-col justify-between min-h-[140px] relative overflow-hidden">
+<div class="absolute -right-4 -top-4 opacity-10">
+<span class="material-symbols-outlined text-[120px]" style="font-variation-settings: 'FILL' 1;">analytics</span>
+</div>
+<div>
+<p class="font-label-md text-label-md opacity-80 uppercase tracking-wider">Kehadiran Semester Ini</p>
+<h2 class="font-display-lg text-display-lg mt-1">94%</h2>
+</div>
+<div class="w-full bg-on-primary-container/20 h-2 rounded-full mt-4 overflow-hidden">
+<div class="bg-primary-fixed h-full rounded-full w-[94%] shadow-[0_0_8px_rgba(176,240,214,0.5)]"></div>
+</div>
+</div>
+<div class="bg-white p-md rounded-xl border border-outline-variant/30 flex flex-col items-center justify-center text-center">
+<span class="material-symbols-outlined text-secondary text-display-md mb-1">check_circle</span>
+<p class="font-display-md text-display-md leading-none text-on-surface">142</p>
+<p class="font-label-md text-label-md text-on-surface-variant mt-1">Hadir</p>
+</div>
+<div class="bg-white p-md rounded-xl border border-outline-variant/30 flex flex-col items-center justify-center text-center">
+<span class="material-symbols-outlined text-error text-display-md mb-1">warning</span>
+<p class="font-display-md text-display-md leading-none text-on-surface">3</p>
+<p class="font-label-md text-label-md text-on-surface-variant mt-1">Absen</p>
+</div>
+</section>
+<!-- Latest Activity Card -->
+<div class="bg-secondary-container/30 border border-secondary-container p-md rounded-xl flex items-center gap-4 animate-pulse-slow">
+<div class="bg-secondary-container text-on-secondary-container p-3 rounded-full">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">sensors</span>
+</div>
+<div class="flex-1">
+<h3 class="font-headline-sm text-[16px] text-on-secondary-container">Kehadiran Terdeteksi</h3>
+<p class="font-body-sm text-body-sm text-on-secondary-container/80">Halaqah Subuh • 05:12 WIB</p>
+</div>
+<span class="material-symbols-outlined text-on-secondary-container/50">chevron_right</span>
+</div>
+<!-- Perizinan Form Section -->
+<section class="space-y-md">
+<h2 class="font-headline-sm text-headline-sm text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">edit_note</span>
+                Formulir Izin
+            </h2>
+<form class="bg-white border border-outline-variant/30 rounded-xl p-lg shadow-sm space-y-lg">
+<div class="space-y-sm">
+<label class="font-label-md text-label-md text-on-surface-variant ml-1">Jenis Izin</label>
+<div class="grid grid-cols-2 gap-md">
+<label class="cursor-pointer">
+<input checked="" class="hidden peer" name="permit_type" type="radio" value="sakit">
+<div class="flex items-center justify-center gap-2 p-md border-2 border-outline-variant/30 rounded-lg peer-checked:border-primary peer-checked:bg-primary/5 transition-all">
+<span class="material-symbols-outlined text-primary">medical_services</span>
+<span class="font-body-md text-body-md">Sakit</span>
+</div>
+</label>
+<label class="cursor-pointer">
+<input class="hidden peer" name="permit_type" type="radio" value="pulang">
+<div class="flex items-center justify-center gap-2 p-md border-2 border-outline-variant/30 rounded-lg peer-checked:border-primary peer-checked:bg-primary/5 transition-all">
+<span class="material-symbols-outlined text-primary">home</span>
+<span class="font-body-md text-body-md">Pulang</span>
+</div>
+</label>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-md">
+<div class="space-y-sm">
+<label class="font-label-md text-label-md text-on-surface-variant ml-1">Mulai Tanggal</label>
+<div class="relative">
+<input class="w-full bg-surface-container-low border border-outline-variant/50 rounded-xl px-md py-3 focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md text-body-md transition-all" type="date">
+</div>
+</div>
+<div class="space-y-sm">
+<label class="font-label-md text-label-md text-on-surface-variant ml-1">Sampai Tanggal</label>
+<div class="relative">
+<input class="w-full bg-surface-container-low border border-outline-variant/50 rounded-xl px-md py-3 focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md text-body-md transition-all" type="date">
+</div>
+</div>
+</div>
+<div class="space-y-sm">
+<label class="font-label-md text-label-md text-on-surface-variant ml-1">Alasan Perizinan</label>
+<textarea class="w-full bg-surface-container-low border border-outline-variant/50 rounded-xl px-md py-md focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md text-body-md resize-none transition-all" placeholder="Tuliskan alasan lengkap untuk pertimbangan pengurus..." rows="4"></textarea>
+</div>
+<div class="space-y-sm">
+<label class="font-label-md text-label-md text-on-surface-variant ml-1">Lampiran (Opsional)</label>
+<div class="border-2 border-dashed border-outline-variant/50 rounded-xl p-lg flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-low transition-colors cursor-pointer">
+<span class="material-symbols-outlined text-display-md">cloud_upload</span>
+<p class="font-body-sm text-body-sm mt-2">Unggah surat dokter atau bukti lainnya</p>
+</div>
+</div>
+<button class="w-full bg-primary text-white font-headline-sm text-[16px] py-4 rounded-xl shadow-lg hover:bg-primary-container transition-all active:scale-[0.98] flex items-center justify-center gap-2" type="submit">
+<span class="material-symbols-outlined">send</span>
+                    Ajukan Izin Sekarang
+                </button>
+</form>
+</section>
+<!-- Stats Legend Desktop (Hidden on mobile) -->
+<div class="hidden md:grid grid-cols-3 gap-lg">
+<div class="bg-white p-lg rounded-xl border border-outline-variant/20 flex items-center gap-4">
+<div class="bg-secondary-container/20 p-3 rounded-full text-secondary">
+<span class="material-symbols-outlined">history</span>
+</div>
+<div>
+<p class="font-label-md text-label-md text-on-surface-variant">Total Terlambat</p>
+<h4 class="font-headline-sm text-headline-sm">12 Kali</h4>
+</div>
+</div>
+<div class="bg-white p-lg rounded-xl border border-outline-variant/20 flex items-center gap-4">
+<div class="bg-error-container/20 p-3 rounded-full text-error">
+<span class="material-symbols-outlined">person_off</span>
+</div>
+<div>
+<p class="font-label-md text-label-md text-on-surface-variant">Alpha</p>
+<h4 class="font-headline-sm text-headline-sm">0 Kali</h4>
+</div>
+</div>
+<div class="bg-white p-lg rounded-xl border border-outline-variant/20 flex items-center gap-4">
+<div class="bg-primary-container/10 p-3 rounded-full text-primary">
+<span class="material-symbols-outlined">verified</span>
+</div>
+<div>
+<p class="font-label-md text-label-md text-on-surface-variant">Predikat</p>
+<h4 class="font-headline-sm text-headline-sm">Sangat Baik</h4>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Navigation Bar -->
+<nav class="fixed bottom-0 left-0 w-full h-20 bg-surface-container-lowest flex justify-around items-center px-4 pb-2 shadow-[0_-2px_10px_rgba(0,0,0,0.05)] z-50">
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-3 py-1 hover:bg-surface-variant/50 rounded-xl transition-all" href="#">
+<span class="material-symbols-outlined">home</span>
+<span class="font-label-md text-label-md">Beranda</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-3 py-1 hover:bg-surface-variant/50 rounded-xl transition-all" href="#">
+<span class="material-symbols-outlined">history</span>
+<span class="font-label-md text-label-md">Riwayat</span>
+</a>
+<a class="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded-xl px-4 py-2 transition-all active:scale-90" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">assignment_turned_in</span>
+<span class="font-label-md text-label-md">Izin</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-3 py-1 hover:bg-surface-variant/50 rounded-xl transition-all" href="#">
+<span class="material-symbols-outlined">person</span>
+<span class="font-label-md text-label-md">Profil</span>
+</a>
+</nav>
+
+
+
+
+</div>

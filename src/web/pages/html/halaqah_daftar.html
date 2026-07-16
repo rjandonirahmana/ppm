@@ -1,0 +1,130 @@
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            font-family: 'Work Sans', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(229, 231, 235, 0.5);
+        }
+        .live-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+    </style>
+<div class="bg-background text-on-background min-h-screen pb-24">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 bg-surface-bright shadow-sm flex items-center justify-between px-gutter h-16">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full overflow-hidden border-2 border-primary-container">
+<img class="w-full h-full object-cover" data-alt="A professional portrait of an Islamic educator wearing a clean, traditional white cap and modest attire, set against a soft-focus background of an elegant Islamic library. The lighting is warm and welcoming, reflecting a tone of wisdom and serenity in a modern light-mode interface." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBdaWHFdwFsa5JXwvZeQfFxUH0Hga5148aCCnE6MdL69JyCrFxx07HpwOQnTLtAlHn1xkrNXHV-QkqnQ2rTExwLqbM7_dYp6y6VUKYwAmDZu24yWkTTKkVH4XZHsui8BEsXqbuenAo7shgUM-rSEitGtqLwV17ZwPOErbXzPLi85Al2N49r91VIZuTF0i8NjrPDpeWA7oe6PqokWl77cwS5hASrNGi6zt3ot1qe2oyLBQFARMUx-XG7DhPQVXS7ncjp5wia6Uu8-yQ"/>
+</div>
+<h1 class="font-display-md text-display-md text-primary">PPM AFM</h1>
+</div>
+<button class="w-10 h-10 flex items-center justify-center text-primary hover:bg-surface-container-high transition-colors rounded-full active:scale-95 transition-transform">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+</header>
+<main class="pt-20 px-gutter max-w-[1200px] mx-auto">
+<!-- Hero / Live Status Section -->
+<section class="mt-4 mb-8">
+<div class="relative overflow-hidden rounded-xl h-48 md:h-64 flex items-end p-6 group">
+<div class="absolute inset-0 z-0">
+<img class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" data-alt="A high-definition architectural shot of a contemporary mosque interior during sunset. The golden hour light filters through geometric mashrabiya windows, casting intricate shadows across a pristine emerald green carpet. The atmosphere is peaceful and spiritual, designed with a corporate modernist aesthetic that emphasizes clean lines and high-end professional quality." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBZ8foiroJfV5vfx5lpKo36sHkWv0pX9AYg5NmfuZJWmYaOGWV6k3b1NLfPdMYTEn-zBZ-As97x82QQ6kqxCQBTZ3jDWWqKt3puDSyWnEjr0Svcmo6DbTIVPEpGDkhq8Rk65eJtR-bkjWzH9imijuGJFslam5glmEcIwn-2R-OqX7g4DLggmfENflLFLzay2Tx8YAKdVxsqa3U57Dk025NCEzpsjGEArf0a0jhIJ7mP1X6FM7CQ3N-IL6Vf3WUhyGRwAKfOX6pixSY"/>
+<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+</div>
+<div class="relative z-10">
+<span class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-error text-white font-label-md text-label-md mb-2"><span class="w-2 h-2 rounded-full bg-white live-pulse"></span> SEDANG LIVE</span>
+<h2 class="font-display-lg-mobile md:font-display-lg text-white">Ikuti Majelis Harian</h2>
+<p class="text-white/80 font-body-md text-body-md">2.4rb santri sedang belajar bersama</p>
+</div>
+</div>
+</section>
+<!-- Search & Filter -->
+<div class="flex gap-3 mb-6 overflow-x-auto pb-2 no-scrollbar"><button class="px-4 py-2 rounded-lg bg-primary-container text-white font-label-md text-label-md whitespace-nowrap">Semua Kelas</button><button class="px-4 py-2 rounded-lg bg-surface-container-high text-on-surface-variant font-label-md text-label-md whitespace-nowrap">Pemula</button><button class="px-4 py-2 rounded-lg bg-surface-container-high text-on-surface-variant font-label-md text-label-md whitespace-nowrap">Menengah</button><button class="px-4 py-2 rounded-lg bg-surface-container-high text-on-surface-variant font-label-md text-label-md whitespace-nowrap">Lanjutan</button></div>
+<!-- Class Selection Bento Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-md">
+<!-- Class Card: Lambatan -->
+<div class="glass-card rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col group">
+<div class="relative h-40">
+<img class="w-full h-full object-cover" data-alt="Close-up macro photography of an open Quran with elegant Arabic calligraphy. The focus is sharp on the intricate gold ink on cream-colored parchment. Soft ambient lighting highlights the texture of the paper, creating a reverent and scholarly mood suitable for a foundational religious education platform." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAGcxS68688tSTTpIcRBlQB8IOU4ineK2prcG9I2PGYglFKqQlo3MqmVixsUv_o2lqRr95wZqANhozAIBX1v_if-z58LZeKUXxGCbQkweQ7hd0PYCeRU474dwAffFV6Ogn-Tc4_BtVnxtqNrsff7E4NuuOM7TrdftR1AnQr2amxaOFeS31b2RRWuQ8daEf9dRKIFfS9k-gacj0y_86NmniDOB4pXQxl2epVSDR-ruO692myddBZ5XBKF3VFXcCo0RjrCkwq1S8VCRg"/>
+<div class="absolute top-3 right-3 bg-white/90 backdrop-blur rounded-lg px-2 py-1 flex items-center gap-1 shadow-sm">
+<span class="material-symbols-outlined text-primary text-[16px]" data-icon="menu_book">menu_book</span>
+<span class="font-label-md text-label-md text-primary">Foundational</span>
+</div>
+</div>
+<div class="p-4 flex-1 flex flex-col"><div class="flex justify-between items-start mb-2"><h3 class="font-headline-sm text-headline-sm text-primary">Lambatan</h3><span class="text-error font-label-md text-label-md flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-error live-pulse"></span> Sedang Live</span></div><p class="text-on-surface-variant font-body-sm text-body-sm mb-4 line-clamp-2">Kuasai dasar-dasar membaca dan tajwid dasar dengan kecepatan yang tenang dan nyaman.</p><div class="mt-auto flex items-center justify-between"><div class="flex -space-x-2"><div class="w-8 h-8 rounded-full border-2 border-white bg-secondary-container"></div><div class="w-8 h-8 rounded-full border-2 border-white bg-primary-fixed"></div><div class="w-8 h-8 rounded-full border-2 border-white bg-surface-dim flex items-center justify-center text-[10px] font-bold">+120</div></div><button class="px-6 py-2 bg-primary-container text-white rounded-lg font-label-md text-label-md hover:brightness-110 active:scale-95 transition-all">Masuk Sesi</button></div></div>
+</div>
+<!-- Class Card: Cepatan -->
+<div class="glass-card rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col">
+<div class="relative h-40">
+<img class="w-full h-full object-cover" data-alt="A dynamic, blurred motion shot of a scholar's hand turning a page in a library. The lighting is crisp and bright, conveying speed and proficiency. The color palette is dominated by deep emerald greens and warm wood tones, suggesting a professional yet spiritual learning environment." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDQC7eOcPeuVLRrpaSm4sr7fgjOsF5dDPi09jPv7Z8x8SqaJeBDi5lBlHhk7qrMibs-bPhsMG1qW5FcSrFxslDhT7B8VpVpGW9SgObs5-GoHcX9OxSxhiQvGNFGjzBERCPb-Q8NdkyQv9PyLJgBbXNJOUe8QvC3HBuZuT-Hvy7e_0lSlV7vUKxM5zinEH6esqvFcGwul7InZsP5dqqnTTcxRIFbM9frgx8Tz3JpHqVs2WO1tnS1QjaN9rAm61hLIERggf2pCjfu6AA"/>
+<div class="absolute top-3 right-3 bg-white/90 backdrop-blur rounded-lg px-2 py-1 flex items-center gap-1 shadow-sm">
+<span class="material-symbols-outlined text-primary text-[16px]" data-icon="bolt">bolt</span>
+<span class="font-label-md text-label-md text-primary">Accelerated</span>
+</div>
+</div>
+<div class="p-4 flex-1 flex flex-col"><div class="flex justify-between items-start mb-2"><h3 class="font-headline-sm text-headline-sm text-primary">Cepatan</h3><span class="text-on-surface-variant font-label-md text-label-md">Mulai 20:30</span></div><p class="text-on-surface-variant font-body-sm text-body-sm mb-4 line-clamp-2">Program intensif bagi santri yang siap mempercepat kelancaran dan hafalan Al-Qur'an.</p><div class="mt-auto flex items-center justify-between"><span class="text-on-surface-variant/60 font-body-sm text-body-sm italic">Terjadwal hari ini</span><button class="px-6 py-2 border-2 border-primary-container text-primary-container rounded-lg font-label-md text-label-md hover:bg-primary-container/5 active:scale-95 transition-all">Ingatkan</button></div></div>
+</div>
+<!-- Class Card: Mubalegh -->
+<div class="glass-card rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col">
+<div class="relative h-40">
+<img class="w-full h-full object-cover" data-alt="An expansive view of a modern university lecture hall with Islamic geometric patterns on the walls. The scene is bright and airy, representing advanced academic pursuit. The aesthetic is clean, professional, and sophisticated, aligning with the Spiritual Professionalism theme." src="https://lh3.googleusercontent.com/aida-public/AB6AXuClwLICEN-adxISv0X03FbB-RNJI6E4S9sAC05aVqEdIup--564IYmcv4ulN42S-zRtZlggGInUPzzAPfMqURcu8QpN4IUPXRY-G5alrTTDf3qxkbng6Pvj65gUJv1y8KxYZuD7tOU9f-tvG-L58BXBdwSmUYMHA0MJzbg0cC44-9b1IUW4ENB3XpCz1uKg_KaQCLYrh3aqMtJSDFGLZ8FB4xt6XioccwszFYPUhijfTeBeqzTPcyXDGsbJWsJ0vEYWu6XqNgLHDaU"/>
+<div class="absolute top-3 right-3 bg-white/90 backdrop-blur rounded-lg px-2 py-1 flex items-center gap-1 shadow-sm">
+<span class="material-symbols-outlined text-primary text-[16px]" data-icon="school">school</span>
+<span class="font-label-md text-label-md text-primary">Leadership</span>
+</div>
+</div>
+<div class="p-4 flex-1 flex flex-col"><div class="flex justify-between items-start mb-2"><h3 class="font-headline-sm text-headline-sm text-primary">Mubalegh</h3><span class="text-error font-label-md text-label-md flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-error live-pulse"></span> Sedang Live</span></div><p class="text-on-surface-variant font-body-sm text-body-sm mb-4 line-clamp-2">Pelatihan dakwah tingkat lanjut dan public speaking untuk calon pendidik dan pemimpin umat.</p><div class="mt-auto flex items-center justify-between"><div class="flex items-center gap-2"><span class="material-symbols-outlined text-on-surface-variant" data-icon="group">group</span><span class="font-label-md text-label-md text-on-surface-variant">450 bergabung</span></div><button class="px-6 py-2 bg-primary-container text-white rounded-lg font-label-md text-label-md hover:brightness-110 active:scale-95 transition-all">Masuk Sesi</button></div></div>
+</div>
+<!-- Class Card: Hadist Besar -->
+<div class="glass-card rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col">
+<div class="relative h-40">
+<img class="w-full h-full object-cover" data-alt="A collection of ancient, beautifully preserved Islamic manuscripts with leather bindings on a dark oak shelf. The lighting is low and focused, highlighting the history and gravity of the texts. This classic academic setting conveys depth, tradition, and intellectual rigor." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCy2cQX4ClPgMku_fepUD6pjn2v8-UV-wyZmWI4-UhIMBGyMrG-DLQKVh1nc_Zd2nslx_E3rfoOHwjxDnIKDiDalGw11auXoyrfJ7ok9V5TgMg-KfHhDHeWwpPBSbD4otr3uMMbDCL1lS260if3Weg2pW34ECqLCbVa6hUcRZdgg1woXCsTUyWoYa4vJeJ7MCOxJe3irT_DFehAF_HHi43xB5fFzddR9mjbugmljDQC7mGe1-3b1YTurU0S28AxYAnE2Tl0hLTyDQU"/>
+<div class="absolute top-3 right-3 bg-white/90 backdrop-blur rounded-lg px-2 py-1 flex items-center gap-1 shadow-sm">
+<span class="material-symbols-outlined text-primary text-[16px]" data-icon="history_edu">history_edu</span>
+<span class="font-label-md text-label-md text-primary">Academic</span>
+</div>
+</div>
+<div class="p-4 flex-1 flex flex-col"><div class="flex justify-between items-start mb-2"><h3 class="font-headline-sm text-headline-sm text-primary">Hadist Besar</h3><span class="text-on-surface-variant font-label-md text-label-md">Mulai 21:15</span></div><p class="text-on-surface-variant font-body-sm text-body-sm mb-4 line-clamp-2">Analisis mendalam terhadap kitab-kitab Hadits utama dan aplikasi praktisnya di masa kini.</p><div class="mt-auto flex items-center justify-between"><span class="text-on-surface-variant/60 font-body-sm text-body-sm italic">Terjadwal hari ini</span><button class="px-6 py-2 border-2 border-primary-container text-primary-container rounded-lg font-label-md text-label-md hover:bg-primary-container/5 active:scale-95 transition-all">Lihat Detail</button></div></div>
+</div>
+</div>
+</main>
+<!-- Navigation Shell Logic -->
+<nav class="fixed bottom-0 left-0 w-full h-20 flex justify-around items-center px-4 pb-2 bg-surface-container-lowest shadow-[0_-2px_10px_rgba(0,0,0,0.05)] z-50">
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-3 py-1 hover:bg-surface-variant/50 rounded-xl active:scale-90 transition-transform duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span class="font-label-md text-label-md mt-1">Home</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-3 py-1 hover:bg-surface-variant/50 rounded-xl active:scale-90 transition-transform duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="how_to_reg">how_to_reg</span>
+<span class="font-label-md text-label-md mt-1">Attendance</span>
+</a>
+<a class="flex flex-col items-center justify-center bg-secondary-container text-on-secondary-container rounded-xl px-4 py-2 active:scale-90 transition-transform duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="groups">groups</span>
+<span class="font-label-md text-label-md mt-1 font-bold">Program</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-3 py-1 hover:bg-surface-variant/50 rounded-xl active:scale-90 transition-transform duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="stars">stars</span>
+<span class="font-label-md text-label-md mt-1">Points</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-3 py-1 hover:bg-surface-variant/50 rounded-xl active:scale-90 transition-transform duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="person">person</span>
+<span class="font-label-md text-label-md mt-1">Profile</span>
+</a>
+</nav>
+<!-- Decorative Subtle Background Element -->
+<div class="fixed top-0 right-0 -z-10 opacity-5 pointer-events-none">
+<svg fill="none" height="400" viewbox="0 0 400 400" width="400" xmlns="http://www.w3.org/2000/svg">
+<path d="M200 0L244.903 155.097L400 200L244.903 244.903L200 400L155.097 244.903L0 200L155.097 155.097L200 0Z" fill="#003527"></path>
+</svg>
+</div>
+
+</div>

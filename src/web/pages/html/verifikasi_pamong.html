@@ -1,0 +1,232 @@
+<style>
+        body {
+            font-family: 'Work Sans', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(8px);
+        }
+        .custom-scroll::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: #bfc9c3;
+            border-radius: 10px;
+        }
+    
+
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<div class="bg-background text-on-surface min-h-screen pb-24">
+<!-- Top AppBar -->
+<header class="fixed top-0 w-full z-50 bg-surface shadow-sm h-16">
+<div class="flex justify-between items-center px-gutter h-full w-full max-w-[1200px] mx-auto">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-primary cursor-pointer">menu</span>
+<h1 class="font-headline-sm text-headline-sm text-primary">Verifikasi Pamong</h1>
+</div>
+<div class="w-10 h-10 rounded-full overflow-hidden border-2 border-primary-fixed">
+<img class="w-full h-full object-cover" data-alt="A professional headshot of a school administrator in his 40s, wearing a neat traditional batik shirt, set against a blurred academic background. The lighting is soft and natural, emphasizing a look of wisdom and approachability. The style is clean, corporate modernism with a focus on high-end professional photography." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDmXBfo3NOlz5vzqD-v6PXorBAEwxjZ7AJA4melQLd6q4oaEeDobJ-NYjA5ChPa0Y6Scxv9IWb1yGBfHmZqj5iUSRvcX_jhIlHkwGcbzAiF45zYp3xghIpi7qL5wOkk2rA8_bevzi07N8EooIwmO23j_9dMv_cn9ehKS-daDnlrPzeHoNDcfEpWFUUdULK36IQ0mXxX7ZkR9SMIGCfczNbWp4fw1Owl1oOXaYH09v7ltscaWjv1nRmhdnImeGnVMGUYyhIoHTGxNMw"/>
+</div>
+</div>
+</header>
+<main class="pt-20 px-gutter max-w-[1200px] mx-auto space-y-lg">
+<!-- Dashboard Stats Bento Grid -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-md">
+<!-- Menunggu Tindakan -->
+<div class="bg-surface-container-lowest border border-outline-variant p-md rounded-xl flex flex-col justify-between h-32 relative overflow-hidden group">
+<div class="relative z-10">
+<span class="font-label-md text-label-md text-on-surface-variant">Menunggu Tindakan</span>
+<div class="font-display-lg text-display-lg text-primary mt-xs">24</div>
+</div>
+<div class="absolute -right-4 -bottom-4 opacity-5 group-hover:scale-110 transition-transform duration-300">
+<span class="material-symbols-outlined text-[100px]">pending_actions</span>
+</div>
+<div class="font-body-sm text-body-sm text-secondary flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">trending_up</span>
+<span>+5 dari kemarin</span>
+</div>
+</div>
+<!-- Rata-rata Waktu Scan -->
+<div class="bg-surface-container-lowest border border-outline-variant p-md rounded-xl flex flex-col justify-between h-32 relative overflow-hidden group">
+<div class="relative z-10">
+<span class="font-label-md text-label-md text-on-surface-variant">Rata-rata Waktu Scan</span>
+<div class="font-display-lg text-display-lg text-primary mt-xs">04:15 AM</div>
+</div>
+<div class="absolute -right-4 -bottom-4 opacity-5 group-hover:scale-110 transition-transform duration-300">
+<span class="material-symbols-outlined text-[100px]">schedule</span>
+</div>
+<div class="font-body-sm text-body-sm text-primary-container bg-secondary-container/30 px-2 py-0.5 rounded-full self-start">
+                    Optimal
+                </div>
+</div>
+<!-- Progress & Target -->
+<div class="bg-primary-container text-on-primary-container p-md rounded-xl h-32 flex flex-col justify-between">
+<div class="flex justify-between items-start">
+<span class="font-label-md text-label-md opacity-80">Progres Verifikasi</span>
+<span class="font-headline-sm text-headline-sm">72%</span>
+</div>
+<div class="space-y-2">
+<div class="w-full h-2 bg-primary/20 rounded-full overflow-hidden">
+<div class="h-full bg-primary-fixed-dim rounded-full" style="width: 72%"></div>
+</div>
+<div class="font-body-sm text-body-sm opacity-90 text-right">62 dari 86 Siswa</div>
+</div>
+</div>
+</div>
+<!-- Verification List Header -->
+<div class="flex items-center justify-between mt-xl">
+<h2 class="font-headline-sm text-headline-sm text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined">how_to_reg</span>
+                Antrean Verifikasi
+            </h2>
+<div class="flex gap-2">
+<button class="w-10 h-10 flex items-center justify-center rounded-full bg-surface-container border border-outline-variant text-on-surface-variant hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined">filter_list</span>
+</button>
+</div>
+</div>
+<!-- Verification Cards Stack -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-md">
+<!-- Card Item 1 -->
+<div class="bg-surface-container-lowest border border-outline-variant p-md rounded-xl hover:shadow-md transition-all duration-200 group flex gap-md">
+<div class="w-16 h-16 rounded-lg overflow-hidden shrink-0 border border-outline-variant">
+<img class="w-full h-full object-cover" data-alt="A portrait of a male student named Ahmad Fauzi, wearing a white school uniform with a green tie. He has a polite and bright expression. The background is a clean, minimalist educational setting with soft daylight. The aesthetic is high-quality documentary photography with natural tones and a focus on growth and character." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBRzpaROl8taITBd2GdKYeo5qlL9kGW1I5P-SRLecGNF77_caKVorx5DyenJ2nRjUyLlgBgO6ynfWy5wIZBYhREL5VsYP9D_frK_eGSmWYdjY1SyCTjHKpwdBwRAU0HmaWELy75EYkaHA5SFF89f-B9MDny-qf1jeEjGPHv1EZs8TH5h6N3Veq4v2DuftHkot77eAi6D8nFg1c5zoJt7XetKkeU9KTnayR652sMTqIAnvwWrtlYsH5985My17qe8BLItmAtWGPYb_o"/>
+</div>
+<div class="flex-1 space-y-sm">
+<div>
+<h3 class="font-headline-sm text-headline-sm text-on-surface group-hover:text-primary transition-colors">Ahmad Fauzi</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant">NIS: 129038 • Kelas XI-A</p>
+</div>
+<div class="flex items-center gap-3">
+<span class="text-xs font-label-md px-2 py-1 bg-surface-container text-on-surface-variant rounded-md flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">timer</span> 04:12 AM
+                        </span>
+<span class="text-xs font-label-md px-2 py-1 bg-secondary-container text-on-secondary-container rounded-md flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 1;">check_circle</span> Tepat Waktu
+                        </span>
+</div>
+<div class="flex gap-2 pt-2">
+<button class="flex-1 py-2 rounded-lg border border-error text-error font-label-md text-label-md hover:bg-error-container/20 transition-colors">Tolak</button>
+<button class="flex-[2] py-2 rounded-lg bg-primary text-on-primary font-label-md text-label-md hover:opacity-90 transition-opacity">Setujui</button>
+</div>
+</div>
+<div class="w-1 bg-primary rounded-full shrink-0"></div>
+</div>
+<!-- Card Item 2 -->
+<div class="bg-surface-container-lowest border border-outline-variant p-md rounded-xl hover:shadow-md transition-all duration-200 group flex gap-md">
+<div class="w-16 h-16 rounded-lg overflow-hidden shrink-0 border border-outline-variant">
+<img class="w-full h-full object-cover" data-alt="A portrait of a female student named Siti Aminah, wearing a modest white headscarf and school uniform. She has a gentle smile and calm eyes. The background is soft-focus green foliage in an Islamic school courtyard. Bright, optimistic lighting. High-end portraiture focusing on clarity and spiritual professionalism." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAeRLG6bxMA279XnhvdFfmzuBrKKc93H3gaRK-33zdrmQDTWSHxkl20KCsZxCfEHXYSklmbTvX9_-XC83yLBP-q9zVvwxts80FZ4CqPl14oGm4b1TGalldiC9BzCw4wJvqvpBRwmlTKYeusjDF-oJae3WujIec8Vzok1a3Xp_KGqRWsgZXPsQc0FcVmpVVfKXHNLWMiAUC5nWF3ngPe2JDPXZV2gRXrRdDpi61_F87VdNjf-BBbEi9IMWq-yenuDjDIENhiTqX-b78"/>
+</div>
+<div class="flex-1 space-y-sm">
+<div>
+<h3 class="font-headline-sm text-headline-sm text-on-surface group-hover:text-primary transition-colors">Siti Aminah</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant">NIS: 129045 • Kelas XI-B</p>
+</div>
+<div class="flex items-center gap-3">
+<span class="text-xs font-label-md px-2 py-1 bg-surface-container text-on-surface-variant rounded-md flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">timer</span> 04:18 AM
+                        </span>
+<span class="text-xs font-label-md px-2 py-1 bg-error-container text-on-error-container rounded-md flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 1;">warning</span> Terlambat
+                        </span>
+</div>
+<div class="flex gap-2 pt-2">
+<button class="flex-1 py-2 rounded-lg border border-error text-error font-label-md text-label-md hover:bg-error-container/20 transition-colors">Tolak</button>
+<button class="flex-[2] py-2 rounded-lg bg-primary text-on-primary font-label-md text-label-md hover:opacity-90 transition-opacity">Setujui</button>
+</div>
+</div>
+<div class="w-1 bg-error rounded-full shrink-0"></div>
+</div>
+<!-- Card Item 3 -->
+<div class="bg-surface-container-lowest border border-outline-variant p-md rounded-xl hover:shadow-md transition-all duration-200 group flex gap-md">
+<div class="w-16 h-16 rounded-lg overflow-hidden shrink-0 border border-outline-variant">
+<img class="w-full h-full object-cover" data-alt="A portrait of a male student named Budi Santoso, wearing a school uniform. He has a serious but determined look. The lighting is crisp and modern, set in a clean corridor of a contemporary Islamic educational center. Soft greens and whites dominate the frame. High-end, clean corporate minimalism style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDuBKiImNtbxgYkwUTkGtImZnAYKeJ6cd45nZI8hBZ0mAaNaE7bFgqvggks_mCrAG5Ad5dge5PVmTitsQwPG9ry_eSfPGrS3h8Eawcd9DGWxKgg7FzsfaOWF_9-omGWOfHpGKf4ObcqRVkela5WniCVzZwmevOp6IBt-5b103av1Mi9EmzerpPqlh57-Z3-97qpUWuujT3JwMIXk6S5ivfx1obWBxv9XZotmVyPzOnOU1UiMuSy6MzgdltZq_J2QQRmWFaHcmCppT0"/>
+</div>
+<div class="flex-1 space-y-sm">
+<div>
+<h3 class="font-headline-sm text-headline-sm text-on-surface group-hover:text-primary transition-colors">Budi Santoso</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant">NIS: 129012 • Kelas XII-C</p>
+</div>
+<div class="flex items-center gap-3">
+<span class="text-xs font-label-md px-2 py-1 bg-surface-container text-on-surface-variant rounded-md flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">timer</span> 04:05 AM
+                        </span>
+<span class="text-xs font-label-md px-2 py-1 bg-secondary-container text-on-secondary-container rounded-md flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 1;">check_circle</span> Sangat Awal
+                        </span>
+</div>
+<div class="flex gap-2 pt-2">
+<button class="flex-1 py-2 rounded-lg border border-error text-error font-label-md text-label-md hover:bg-error-container/20 transition-colors">Tolak</button>
+<button class="flex-[2] py-2 rounded-lg bg-primary text-on-primary font-label-md text-label-md hover:opacity-90 transition-opacity">Setujui</button>
+</div>
+</div>
+<div class="w-1 bg-primary rounded-full shrink-0"></div>
+</div>
+<!-- Card Item 4 -->
+<div class="bg-surface-container-lowest border border-outline-variant p-md rounded-xl hover:shadow-md transition-all duration-200 group flex gap-md">
+<div class="w-16 h-16 rounded-lg overflow-hidden shrink-0 border border-outline-variant">
+<img class="w-full h-full object-cover" data-alt="A portrait of a female student named Rizky Pratama, wearing a white hijab and professional school uniform. Friendly and diligent expression. The composition is clean, with a shallow depth of field highlighting her face against a bright, airy school classroom. The style reflects order, calm, and reliability." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBpdtX3lw1tA0OYkIXsDsb2UC4h8BuyrBpprfNTemVdIU-SZzS-obemZYncxsmwbVbwaLyk6MfPl9rlIDY0zGNCdv9MWBrGvmg9nqYlCvBVNUKgtQA4ecyu7tKHS-1WBoxyYEPXC8-x3n4AcBf90hKp2LT-LP9o9YryeEZSkHnW0viCQKGz92phfyn_LLZ9UfH0hGtaA6PZ1Mq15RDujG5cC2xYMR7wQhWytCksJHdlR9b8SmgZ8-jtyz5oOpVzn3uLZg_ot5tCXwU"/>
+</div>
+<div class="flex-1 space-y-sm">
+<div>
+<h3 class="font-headline-sm text-headline-sm text-on-surface group-hover:text-primary transition-colors">Rizky Pratama</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant">NIS: 129088 • Kelas X-D</p>
+</div>
+<div class="flex items-center gap-3">
+<span class="text-xs font-label-md px-2 py-1 bg-surface-container text-on-surface-variant rounded-md flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">timer</span> 04:22 AM
+                        </span>
+<span class="text-xs font-label-md px-2 py-1 bg-secondary-container text-on-secondary-container rounded-md flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 1;">check_circle</span> Tepat Waktu
+                        </span>
+</div>
+<div class="flex gap-2 pt-2">
+<button class="flex-1 py-2 rounded-lg border border-error text-error font-label-md text-label-md hover:bg-error-container/20 transition-colors">Tolak</button>
+<button class="flex-[2] py-2 rounded-lg bg-primary text-on-primary font-label-md text-label-md hover:opacity-90 transition-opacity">Setujui</button>
+</div>
+</div>
+<div class="w-1 bg-primary rounded-full shrink-0"></div>
+</div>
+</div>
+<!-- FAB (Bottom Floating Action) - Only visible on scroll or specific context if needed -->
+<div class="fixed bottom-24 right-6 z-40">
+<button class="w-14 h-14 bg-primary-container text-on-primary-container rounded-2xl shadow-lg flex items-center justify-center hover:scale-105 active:scale-95 transition-transform">
+<span class="material-symbols-outlined text-[28px]">done_all</span>
+</button>
+</div>
+</main>
+<!-- Bottom Navigation Bar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 bg-surface shadow-[0_-2px_4px_rgba(0,0,0,0.05)] h-20 px-sm pb-safe flex justify-around items-center">
+<!-- Dashboard -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1 hover:bg-surface-container-high rounded-xl transition-colors" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="font-label-md text-label-md">Dashboard</span>
+</a>
+<!-- Menunggu (Active) -->
+<a class="flex flex-col items-center justify-center bg-secondary-container text-on-secondary-container rounded-xl px-4 py-1 transition-transform scale-95 duration-150" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">pending_actions</span>
+<span class="font-label-md text-label-md">Menunggu</span>
+</a>
+<!-- Riwayat -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1 hover:bg-surface-container-high rounded-xl transition-colors" href="#">
+<span class="material-symbols-outlined">history</span>
+<span class="font-label-md text-label-md">Riwayat</span>
+</a>
+<!-- Pengaturan -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant px-4 py-1 hover:bg-surface-container-high rounded-xl transition-colors" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-label-md text-label-md">Pengaturan</span>
+</a>
+</nav>
+
+</div>

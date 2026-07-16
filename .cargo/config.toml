@@ -1,0 +1,4 @@
+# macOS: ld Xcode terbaru butuh deployment target eksplisit agar link cdylib
+# byproduct Leptos tidak gagal. (Sama seperti proyek Leptos lain di mesin ini.)
+[env]
+MACOSX_DEPLOYMENT_TARGET = "15.0"

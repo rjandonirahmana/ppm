@@ -1,0 +1,301 @@
+<style>
+        body { font-family: 'Work Sans', sans-serif; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+        .tab-active { color: #064e3b; border-bottom: 3px solid #064e3b; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+    
+
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<div class="bg-surface text-on-surface min-h-screen pb-24 lg:pb-0 lg:pl-72">
+<!-- Navigation Drawer (Desktop) -->
+<nav class="hidden lg:flex flex-col fixed left-0 top-0 h-screen w-72 rounded-r-xl bg-surface-container-low dark:bg-inverse-surface border-r border-outline-variant z-50">
+<div class="p-lg flex flex-col gap-sm">
+<div class="flex items-center gap-md mb-lg">
+<div class="w-12 h-12 rounded-full overflow-hidden bg-primary-container flex items-center justify-center">
+<img alt="Ustadz Profile" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBYYxN2kfGeiE-KjpvAGnMLFqGeqVMrrCfaSVgrznusqjJP_f6njibMNDwvtbeDY1hVYgUQ1r5AmVTow3hgn14A77XMBlIN1ls2LZeM_ZGivRDqbZy452kiobW_FA4UDYvs3xhOUikw6wNGsiHlnzCdXafBHweV_9oArmjd_XNMyLVpmqCtJzs5_JwDH9r2zi4dxX2DgCOXMEnUKmeuZVfG_BkwCk3YV8VUBpWWrNXjhcNz4v30P7VKYQHellME0fHAMMVoBvEoZwI"/>
+</div>
+<div>
+<p class="font-headline-sm text-headline-sm text-primary">Dewan Guru</p>
+<p class="font-label-md text-label-md text-on-surface-variant">Portal Administrasi</p>
+</div>
+</div>
+<div class="space-y-1">
+<a class="flex items-center gap-md bg-secondary-container dark:bg-primary-container text-on-secondary-container dark:text-on-primary-container rounded-full mx-2 px-4 py-3 transition-all duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">dashboard</span>
+<span class="font-label-md text-label-md">Dashboard</span>
+</a>
+<a class="flex items-center gap-md text-on-surface-variant dark:text-on-tertiary-container px-4 py-3 hover:bg-surface-variant dark:hover:bg-tertiary-container rounded-full transition-all duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined">stars</span>
+<span class="font-label-md text-label-md">Student Points</span>
+</a>
+<a class="flex items-center gap-md text-on-surface-variant dark:text-on-tertiary-container px-4 py-3 hover:bg-surface-variant dark:hover:bg-tertiary-container rounded-full transition-all duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined">verified_user</span>
+<span class="font-label-md text-label-md">Attendance</span>
+</a>
+<a class="flex items-center gap-md text-on-surface-variant dark:text-on-tertiary-container px-4 py-3 hover:bg-surface-variant dark:hover:bg-tertiary-container rounded-full transition-all duration-200 ease-in-out" href="#">
+<span class="material-symbols-outlined">analytics</span>
+<span class="font-label-md text-label-md">Reports</span>
+</a>
+</div>
+</div>
+<div class="mt-auto p-lg">
+<div class="bg-surface-container-highest p-md rounded-xl">
+<p class="text-on-surface-variant font-label-md text-label-md mb-xs">Status Server</p>
+<div class="flex items-center gap-xs">
+<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+<p class="text-primary font-label-md text-label-md">Sistem Aktif</p>
+</div>
+</div>
+</div>
+</nav>
+<!-- Top AppBar -->
+<header class="w-full sticky top-0 z-50 bg-surface dark:bg-surface-dim shadow-sm flex items-center justify-between px-container-padding py-sm max-w-full lg:max-w-none mx-auto">
+<div class="flex items-center gap-md">
+<button class="lg:hidden p-xs active:scale-95 transition-transform">
+<span class="material-symbols-outlined text-primary">menu</span>
+</button>
+<h1 class="font-headline-sm text-headline-sm text-primary dark:text-primary-fixed">Dashboard Analisis</h1>
+</div>
+<div class="flex items-center gap-md">
+<div class="hidden md:flex flex-col items-end mr-sm">
+<p class="font-label-md text-label-md text-on-surface">Ustadz Ahmad Fauzi</p>
+<p class="text-[10px] text-on-surface-variant uppercase tracking-wider">Kepala Kesantrian</p>
+</div>
+<button class="p-xs hover:bg-surface-variant/50 transition-colors rounded-full relative cursor-pointer active:scale-95 transition-transform">
+<span class="material-symbols-outlined text-primary">notifications</span>
+<span class="absolute top-1 right-1 w-2 h-2 bg-error rounded-full"></span>
+</button>
+</div>
+</header>
+<!-- Main Content -->
+<main class="max-w-[1200px] mx-auto p-container-padding lg:p-xl space-y-lg">
+<!-- Tab Navigation -->
+<section class="bg-surface-container-lowest rounded-xl p-1 border border-outline-variant/50">
+<div class="flex items-center gap-2 overflow-x-auto no-scrollbar">
+<button class="flex-1 px-lg py-2.5 font-label-md text-label-md rounded-lg tab-active bg-emerald-50/50 transition-all whitespace-nowrap">Harian</button>
+<button class="flex-1 px-lg py-2.5 font-label-md text-label-md text-on-surface-variant hover:bg-surface-variant/30 transition-all whitespace-nowrap">Bulanan</button>
+<button class="flex-1 px-lg py-2.5 font-label-md text-label-md text-on-surface-variant hover:bg-surface-variant/30 transition-all whitespace-nowrap">Tahunan</button>
+</div>
+</section>
+<!-- Summary Cards Grid -->
+<section class="grid grid-cols-1 md:grid-cols-3 gap-md lg:gap-lg">
+<!-- Total Kehadiran -->
+<div class="bg-surface-container-lowest p-lg rounded-xl border border-outline-variant shadow-sm hover:shadow-md transition-all group border-l-4 border-l-emerald-600">
+<div class="flex justify-between items-start mb-md">
+<div class="p-sm bg-secondary-container text-on-secondary-container rounded-lg">
+<span class="material-symbols-outlined">how_to_reg</span>
+</div>
+<span class="text-emerald-600 flex items-center gap-xs font-label-md text-label-md">
+<span class="material-symbols-outlined text-sm">trending_up</span> +2.4%
+                    </span>
+</div>
+<h3 class="text-on-surface-variant font-label-md text-label-md uppercase tracking-wider mb-xs">Total Kehadiran</h3>
+<p class="font-display-md text-display-md text-primary">94.2%</p>
+<div class="mt-md w-full bg-surface-variant h-2 rounded-full overflow-hidden">
+<div class="bg-emerald-600 h-full transition-all duration-1000" style="width: 94.2%;"></div>
+</div>
+</div>
+<!-- Rata-rata Poin -->
+<div class="bg-surface-container-lowest p-lg rounded-xl border border-outline-variant shadow-sm hover:shadow-md transition-all group border-l-4 border-l-emerald-600">
+<div class="flex justify-between items-start mb-md">
+<div class="p-sm bg-secondary-container text-on-secondary-container rounded-lg">
+<span class="material-symbols-outlined">stars</span>
+</div>
+<span class="text-emerald-600 flex items-center gap-xs font-label-md text-label-md">
+<span class="material-symbols-outlined text-sm">trending_up</span> +12pts
+                    </span>
+</div>
+<h3 class="text-on-surface-variant font-label-md text-label-md uppercase tracking-wider mb-xs">Rata-rata Poin</h3>
+<p class="font-display-md text-display-md text-primary">856</p>
+<p class="text-on-surface-variant text-body-sm font-body-sm mt-xs">Target: 800/Santri</p>
+</div>
+<!-- Sesi Terverifikasi -->
+<div class="bg-surface-container-lowest p-lg rounded-xl border border-outline-variant shadow-sm hover:shadow-md transition-all group border-l-4 border-l-emerald-600">
+<div class="flex justify-between items-start mb-md">
+<div class="p-sm bg-secondary-container text-on-secondary-container rounded-lg">
+<span class="material-symbols-outlined">fact_check</span>
+</div>
+<span class="text-on-surface-variant flex items-center gap-xs font-label-md text-label-md">
+<span class="material-symbols-outlined text-sm">schedule</span> Realtime
+                    </span>
+</div>
+<h3 class="text-on-surface-variant font-label-md text-label-md uppercase tracking-wider mb-xs">Sesi Terverifikasi</h3>
+<p class="font-display-md text-display-md text-primary">42/48</p>
+<p class="text-on-surface-variant text-body-sm font-body-sm mt-xs">Sisa: 6 Sesi hari ini</p>
+</div>
+</section>
+<!-- Analytics Content: Bento Grid Style -->
+<section class="grid grid-cols-1 lg:grid-cols-12 gap-lg">
+<!-- Performance Trends Chart Area -->
+<div class="lg:col-span-8 bg-surface-container-lowest p-lg rounded-xl border border-outline-variant shadow-sm overflow-hidden relative">
+<div class="flex justify-between items-center mb-lg">
+<div>
+<h2 class="font-headline-sm text-headline-sm text-primary">Tren Performa Kelas</h2>
+<p class="text-on-surface-variant text-body-sm font-body-sm">Perbandingan efektivitas belajar 7 hari terakhir</p>
+</div>
+<button class="p-sm hover:bg-surface-variant rounded-lg transition-colors">
+<span class="material-symbols-outlined">more_vert</span>
+</button>
+</div>
+<div class="h-64 w-full flex items-end justify-between gap-base px-base pb-base relative">
+<div class="absolute inset-0 flex flex-col justify-between pointer-events-none border-l border-b border-outline-variant/30">
+<div class="w-full border-t border-outline-variant/10"></div>
+<div class="w-full border-t border-outline-variant/10"></div>
+<div class="w-full border-t border-outline-variant/10"></div>
+<div class="w-full border-t border-outline-variant/10"></div>
+</div>
+<div class="flex-1 flex flex-col items-center group cursor-help">
+<div class="w-full bg-emerald-700/40 rounded-t-lg transition-all duration-500 hover:bg-emerald-600" style="height: 85%;"></div>
+<span class="mt-sm font-label-md text-label-md text-on-surface-variant">Sen</span>
+</div>
+<div class="flex-1 flex flex-col items-center group cursor-help">
+<div class="w-full bg-emerald-700/40 rounded-t-lg transition-all duration-500 hover:bg-emerald-600" style="height: 70%;"></div>
+<span class="mt-sm font-label-md text-label-md text-on-surface-variant">Sel</span>
+</div>
+<div class="flex-1 flex flex-col items-center group cursor-help">
+<div class="w-full bg-emerald-600 rounded-t-lg transition-all duration-500 hover:brightness-110 shadow-lg shadow-emerald-200" style="height: 92%;"></div>
+<span class="mt-sm font-label-md text-label-md text-emerald-700 font-semibold">Rab</span>
+</div>
+<div class="flex-1 flex flex-col items-center group cursor-help">
+<div class="w-full bg-emerald-700/40 rounded-t-lg transition-all duration-500 hover:bg-emerald-600" style="height: 65%;"></div>
+<span class="mt-sm font-label-md text-label-md text-on-surface-variant">Kam</span>
+</div>
+<div class="flex-1 flex flex-col items-center group cursor-help">
+<div class="w-full bg-emerald-700/40 rounded-t-lg transition-all duration-500 hover:bg-emerald-600" style="height: 78%;"></div>
+<span class="mt-sm font-label-md text-label-md text-on-surface-variant">Jum</span>
+</div>
+<div class="flex-1 flex flex-col items-center group cursor-help">
+<div class="w-full bg-emerald-700/40 rounded-t-lg transition-all duration-500 hover:bg-emerald-600" style="height: 45%;"></div>
+<span class="mt-sm font-label-md text-label-md text-on-surface-variant">Sab</span>
+</div>
+<div class="flex-1 flex flex-col items-center group cursor-help">
+<div class="w-full bg-emerald-700/40 rounded-t-lg transition-all duration-500 hover:bg-emerald-600" style="height: 88%;"></div>
+<span class="mt-sm font-label-md text-label-md text-on-surface-variant">Min</span>
+</div>
+</div>
+</div>
+<!-- Performance by Class List -->
+<div class="lg:col-span-4 space-y-md">
+<div class="bg-emerald-900 text-on-primary-container p-lg rounded-xl shadow-lg relative overflow-hidden">
+<div class="relative z-10">
+<p class="font-label-md text-label-md uppercase opacity-80 mb-base text-emerald-100">Highlight Kelas</p>
+<h4 class="font-headline-sm text-headline-sm mb-sm text-white">Kelas Cepatan</h4>
+<p class="text-body-sm font-body-sm mb-md text-emerald-100/90 leading-relaxed">Target hafalan 100% pekan ini. Berikan apresiasi kepada pengampu.</p>
+<button class="bg-emerald-100 text-emerald-900 px-lg py-2.5 rounded-lg font-label-md text-label-md hover:bg-white transition-all font-bold">
+                            Lihat Detail
+                        </button>
+</div>
+<div class="absolute top-0 right-0 p-lg opacity-10 transform translate-x-1/4 -translate-y-1/4">
+<span class="material-symbols-outlined text-[140px] text-white">award_star</span>
+</div>
+</div>
+<!-- Ranking Kelas Section -->
+<div class="bg-surface-container-lowest p-lg rounded-xl border border-outline-variant shadow-sm">
+<div class="flex justify-between items-center mb-md">
+<h3 class="font-headline-sm text-headline-sm text-primary">Ranking Kelas</h3>
+<span class="text-[10px] bg-secondary-container text-on-secondary-container px-2 py-0.5 rounded-full font-bold uppercase tracking-tight">Pekan Ini</span>
+</div>
+<div class="space-y-3">
+<!-- Cepatan (Top Rank) -->
+<div class="flex items-center justify-between p-3 rounded-lg bg-emerald-50/30 border border-emerald-100 group transition-all hover:bg-emerald-50">
+<div class="flex items-center gap-md">
+<div class="w-10 h-10 rounded-full bg-emerald-600 flex items-center justify-center font-bold text-white shadow-sm ring-4 ring-emerald-50">C</div>
+<div>
+<p class="font-label-md text-label-md text-on-surface font-semibold">Cepatan</p>
+<p class="text-[11px] text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">group</span> 28 Santri
+                                </p>
+</div>
+</div>
+<div class="text-right">
+<p class="font-headline-sm text-headline-sm text-emerald-700">98%</p>
+<p class="text-[10px] text-emerald-600 font-bold flex items-center justify-end">
+<span class="material-symbols-outlined text-[12px]">keyboard_arrow_up</span> 1.2%
+                                </p>
+</div>
+</div>
+<!-- Hadist Besar -->
+<div class="flex items-center justify-between p-3 rounded-lg border border-transparent hover:border-outline-variant/30 transition-all group">
+<div class="flex items-center gap-md">
+<div class="w-10 h-10 rounded-full bg-surface-variant flex items-center justify-center font-bold text-primary group-hover:bg-primary-container group-hover:text-on-primary-container transition-colors">H</div>
+<div>
+<p class="font-label-md text-label-md text-on-surface">Hadist Besar</p>
+<p class="text-[11px] text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">group</span> 15 Santri
+                                </p>
+</div>
+</div>
+<span class="font-headline-sm text-headline-sm text-primary">95%</span>
+</div>
+<!-- Lambatan -->
+<div class="flex items-center justify-between p-3 rounded-lg border border-transparent hover:border-outline-variant/30 transition-all group">
+<div class="flex items-center gap-md">
+<div class="w-10 h-10 rounded-full bg-surface-variant flex items-center justify-center font-bold text-primary group-hover:bg-primary-container group-hover:text-on-primary-container transition-colors">L</div>
+<div>
+<p class="font-label-md text-label-md text-on-surface">Lambatan</p>
+<p class="text-[11px] text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">group</span> 32 Santri
+                                </p>
+</div>
+</div>
+<span class="font-headline-sm text-headline-sm text-primary">92%</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Laporan Kinerja Section (Refined) -->
+<section class="rounded-2xl bg-emerald-950 p-xl relative overflow-hidden text-on-primary shadow-xl">
+<div class="absolute inset-0 opacity-[0.03] pointer-events-none" style="background-image: radial-gradient(circle at 2px 2px, white 1px, transparent 0); background-size: 20px 20px;"></div>
+<div class="absolute -right-20 -top-20 w-64 h-64 bg-emerald-600/10 rounded-full blur-3xl"></div>
+<div class="absolute -left-20 -bottom-20 w-64 h-64 bg-emerald-600/10 rounded-full blur-3xl"></div>
+<div class="relative z-10 flex flex-col md:flex-row items-center justify-between gap-lg text-center md:text-left">
+<div class="max-w-2xl">
+<div class="flex items-center gap-2 justify-center md:justify-start mb-md">
+<span class="w-8 h-[2px] bg-emerald-500 rounded-full"></span>
+<span class="text-emerald-400 font-label-md text-label-md uppercase tracking-widest font-bold">Laporan Kinerja</span>
+</div>
+<h2 class="font-display-md text-display-md mb-md text-white">Insight Kinerja Pengajar</h2>
+<p class="text-emerald-100/80 text-body-md font-body-md leading-relaxed">Sistem mendeteksi peningkatan kedisiplinan <span class="text-emerald-400 font-bold">15%</span> pada halaqoh subuh pekan ini. Dashboard menunjukkan tren positif pada tingkat kehadiran guru tetap.</p>
+</div>
+<div class="flex flex-col sm:flex-row gap-md shrink-0 w-full md:w-auto">
+<button class="flex-1 md:flex-none px-lg py-3.5 bg-emerald-500 text-white rounded-xl font-label-md text-label-md hover:bg-emerald-400 active:scale-95 transition-all shadow-lg shadow-emerald-900/40 flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-lg">download</span>
+                        Unduh Rekap PDF
+                    </button>
+<button class="flex items-center justify-center p-3.5 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-all text-white group">
+<span class="material-symbols-outlined group-hover:rotate-12 transition-transform">share</span>
+</button>
+</div>
+</div>
+</section>
+</main>
+<!-- BottomNavBar (Mobile) -->
+<nav class="lg:hidden fixed bottom-0 left-0 w-full flex justify-around items-center px-4 py-3 pb-safe bg-surface-container-lowest border-t border-outline-variant/30 shadow-[0_-8px_30px_rgba(0,0,0,0.04)] rounded-t-2xl z-50">
+<button class="flex flex-col items-center justify-center text-emerald-800 bg-emerald-50 rounded-2xl px-6 py-1.5 transition-all">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">home</span>
+<span class="font-label-md text-[10px] mt-1 font-bold">Home</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant px-5 py-1 transition-transform duration-150 active:scale-90">
+<span class="material-symbols-outlined">grade</span>
+<span class="font-label-md text-[10px] mt-1">Points</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant px-5 py-1 transition-transform duration-150 active:scale-90">
+<span class="material-symbols-outlined">fact_check</span>
+<span class="font-label-md text-[10px] mt-1">Verify</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant px-5 py-1 transition-transform duration-150 active:scale-90">
+<span class="material-symbols-outlined">bar_chart</span>
+<span class="font-label-md text-[10px] mt-1">Stats</span>
+</button>
+</nav>
+<!-- Floating Action Button (FAB) -->
+<button class="fixed right-lg bottom-[100px] lg:bottom-lg w-14 h-14 bg-emerald-700 text-white rounded-2xl shadow-xl flex items-center justify-center hover:bg-emerald-800 hover:scale-110 active:scale-95 transition-all z-40 group ring-4 ring-emerald-50 lg:ring-0">
+<span class="material-symbols-outlined text-3xl">add</span>
+<span class="absolute right-full mr-md py-sm px-md bg-inverse-surface text-inverse-on-surface rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none text-label-md">Entri Baru</span>
+</button>
+
+</div>

@@ -1,0 +1,103 @@
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        .mic-animation {
+            animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(43, 105, 84, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 15px rgba(43, 105, 84, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(43, 105, 84, 0); }
+        }
+        .message-gradient {
+            background: linear-gradient(to top, rgba(249, 249, 255, 1), rgba(249, 249, 255, 0));
+        }
+        body {
+            font-family: 'Work Sans', sans-serif;
+            background-color: #f9f9ff;
+            color: #151c27;
+        }
+    
+
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<div class="flex flex-col h-screen overflow-hidden">
+<!-- Top App Bar -->
+<header class="bg-surface-bright dark:bg-inverse-surface shadow-sm fixed top-0 w-full z-50 flex items-center justify-between px-gutter h-16 w-full">
+<div class="flex items-center gap-3">
+<button class="material-symbols-outlined text-on-surface-variant active:scale-95 transition-transform" data-icon="close">close</button>
+<h1 class="font-display-md text-display-md text-primary dark:text-inverse-primary">PPM AFM - Halaqah</h1>
+</div>
+<div class="flex items-center gap-2 bg-primary-container/10 px-3 py-1.5 rounded-full border border-primary-container/20">
+<span class="material-symbols-outlined text-primary-container text-[18px]" data-icon="group">group</span>
+<span class="font-label-md text-label-md text-primary-container">128</span>
+</div>
+</header>
+<main class="flex-1 mt-16 pb-24 overflow-y-auto px-gutter max-w-[1200px] mx-auto w-full">
+<!-- Speaker Profile Section (Bento Style) -->
+<section class="mt-lg mb-xl flex flex-col items-center">
+<div class="relative group">
+<div class="w-40 h-40 rounded-full bg-surface-container-highest flex items-center justify-center p-1.5 mic-animation">
+<div class="w-full h-full rounded-full overflow-hidden border-4 border-white shadow-xl">
+<img class="w-full h-full object-cover" data-alt="A portrait of a respected middle-aged Islamic scholar, Ustadz Ahmad, wearing a clean white traditional robe and a neat black peci. He has a gentle and wise facial expression, looking directly at the camera. The background is a soft-focus library filled with classic leather-bound books, conveying an atmosphere of deep knowledge, serenity, and spiritual authority in a professional light-mode aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuC7yhNjbJbFtw45w4MMp1W9sxdqR61uw9hRbF2EJsBW6J1J-2YjQMSTTawugIqGP6ocsO1aMDgTHge-mdRTN46N_e2e7j5WuCGJbSGY-u1Xq2P2jcC41pT0ZTiuYMh7T3SjsdUBfHAAXSyg7Pshbmgui6CcZzi0Pbpig5oUh3Mg36hq5CrMMfVNmj0zKpauUPDJAnbKrwaElZ3CZPboiz14V9tuAdl02m5BR3VXlNplCWP8al8Yx_GTnlQnE-WV6segrQKnFwfYTIQ"/>
+</div>
+</div>
+<div class="absolute -bottom-2 right-4 bg-primary-container text-on-primary rounded-full p-2.5 shadow-lg border-2 border-white">
+<span class="material-symbols-outlined text-[20px]" data-icon="mic">mic</span>
+</div>
+</div>
+<div class="text-center mt-md">
+<div class="inline-flex items-center gap-2 bg-error/10 px-3 py-0.5 rounded-full mb-2"><span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span><span class="text-primary font-label-md text-[10px] uppercase tracking-widest">Menunggu Jadwal</span></div>
+<h2 class="font-display-md text-display-md text-on-background">Ustadz Ahmad</h2>
+<p class="font-body-md text-body-md text-on-surface-variant">Sedang membicarakan: Adab Menuntut Ilmu</p><div class="mt-md flex flex-col items-center gap-1"><div class="flex items-center gap-2 text-primary"><span class="material-symbols-outlined text-[20px]">schedule</span><span class="font-headline-sm">08:45</span></div><p class="text-label-md text-on-surface-variant">Dimulai dalam 15 menit</p></div>
+</div>
+</section>
+<!-- Chat Area (Asymmetric Layout) -->
+<section class="flex flex-col gap-md">
+<div class="flex items-center justify-between mb-2">
+<h3 class="font-headline-sm text-headline-sm text-on-background">Obrolan Sesi</h3>
+<span class="text-label-md font-label-md text-on-surface-variant">Baru saja</span>
+</div>
+<div class="space-y-4">
+<!-- Message 1 -->
+<div class="flex gap-md items-start max-w-[85%]">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex-shrink-0 flex items-center justify-center text-on-secondary-container font-bold text-label-md">FA</div>
+<div class="bg-white p-md rounded-xl rounded-tl-none shadow-sm border border-outline-variant/30">
+<p class="font-label-md text-label-md text-primary mb-1">Faisal Azis</p>
+<p class="font-body-md text-body-md text-on-surface-variant">Masya Allah, penjelasan yang sangat mendalam Ustadz.</p>
+</div>
+</div>
+<!-- Message 2 -->
+<div class="flex gap-md items-start max-w-[85%] ml-auto flex-row-reverse">
+<div class="w-10 h-10 rounded-full bg-primary-container flex-shrink-0 flex items-center justify-center text-on-primary font-bold text-label-md">SA</div>
+<div class="bg-primary-container text-on-primary p-md rounded-xl rounded-tr-none shadow-sm">
+<p class="font-label-md text-label-md text-primary-fixed-dim mb-1">Sarah Amelia</p>
+<p class="font-body-md text-body-md">Bagaimana cara istiqomah dalam mengamalkan adab ini di lingkungan kerja?</p>
+</div>
+</div>
+<!-- Message 3 -->
+<div class="flex gap-md items-start max-w-[85%]">
+<div class="w-10 h-10 rounded-full bg-surface-container-highest flex-shrink-0 flex items-center justify-center text-on-surface-variant font-bold text-label-md">RH</div>
+<div class="bg-white p-md rounded-xl rounded-tl-none shadow-sm border border-outline-variant/30">
+<p class="font-label-md text-label-md text-primary mb-1">Rizky Hakim</p>
+<p class="font-body-md text-body-md text-on-surface-variant">Izin bertanya Ustadz, apakah ada referensi kitab yang bisa kami baca lebih lanjut?</p>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- Bottom Controls -->
+<div class="fixed bottom-0 left-0 w-full bg-surface-container-lowest shadow-[0_-4px_20px_rgba(0,0,0,0.05)] border-t border-outline-variant/20 z-50">
+<div class="max-w-[1200px] mx-auto px-gutter h-20 flex items-center justify-between gap-md">
+<!-- Left Side: Mini Input -->
+<!-- Action Cluster -->
+<div class="flex items-center gap-sm"><button class="flex-1 h-12 flex items-center justify-center gap-2 rounded-xl bg-primary text-on-primary font-bold px-lg active:scale-95 transition-all shadow-lg"><span class="material-symbols-outlined">play_circle</span><span>Mulai Sesi Sekarang</span></button></div>
+</div>
+</div>
+
+</div>
