@@ -43,13 +43,10 @@ macro_rules! raw_page_mobile {
 }
 
 // ── Admin (sidebar desktop, full-width) ────────────────────────────────────────
-raw_page!(StafDashboardPage, "staf.html", "Dashboard Staf — PPM AFM");
-raw_page!(GuruDashboardPage, "guru.html", "Analisis Guru — PPM AFM");
-raw_page!(DewanGuruDashboardPage, "dewan_guru.html", "Analisis Dewan Guru — PPM AFM");
-raw_page!(PoinPage, "poin.html", "Pantauan Poin Santri — PPM AFM");
-raw_page!(PoinDewanPage, "poin_dewan.html", "Pantauan Poin (Dewan Guru) — PPM AFM");
+// staf/guru/dewan_guru/poin/poin_dewan: sudah jadi halaman DINAMIS (data ASLI) —
+// lihat staf.rs, analisis.rs, poin.rs. Versi HTML statis dihapus dari sini.
 raw_page!(KoneksiOrtuPage, "koneksi_ortu.html", "Koneksi Orang Tua — PPM AFM");
-raw_page!(VerifikasiTahap2Page, "verifikasi_tahap2.html", "Verifikasi Kehadiran Tahap 2 — PPM AFM");
+// verifikasi_tahap2: kini halaman DINAMIS (verifikasi_tahap2.rs, data DB).
 
 // ── Mobile (device frame di desktop) ───────────────────────────────────────────
 // portal_santri/riwayat/profil: sudah jadi halaman DINAMIS (izin.rs, riwayat.rs,

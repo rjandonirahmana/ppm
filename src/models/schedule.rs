@@ -22,9 +22,11 @@ pub struct SessionItem {
     pub time_label: String,
     /// Terjadwal | Berlangsung | Selesai | Dibatalkan
     pub status_label: String,
-    /// scheduled|ongoing|finished|cancelled
+    /// scheduled|ongoing|finished|cancelled ("cancelled" = libur)
     pub status_kind: String,
     pub teacher: String,
+    /// Pengajar terpasang (untuk pre-select dropdown assign). None = belum diisi.
+    pub teacher_id: Option<i64>,
 }
 
 /// Payload halaman /sesi (nav dipilih dari role).

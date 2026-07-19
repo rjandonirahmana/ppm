@@ -5,6 +5,7 @@
 pub mod attendance;
 pub mod auth;
 pub mod dashboard;
+pub mod kelas;
 pub mod parent;
 pub mod santri;
 pub mod schedule;
@@ -12,6 +13,7 @@ pub mod schedule;
 pub use attendance::*;
 pub use auth::*;
 pub use dashboard::*;
+pub use kelas::*;
 pub use parent::*;
 pub use santri::*;
 pub use schedule::*;

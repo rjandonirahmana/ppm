@@ -93,10 +93,11 @@ pub struct SessionRow {
     pub start_time: Option<NaiveTime>,
     pub status: String,
     pub teacher: Option<String>,
+    pub teacher_id: Option<i64>,
 }
 
 const SESSION_COLS: &str = "SELECT s.id, COALESCE(s.title, cs.title), c.name, s.session_date, \
-     cs.start_time, s.status, t.full_name \
+     cs.start_time, s.status, t.full_name, s.teacher_id \
      FROM class_sessions s \
      JOIN classes c ON c.id = s.class_id \
      LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
@@ -111,25 +112,86 @@ fn row_to_session(r: tokio_postgres::Row) -> SessionRow {
         start_time: r.get(4),
         status: r.get(5),
         teacher: r.get(6),
+        teacher_id: r.get(7),
     }
 }
 
-/// SEMUA sesi (admin/pamong/dewan guru) — terbaru dulu.
-pub async fn all_sessions(pool: &Pool, limit: i64) -> Result<Vec<SessionRow>> {
+/// SEMUA sesi (admin/pamong/dewan guru) dalam rentang [since, until] — untuk
+/// halaman /sesi yang menampilkan "1 minggu terakhir yang sudah lewat".
+pub async fn all_sessions(
+    pool: &Pool,
+    since: chrono::NaiveDate,
+    until: chrono::NaiveDate,
+    limit: i64,
+) -> Result<Vec<SessionRow>> {
     let c = pool.get().await?;
-    let sql = format!("{SESSION_COLS} ORDER BY s.session_date DESC, s.id DESC LIMIT $1");
-    let rows = c.query(&sql, &[&limit]).await.context("all_sessions")?;
+    let sql = format!(
+        "{SESSION_COLS} WHERE s.session_date >= $1 AND s.session_date <= $2 \
+         ORDER BY s.session_date DESC, s.id DESC LIMIT $3"
+    );
+    let rows = c.query(&sql, &[&since, &until, &limit]).await.context("all_sessions")?;
     Ok(rows.into_iter().map(row_to_session).collect())
 }
 
-/// Sesi kelas-kelas yang DIIKUTI santri ini saja.
-pub async fn sessions_for_student(pool: &Pool, user_id: i64, limit: i64) -> Result<Vec<SessionRow>> {
+/// Sesi kelas yang DIAJAR guru ini saja, dalam rentang [since, until].
+pub async fn sessions_for_teacher(
+    pool: &Pool,
+    teacher_id: i64,
+    since: chrono::NaiveDate,
+    until: chrono::NaiveDate,
+    limit: i64,
+) -> Result<Vec<SessionRow>> {
+    let c = pool.get().await?;
+    let sql = format!(
+        "{SESSION_COLS} WHERE s.teacher_id = $1 AND s.session_date >= $2 AND s.session_date <= $3 \
+         ORDER BY s.session_date DESC, s.id DESC LIMIT $4"
+    );
+    let rows = c
+        .query(&sql, &[&teacher_id, &since, &until, &limit])
+        .await
+        .context("sessions_for_teacher")?;
+    Ok(rows.into_iter().map(row_to_session).collect())
+}
+
+/// Sesi kelas-kelas yang DIIKUTI santri ini saja, dalam rentang [since, until].
+pub async fn sessions_for_student(
+    pool: &Pool,
+    user_id: i64,
+    since: chrono::NaiveDate,
+    until: chrono::NaiveDate,
+    limit: i64,
+) -> Result<Vec<SessionRow>> {
     let c = pool.get().await?;
     let sql = format!(
         "{SESSION_COLS} \
          WHERE s.class_id IN (SELECT class_id FROM class_participants WHERE user_id = $1) \
-         ORDER BY s.session_date DESC, s.id DESC LIMIT $2"
+           AND s.session_date >= $2 AND s.session_date <= $3 \
+         ORDER BY s.session_date DESC, s.id DESC LIMIT $4"
     );
-    let rows = c.query(&sql, &[&user_id, &limit]).await.context("sessions_for_student")?;
+    let rows = c
+        .query(&sql, &[&user_id, &since, &until, &limit])
+        .await
+        .context("sessions_for_student")?;
+    Ok(rows.into_iter().map(row_to_session).collect())
+}
+
+/// Sesi milik satu kelas (untuk halaman detail kelas).
+/// Sesi kelas MULAI hari ini (`from`) ke depan — sesi yang sudah lewat TIDAK
+/// ditampilkan. Urut menaik (terdekat dulu). `from` = tanggal WIB dari service.
+pub async fn sessions_of_class(
+    pool: &Pool,
+    class_id: i64,
+    from: chrono::NaiveDate,
+    limit: i64,
+) -> Result<Vec<SessionRow>> {
+    let c = pool.get().await?;
+    let sql = format!(
+        "{SESSION_COLS} WHERE s.class_id = $1 AND s.session_date >= $2 \
+         ORDER BY s.session_date ASC, s.id ASC LIMIT $3"
+    );
+    let rows = c
+        .query(&sql, &[&class_id, &from, &limit])
+        .await
+        .context("sessions_of_class")?;
     Ok(rows.into_iter().map(row_to_session).collect())
 }

@@ -1,20 +1,21 @@
-//! web/pages/verifikasi_pamong.rs — Verifikasi Pamong (tahap 1), data ASLI.
+//! web/pages/verifikasi_tahap2.rs — Verifikasi Kehadiran TAHAP 2 (dewan guru).
 //!
-//! Antrean absensi pamong_status=pending → tombol Setujui/Tolak memanggil
-//! server fn `decide_pamong`, lalu daftar di-refetch.
+//! Antrean = absensi yang sudah disetujui pamong (pamong_status=approved) namun
+//! belum diverifikasi final (verify_status=pending). Setujui/Tolak memanggil
+//! server fn `decide_verify` (final), lalu daftar di-refetch. Poin TIDAK berubah
+//! di tahap ini (sudah diberikan saat verifikasi pamong).
 
 use leptos::prelude::*;
 use leptos_meta::Title;
 
 use crate::models::PendingAtt;
-use crate::web::api::{decide_pamong, pamong_data};
-use crate::web::components::{FetchError, DeviceFrame};
+use crate::web::api::{decide_verify, verify_data};
+use crate::web::components::{DeviceFrame, FetchError};
 
 #[component]
-pub fn VerifikasiPamongPage() -> impl IntoView {
-    let data = Resource::new(|| (), |_| async move { pamong_data().await });
+pub fn VerifikasiTahap2Page() -> impl IntoView {
+    let data = Resource::new(|| (), |_| async move { verify_data().await });
 
-    // Guard: belum login / bukan pamong → login.
     Effect::new(move |_| {
         if let Some(Err(e)) = data.get() {
             let msg = e.to_string();
@@ -27,7 +28,6 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
         }
     });
 
-    // Keputusan sedang diproses (id) → disable tombol baris tsb.
     let busy_id = RwSignal::new(Option::<i64>::None);
     let decide = move |id: i64, approve: bool| {
         if busy_id.get_untracked().is_some() {
@@ -35,22 +35,24 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
         }
         busy_id.set(Some(id));
         leptos::task::spawn_local(async move {
-            let _ = decide_pamong(id, approve).await;
+            let _ = decide_verify(id, approve).await;
             busy_id.set(None);
             data.refetch();
         });
     };
 
     view! {
-        <Title text="Verifikasi Pamong — PPM AFM" />
+        <Title text="Verifikasi Tahap 2 — PPM AFM" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
                 <header class="sticky top-0 z-10 bg-surface/90 backdrop-blur border-b border-outline-variant/60 px-5 py-4 flex items-center justify-between">
                     <div>
-                        <h1 class="text-headline-sm text-on-background">"Verifikasi Pamong"</h1>
-                        <p class="text-body-sm text-on-surface-variant">"Kehadiran menunggu tindakan"</p>
+                        <h1 class="text-headline-sm text-on-background">"Verifikasi Tahap 2"</h1>
+                        <p class="text-body-sm text-on-surface-variant">
+                            "Persetujuan final dewan guru"
+                        </p>
                     </div>
-                    <span class="material-symbols-outlined text-primary">"how_to_reg"</span>
+                    <span class="material-symbols-outlined text-primary">"verified_user"</span>
                 </header>
 
                 <div class="px-5 pt-5 space-y-5 stagger">
@@ -69,11 +71,12 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                     Ok(d) => {
                                         let pending_count = d.pending.len();
                                         view! {
-                                            // ── Statistik ────────────────────────
                                             <div class="grid grid-cols-2 gap-3">
                                                 <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
                                                     <div class="flex items-center gap-2 text-warning">
-                                                        <span class="material-symbols-outlined pulse-dot">"pending_actions"</span>
+                                                        <span class="material-symbols-outlined pulse-dot">
+                                                            "hourglass_top"
+                                                        </span>
                                                         <span
                                                             class="text-2xl font-bold text-on-background"
                                                             data-count=pending_count.to_string()
@@ -82,12 +85,12 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                         </span>
                                                     </div>
                                                     <p class="text-body-sm text-on-surface-variant mt-1">
-                                                        "Menunggu Tindakan"
+                                                        "Menunggu Final"
                                                     </p>
                                                 </div>
                                                 <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
                                                     <div class="flex items-center gap-2 text-success">
-                                                        <span class="material-symbols-outlined">"done_all"</span>
+                                                        <span class="material-symbols-outlined">"verified"</span>
                                                         <span
                                                             class="text-2xl font-bold text-on-background"
                                                             data-count=d.approved_today.to_string()
@@ -96,12 +99,11 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                         </span>
                                                     </div>
                                                     <p class="text-body-sm text-on-surface-variant mt-1">
-                                                        "Disetujui Hari Ini"
+                                                        "Terverifikasi Hari Ini"
                                                     </p>
                                                 </div>
                                             </div>
 
-                                            // ── Antrean ──────────────────────────
                                             {if d.pending.is_empty() {
                                                 view! {
                                                     <div class="bg-surface-container rounded-2xl p-8 text-center">
@@ -109,7 +111,7 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                             "task_alt"
                                                         </span>
                                                         <p class="text-body-md text-on-surface-variant mt-3">
-                                                            "Semua kehadiran sudah diverifikasi."
+                                                            "Tidak ada kehadiran menunggu verifikasi final."
                                                         </p>
                                                     </div>
                                                 }
@@ -118,7 +120,7 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                 d.pending
                                                     .into_iter()
                                                     .map(|p| {
-                                                        view! { <PendingCard p=p busy_id=busy_id decide=decide /> }
+                                                        view! { <VerifyCard p=p busy_id=busy_id decide=decide /> }
                                                     })
                                                     .collect_view()
                                                     .into_any()
@@ -126,7 +128,7 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                         }
                                             .into_any()
                                     }
-                                    Err(e) => view! { <FetchError err=e.to_string() /> }.into_any()
+                                    Err(e) => view! { <FetchError err=e.to_string() /> }.into_any(),
                                 })
                         }}
                     </Suspense>
@@ -138,7 +140,7 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
 }
 
 #[component]
-fn PendingCard(
+fn VerifyCard(
     p: PendingAtt,
     busy_id: RwSignal<Option<i64>>,
     decide: impl Fn(i64, bool) + Copy + Send + 'static,
@@ -163,6 +165,10 @@ fn PendingCard(
                         {scan}
                     </p>
                 </div>
+                <span class="px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-secondary-container text-primary shrink-0 self-start flex items-center gap-1">
+                    <span class="material-symbols-outlined text-[13px]">"how_to_reg"</span>
+                    "Pamong OK"
+                </span>
             </div>
             <div class="grid grid-cols-2 gap-3">
                 <button
@@ -177,7 +183,7 @@ fn PendingCard(
                     disabled=is_busy
                     on:click=move |_| decide(id, true)
                 >
-                    "Setujui"
+                    "Verifikasi"
                 </button>
             </div>
         </div>

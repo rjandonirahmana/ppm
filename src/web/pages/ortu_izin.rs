@@ -7,7 +7,7 @@ use leptos_meta::Title;
 
 use crate::models::ParentPermitItem;
 use crate::web::api::{children_permits, parent_home, submit_child_permit_action};
-use crate::web::components::{DeviceFrame, MobileHeader, MobileNav, NAV_ORTU};
+use crate::web::components::{DeviceFrame, MobileHeader};
 
 #[component]
 pub fn OrtuIzinPage() -> impl IntoView {
@@ -251,7 +251,6 @@ pub fn OrtuIzinPage() -> impl IntoView {
                     </Suspense>
                 </div>
 
-                <MobileNav items=NAV_ORTU active="/orang-tua/izin" />
             </div>
         </DeviceFrame>
     }

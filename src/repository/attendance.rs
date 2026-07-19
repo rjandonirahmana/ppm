@@ -279,7 +279,7 @@ pub async fn attendance_exists_today(
             c.query_opt(
                 "SELECT 1 FROM attendances \
                  WHERE user_id = $1 AND class_schedule_id IS NULL \
-                   AND (scanned_at AT TIME ZONE 'Asia/Jakarta')::date = $3 LIMIT 1",
+                   AND (scanned_at AT TIME ZONE 'Asia/Jakarta')::date = $2 LIMIT 1",
                 &[&user_id, &today],
             )
             .await?
@@ -309,5 +309,121 @@ pub async fn insert_attendance(
         )
         .await
         .context("insert_attendance")?;
+    Ok(row.get(0))
+}
+
+// ── Verifikasi TAHAP 2 (dewan guru — final) ──────────────────────────────────────
+
+/// Antrean tahap 2: sudah disetujui pamong, menunggu verifikasi final dewan guru.
+pub async fn pending_verify(pool: &Pool, limit: i64) -> Result<Vec<PendingRow>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT a.id, u.full_name, u.nis, c.name, a.scanned_at, a.gate_label, a.status \
+             FROM attendances a \
+             JOIN users u ON u.id = a.user_id \
+             LEFT JOIN class_schedules cs ON cs.id = a.class_schedule_id \
+             LEFT JOIN classes c ON c.id = cs.class_id \
+             WHERE a.pamong_status = 'approved' AND a.verify_status = 'pending' \
+             ORDER BY a.scanned_at ASC LIMIT $1",
+            &[&limit],
+        )
+        .await
+        .context("pending_verify")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| PendingRow {
+            id: r.get(0),
+            full_name: r.get(1),
+            nis: r.get(2),
+            class_name: r.get(3),
+            scanned_at: r.get(4),
+            gate_label: r.get(5),
+            status: r.get(6),
+        })
+        .collect())
+}
+
+/// Jumlah terverifikasi final hari ini.
+pub async fn verified_today(pool: &Pool) -> Result<i64> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "SELECT COUNT(*) FROM attendances \
+             WHERE verify_status = 'approved' AND verified_at >= date_trunc('day', NOW())",
+            &[],
+        )
+        .await?;
+    Ok(row.get(0))
+}
+
+/// Verifikasi final (tahap 2). Poin TIDAK diubah (sudah diberikan tahap pamong);
+/// ini hanya menyetel verify_status final. Return true bila ada baris ter-update.
+pub async fn decide_verify(pool: &Pool, att_id: i64, approver: i64, approve: bool) -> Result<bool> {
+    let c = pool.get().await?;
+    let status = if approve { "approved" } else { "rejected" };
+    let n = c
+        .execute(
+            "UPDATE attendances SET verify_status = $2, verified_by = $3, verified_at = NOW() \
+             WHERE id = $1 AND pamong_status = 'approved' AND verify_status = 'pending'",
+            &[&att_id, &status, &approver],
+        )
+        .await
+        .context("decide_verify")?;
+    Ok(n > 0)
+}
+
+// ── Auto-absent (job penutup sesi) ───────────────────────────────────────────────
+
+/// Tandai ABSENT (satu query set-based) untuk santri terdaftar yang TIDAK hadir
+/// pada sesi HARI INI yang jendelanya sudah tutup (end_time lewat). Auto-verified
+/// (pamong+dewan guru = approved, oleh sistem) + terapkan penalti poin langsung,
+/// agar tak membanjiri antrean verifikasi manusia. DIKECUALIKAN: sesi libur
+/// (cancelled), santri yang sudah punya catatan hari ini, dan santri dgn izin
+/// (permit_requests) disetujui yang mencakup hari ini. Idempotent (NOT EXISTS +
+/// UNIQUE(user_id,class_session_id)). Return jumlah absent baru.
+pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "WITH tz AS (SELECT (NOW() AT TIME ZONE 'Asia/Jakarta') AS n), \
+             ins AS ( \
+                INSERT INTO attendances \
+                    (user_id, class_session_id, class_schedule_id, status, method, \
+                     pamong_status, pamong_at, verify_status, verified_at, note, gate_label, scanned_at) \
+                SELECT cp.user_id, s.id, s.class_schedule_id, 'absent', 'manual', \
+                       'approved', NOW(), 'approved', NOW(), 'Auto: tidak hadir', 'system', NOW() \
+                FROM class_sessions s \
+                JOIN class_schedules sch ON sch.id = s.class_schedule_id \
+                JOIN class_participants cp ON cp.class_schedule_id = s.class_schedule_id \
+                CROSS JOIN tz \
+                WHERE s.session_date = (tz.n)::date \
+                  AND s.status <> 'cancelled' \
+                  AND sch.end_time < (tz.n)::time \
+                  AND NOT EXISTS (SELECT 1 FROM attendances a \
+                        WHERE a.user_id = cp.user_id AND a.class_session_id = s.id) \
+                  AND NOT EXISTS (SELECT 1 FROM attendances a2 \
+                        WHERE a2.user_id = cp.user_id AND a2.class_schedule_id = s.class_schedule_id \
+                          AND (a2.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = (tz.n)::date) \
+                  AND NOT EXISTS (SELECT 1 FROM permit_requests p \
+                        WHERE p.user_id = cp.user_id AND p.status = 'approved' \
+                          AND p.start_date <= (tz.n)::date \
+                          AND COALESCE(p.end_date, p.start_date) >= (tz.n)::date) \
+                RETURNING id, user_id \
+             ), \
+             lg AS ( \
+                INSERT INTO point_logs (user_id, delta, reason, category) \
+                SELECT user_id, -15, 'Kehadiran (absent) — otomatis', 'discipline' FROM ins \
+             ), \
+             agg AS (SELECT user_id, COUNT(*)::int AS n FROM ins GROUP BY user_id), \
+             upd AS ( \
+                UPDATE users u SET points = points - (agg.n * 15) \
+                FROM agg WHERE u.id = agg.user_id RETURNING u.id \
+             ) \
+             SELECT COUNT(*)::bigint FROM ins",
+            &[],
+        )
+        .await
+        .context("run_auto_absent")?;
     Ok(row.get(0))
 }

@@ -1,8 +1,9 @@
 //! web/app.rs — Shell HTML (SSR) + komponen root `App` + tabel route.
 //!
-//! Design system "Islamic Institutional" (emerald + Work Sans, Material 3)
-//! disuntik via Tailwind Play CDN + config token di `<head>` shell. Untuk
-//! produksi disarankan mengompilasi Tailwind (CLI) — lihat catatan di README.
+//! Design system "Islamic Institutional" (emerald + Work Sans, Material 3).
+//! Tailwind di-SELF-HOST: di-compile cargo-leptos dari `style/tailwind.css`
+//! (+ `tailwind.config.js`) → `/pkg/ppm.css` (statis), di-`<link>` di shell.
+//! Bukan lagi Play CDN (tak ada compile Tailwind di browser).
 
 use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, MetaTags, Title};
@@ -11,125 +12,10 @@ use leptos_router::{
     path,
 };
 
+use crate::web::api::get_session;
+use crate::web::components::BottomNav;
 use crate::web::pages::*;
 
-/// Konfigurasi Tailwind (token warna + tipografi PPM AFM). Disuntik sbg <script>.
-const TAILWIND_CONFIG: &str = r##"
-tailwind.config = {
-  darkMode: "class",
-  theme: { extend: {
-    colors: {
-      surface:"#f9f9ff","surface-dim":"#d3daea","surface-bright":"#f9f9ff",
-      "surface-container-lowest":"#ffffff","surface-container-low":"#f0f3ff",
-      "surface-container":"#e7eefe","surface-container-high":"#e2e8f8",
-      "surface-container-highest":"#dce2f3","on-surface":"#151c27",
-      "on-surface-variant":"#404944","inverse-surface":"#2a313d",
-      "inverse-on-surface":"#ebf1ff",outline:"#707974","outline-variant":"#bfc9c3",
-      "surface-tint":"#2b6954",primary:"#003527","on-primary":"#ffffff",
-      "primary-container":"#064e3b","on-primary-container":"#80bea6",
-      "inverse-primary":"#95d3ba",secondary:"#416656","on-secondary":"#ffffff",
-      "secondary-container":"#c3ecd7","on-secondary-container":"#476c5b",
-      tertiary:"#2c2f30","on-tertiary":"#ffffff","tertiary-container":"#424546",
-      "on-tertiary-container":"#b0b2b3",error:"#ba1a1a","on-error":"#ffffff",
-      "error-container":"#ffdad6","on-error-container":"#93000a",
-      "primary-fixed":"#b0f0d6","primary-fixed-dim":"#95d3ba",
-      "on-primary-fixed":"#002117","on-primary-fixed-variant":"#0b513d",
-      "secondary-fixed":"#c3ecd7","secondary-fixed-dim":"#a8cfbc",
-      "on-secondary-fixed":"#002115","on-secondary-fixed-variant":"#294e3f",
-      "tertiary-fixed":"#e1e3e4","tertiary-fixed-dim":"#c5c7c8",
-      "on-tertiary-fixed":"#191c1d","on-tertiary-fixed-variant":"#454748",
-      background:"#f9f9ff","on-background":"#151c27","surface-variant":"#dce2f3",
-      "success":"#059669","warning":"#f59e0b","info":"#2563eb"
-    },
-    borderRadius:{DEFAULT:"0.25rem",lg:"0.5rem",xl:"0.75rem","2xl":"1rem",full:"9999px"},
-    fontFamily:{sans:["Work Sans","system-ui","sans-serif"],
-      "display-lg":["Work Sans"],"display-md":["Work Sans"],"headline-sm":["Work Sans"],
-      "body-lg":["Work Sans"],"body-md":["Work Sans"],"body-sm":["Work Sans"],"label-md":["Work Sans"]},
-    fontSize:{
-      "display-lg":["32px",{lineHeight:"40px",letterSpacing:"-0.02em",fontWeight:"700"}],
-      "display-md":["24px",{lineHeight:"32px",letterSpacing:"-0.01em",fontWeight:"600"}],
-      "headline-sm":["20px",{lineHeight:"28px",fontWeight:"600"}],
-      "body-lg":["18px",{lineHeight:"28px",fontWeight:"400"}],
-      "body-md":["16px",{lineHeight:"24px",fontWeight:"400"}],
-      "body-sm":["14px",{lineHeight:"20px",fontWeight:"400"}],
-      "label-md":["12px",{lineHeight:"16px",letterSpacing:"0.05em",fontWeight:"600"}]
-    }
-  }}
-};
-"##;
-
-/// CSS kustom kecil (kelas non-utility yang dipakai desain).
-const CUSTOM_STYLE: &str = r##"
-body{font-family:'Work Sans',sans-serif;background-color:#f9f9ff;}
-.spiritual-gradient{background:linear-gradient(135deg,#003527 0%,#064e3b 100%);}
-.pattern-bg{background-image:url('https://www.transparenttextures.com/patterns/cubes.png');opacity:.03;}
-.input-focus-ring:focus{box-shadow:0 0 0 4px rgba(0,53,39,.1);}
-.material-symbols-outlined{font-variation-settings:'FILL' 0,'wght' 400,'GRAD' 0,'opsz' 24;}
-
-/* ── Interaktivitas global ──────────────────────────────────────────────── */
-button,a{-webkit-tap-highlight-color:transparent}
-button{transition:transform .15s ease,background-color .15s ease,border-color .15s ease,
-  box-shadow .15s ease,opacity .15s ease}
-button:active{transform:scale(.96)}
-.press{transition:transform .15s ease,box-shadow .15s ease}
-.press:active{transform:scale(.97)}
-.card-hover{transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
-.card-hover:hover{transform:translateY(-2px);box-shadow:0 10px 26px rgba(0,53,39,.10)}
-
-/* Animasi masuk + berjenjang (stagger) untuk anak-anak sebuah container. */
-@keyframes pp-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
-.anim-in{animation:pp-in .5s cubic-bezier(.2,.7,.2,1) both}
-.stagger>*{animation:pp-in .5s cubic-bezier(.2,.7,.2,1) both}
-.stagger>*:nth-child(1){animation-delay:.04s}.stagger>*:nth-child(2){animation-delay:.09s}
-.stagger>*:nth-child(3){animation-delay:.14s}.stagger>*:nth-child(4){animation-delay:.19s}
-.stagger>*:nth-child(5){animation-delay:.24s}.stagger>*:nth-child(6){animation-delay:.29s}
-.stagger>*:nth-child(7){animation-delay:.34s}.stagger>*:nth-child(8){animation-delay:.39s}
-.stagger>*:nth-child(9){animation-delay:.44s}.stagger>*:nth-child(n+10){animation-delay:.5s}
-
-/* Bar progres tumbuh dari kiri. */
-@keyframes pp-bar{from{transform:scaleX(0)}to{transform:scaleX(1)}}
-.bar-grow{transform-origin:left;animation:pp-bar 1s .25s cubic-bezier(.2,.7,.2,1) both}
-
-/* Titik hidup (live/menunggu) berdenyut. */
-@keyframes pp-pulse{0%,100%{opacity:1}50%{opacity:.35}}
-.pulse-dot{animation:pp-pulse 1.6s ease-in-out infinite}
-
-/* Bottom-sheet naik (modal QR dsb). */
-@keyframes pp-sheet{from{transform:translateY(100%)}to{transform:none}}
-.sheet-in{animation:pp-sheet .3s cubic-bezier(.2,.8,.2,1) both}
-@keyframes pp-fade{from{opacity:0}to{opacity:1}}
-.fade-in{animation:pp-fade .25s ease both}
-
-/* Scroll-reveal (elemen [data-reveal]) — disembunyikan HANYA saat JS aktif. */
-.reveal-js [data-reveal]{opacity:0;transform:translateY(20px);
-  transition:opacity .65s cubic-bezier(.22,.61,.24,1),transform .65s cubic-bezier(.22,.61,.24,1)}
-.reveal-js [data-reveal].is-visible{opacity:1;transform:none}
-
-@media (prefers-reduced-motion:reduce){
-  .anim-in,.stagger>*,.bar-grow,.pulse-dot,.sheet-in,.fade-in{animation:none}
-  .reveal-js [data-reveal]{opacity:1;transform:none;transition:none}
-}
-
-/* Halaman mobile: DESKTOP = SAMA seperti MOBILE — kolom ponsel (max-w-md di
-   markup halaman) terpusat, SCROLL DI WINDOW (bukan container ber-transform!).
-   PENTING: jangan beri transform/overflow pada kolom — itu mengubah containing
-   block position:fixed → bottom-nav ikut ter-scroll ke tengah konten (bug).
-   Dengan window-scroll: nav `fixed bottom-0 inset-x-0 max-w-md mx-auto` otomatis
-   terkunci di dasar viewport & sejajar kolom. FAB diselaraskan via .ppm-fab. */
-.ppm-stage{min-height:100vh;}
-@media (min-width:768px){
-  .ppm-stage{background:#e9edf8;}
-  .ppm-stage>div{
-    min-height:100vh;
-    background:#f9f9ff;
-    border-inline:1px solid rgba(112,121,116,.18);
-    box-shadow:0 0 44px rgba(21,28,39,.10);
-  }
-  /* FAB: di mobile right-5 (tepi layar); di desktop rapat ke tepi KOLOM
-     (kolom max-w-md = 28rem → tepi kanan kolom = 50% - 14rem). */
-  .ppm-fab{right:calc(50% - 14rem + 1.25rem) !important;}
-}
-"##;
 
 /// Shell HTML — dipanggil Axum untuk tiap SSR request.
 pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
@@ -141,10 +27,10 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
                 <meta name="theme-color" content="#003527" />
 
-                // ── Tailwind (Play CDN) + token desain PPM AFM ──────────────
-                <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-                <script inner_html=TAILWIND_CONFIG></script>
-                <style inner_html=CUSTOM_STYLE></style>
+                // ── CSS: Tailwind self-host (di-compile cargo-leptos → statis) ──
+                // Ganti Play CDN: tanpa compile Tailwind di browser. Tema & CSS
+                // kustom ada di style/tailwind.css + tailwind.config.js.
+                <link rel="stylesheet" href="/pkg/ppm.css" />
 
                 // ── Interaktivitas: scroll-reveal + count-up angka ───────────
                 // 1) Tandai <html> reveal-js SINKRON → [data-reveal] hanya
@@ -207,15 +93,21 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
 })();
 "#></script>
 
-                // ── Fonts: Work Sans + Material Symbols ─────────────────────
+                // ── Ikon Material Symbols: SELF-HOST lokal (public/fonts, ~28KB) ──
+                // Tak lagi dari Google CDN. Preload agar diunduh dini (dipakai di
+                // hampir semua halaman). @font-face ada di /pkg/ppm.css.
+                <link
+                    rel="preload"
+                    href="/fonts/material-symbols.woff2"
+                    attr:as="font"
+                    r#type="font/woff2"
+                    crossorigin=""
+                />
+                // ── Work Sans (teks) masih dari CDN (degradasi mulus ke system font).
                 <link rel="preconnect" href="https://fonts.googleapis.com" />
                 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
                 <link
                     href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@300;400;500;600;700&display=swap"
-                    rel="stylesheet"
-                />
-                <link
-                    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
                     rel="stylesheet"
                 />
 
@@ -234,6 +126,12 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
+
+    // Sesi GLOBAL (role) — dibaca oleh <BottomNav/> yang persisten. Blocking agar
+    // role sudah ada di HTML SSR (navbar benar sejak awal, tanpa kedip). Di-cache
+    // (key `()`), jadi tak refetch saat pindah halaman → navbar tak berubah.
+    let session = Resource::new_blocking(|| (), |_| async move { get_session().await.ok().flatten() });
+    provide_context(session);
 
     view! {
         <Title text="PPM AFM — Portal Absensi Santri" />
@@ -259,6 +157,9 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/poin-dewan") view=PoinDewanPage />
                 <Route path=path!("/verifikasi-pamong") view=VerifikasiPamongPage />
                 <Route path=path!("/verifikasi-tahap-2") view=VerifikasiTahap2Page />
+                <Route path=path!("/students") view=StudentsPage />
+                <Route path=path!("/kelas") view=KelasPage />
+                <Route path=path!("/kelas/:id") view=KelasDetailPage />
 
                 // Halaqah
                 <Route path=path!("/halaqah") view=HalaqahDaftarPage />
@@ -272,6 +173,9 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/orang-tua/riwayat") view=OrtuRiwayatPage />
                 <Route path=path!("/koneksi-ortu") view=KoneksiOrtuPage />
             </FlatRoutes>
+            // Navbar bawah PERSISTEN — di luar <FlatRoutes> agar tak ikut
+            // ter-swap/shimmer saat pindah halaman (hanya konten yang shimmer).
+            <BottomNav />
         </Router>
     }
 }

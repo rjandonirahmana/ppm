@@ -22,7 +22,9 @@ name = "ppm"
 output-name = "ppm"
 site-root = "target/site"
 site-pkg-dir = "pkg"
-style-file = "style/main.css"
+# Tailwind di-compile cargo-leptos (unduh binary standalone otomatis) →
+# /pkg/ppm.css. Menggantikan Play CDN. Config & purge di tailwind.config.js.
+tailwind-input-file = "style/tailwind.css"
 assets-dir = "public"
 site-addr = "0.0.0.0:3000"
 reload-port = 3001
@@ -113,3 +115,8 @@ strip = "symbols"
 [profile.wasm-release]
 inherits = "release"
 opt-level = "z"
+# panic=abort HANYA di bundle WASM → buang kode unwinding = .wasm lebih kecil.
+# Di WASM panic memang selalu abort (nol perubahan perilaku). SENGAJA TIDAK di
+# [profile.release] server: di sana panic=abort mematikan SELURUH proses (hilang
+# isolasi panic per-request) → risiko ketersediaan.
+panic = "abort"

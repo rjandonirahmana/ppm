@@ -3,6 +3,7 @@
 
 pub mod attendance;
 pub mod device;
+pub mod kelas;
 pub mod parents;
 pub mod permits;
 pub mod schedule;
@@ -10,6 +11,7 @@ pub mod users;
 
 pub use attendance::*;
 pub use device::*;
+pub use kelas::*;
 pub use parents::*;
 pub use permits::*;
 pub use schedule::*;

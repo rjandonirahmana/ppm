@@ -7,7 +7,7 @@ use leptos_meta::Title;
 
 use crate::models::{RiwayatData, RiwayatItem};
 use crate::web::api::riwayat_data;
-use crate::web::components::{FetchError, DeviceFrame, MobileHeader, MobileNav, NAV_SANTRI};
+use crate::web::components::{FetchError, DeviceFrame, MobileHeader};
 
 fn kind_border(kind: &str) -> &'static str {
     match kind {
@@ -75,7 +75,6 @@ pub fn RiwayatPage() -> impl IntoView {
                     </Suspense>
                 </div>
 
-                <MobileNav items=NAV_SANTRI active="/riwayat" />
             </div>
         </DeviceFrame>
     }

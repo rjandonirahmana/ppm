@@ -11,6 +11,8 @@ const LINKS: &[(&str, &str, &str)] = &[
     ("/izin", "Ajukan Perizinan", "event_available"),
     ("/riwayat", "Riwayat Kehadiran", "history"),
     ("/sesi", "Sesi Kelas", "groups"),
+    ("/students", "Students (santri+verifikasi)", "groups"),
+    ("/kelas", "Manajemen Kelas", "school"),
     ("/profil", "Profil Pengguna", "person"),
     ("/staf", "Dashboard Staf", "badge"),
     ("/guru", "Analisis Guru", "analytics"),

@@ -1,10 +1,14 @@
 //! service/dashboard.rs — Perakitan payload dashboard (query paralel + format).
 
 use anyhow::{bail, Result};
+use chrono::Datelike;
 use deadpool_postgres::Pool;
 
-use super::fmt::{fmt_schedule, fmt_when};
-use crate::models::{AttendanceItem, SantriHome, ScheduleInfo};
+use super::fmt::{fmt_schedule, fmt_when, wib};
+use crate::models::{
+    AnalisisData, AttendanceItem, ClassRank, LatestAtt, LiveSesi, PoinData, PointRow, SantriHome,
+    ScheduleInfo, StafHome, TeacherInsight, TrendPoint,
+};
 use crate::repository as repo;
 
 /// Payload dashboard santri. Empat query dijalankan PARALEL (satu round-trip
@@ -63,4 +67,138 @@ pub async fn santri_home(pool: &Pool, user_id: i64) -> Result<SantriHome> {
         month_pct,
         month_points: month_points.unwrap_or(0),
     })
+}
+
+/// Inisial 1-2 huruf dari nama (avatar bulat).
+fn initial_of(name: &str) -> String {
+    name.split_whitespace()
+        .take(2)
+        .filter_map(|w| w.chars().next())
+        .collect::<String>()
+        .to_uppercase()
+}
+
+/// Dashboard staf/admin (/staf): statistik hari ini + sesi live + kehadiran terbaru.
+pub async fn staf_home(pool: &Pool, name: &str) -> Result<StafHome> {
+    let (stats, live, latest) = tokio::join!(
+        repo::staf_stats(pool),
+        repo::today_sessions(pool, 6),
+        repo::latest_attendance(pool, 8),
+    );
+    let (total_santri, santri_growth_month, hadir_today, izin_pending) = stats?;
+    let pct = if total_santri > 0 { ((hadir_today * 100) / total_santri) as i32 } else { 0 };
+
+    let live = live?
+        .into_iter()
+        .map(|s| LiveSesi {
+            title: s.title,
+            teacher: s.teacher,
+            santri_count: s.santri_count,
+            state: match s.state.as_str() {
+                "ongoing" => "live".into(),
+                "scheduled" => "upcoming".into(),
+                _ => "break".into(),
+            },
+            time_label: s
+                .time_label
+                .map(|t| format!("{} WIB", t.format("%H:%M")))
+                .unwrap_or_else(|| "-".into()),
+        })
+        .collect();
+
+    let latest = latest?
+        .into_iter()
+        .map(|a| {
+            let (status_label, kind) = super::santri::status_display(&a.status);
+            LatestAtt {
+                name: a.name.clone(),
+                initial: initial_of(&a.name),
+                class_name: a.class_name.unwrap_or_else(|| "-".into()),
+                time_label: format!("{} WIB", a.scanned_at.with_timezone(&wib()).format("%H:%M")),
+                status_label: status_label.into(),
+                kind: kind.into(),
+            }
+        })
+        .collect();
+
+    Ok(StafHome {
+        name: name.to_string(),
+        total_santri,
+        santri_growth_month,
+        hadir_today,
+        pct,
+        izin_pending,
+        live,
+        latest,
+    })
+}
+
+const HARI_PENDEK: [&str; 7] = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+
+/// Dashboard analisis guru (/guru, cakupan kelas sendiri) atau dewan guru
+/// (/dewan-guru, `teacher_id = None` → seluruh pesantren).
+pub async fn analisis(pool: &Pool, name: &str, teacher_id: Option<i64>) -> Result<AnalisisData> {
+    let (summary, trend, ranking, insight) = tokio::join!(
+        repo::analisis_summary(pool, teacher_id),
+        repo::attendance_trend_7d(pool, teacher_id),
+        repo::class_ranking(pool, teacher_id, 5),
+        async {
+            if teacher_id.is_none() {
+                repo::teacher_insight(pool, 5).await
+            } else {
+                Ok(vec![])
+            }
+        },
+    );
+    let (attendance_pct, avg_points, sessions_verified) = summary?;
+
+    let trend = trend?
+        .into_iter()
+        .map(|(d, pct)| TrendPoint { label: HARI_PENDEK[d.weekday().num_days_from_sunday() as usize].into(), pct })
+        .collect();
+
+    let class_ranking = ranking?
+        .into_iter()
+        .map(|r| ClassRank {
+            name: r.name,
+            attendance_pct: r.attendance_pct,
+            avg_points: r.avg_points,
+            santri_count: r.santri_count,
+        })
+        .collect();
+
+    let teacher_insight = insight?
+        .into_iter()
+        .map(|t| TeacherInsight { name: t.name, sessions_count: t.sessions_count, attendance_pct: t.attendance_pct })
+        .collect();
+
+    Ok(AnalisisData {
+        name: name.to_string(),
+        is_dewan: teacher_id.is_none(),
+        attendance_pct,
+        avg_points,
+        sessions_verified,
+        trend,
+        class_ranking,
+        teacher_insight,
+    })
+}
+
+/// Papan poin santri (/poin staf/pamong — cakupan sendiri; /poin-dewan dewan
+/// guru/admin — `can_adjust=true`, boleh tambah/kurangi poin manual).
+pub async fn poin_data(pool: &Pool, teacher_id: Option<i64>, can_adjust: bool) -> Result<PoinData> {
+    let (avg, board) = tokio::join!(repo::points_avg(pool, teacher_id), repo::points_board(pool, teacher_id, 20, true));
+    let (avg_points, total_santri) = avg?;
+    let top = board?
+        .into_iter()
+        .map(|r| PointRow {
+            user_id: r.user_id,
+            name: r.name.clone(),
+            nis: r.nis,
+            class_name: r.class_name,
+            points: r.points,
+            initial: initial_of(&r.name),
+        })
+        .collect();
+    Ok(PoinData { can_adjust, avg_points, total_santri, top })
 }

@@ -35,10 +35,12 @@ fn semester_start() -> (chrono::DateTime<Utc>, String) {
     (start_utc, label)
 }
 
-fn status_display(status: &str) -> (&'static str, &'static str) {
+pub(crate) fn status_display(status: &str) -> (&'static str, &'static str) {
     match status {
         "present" => ("HADIR", "present"),
         "late" => ("TERLAMBAT", "late"),
+        // Warna reuse "late" (oranye) — visual "irregular"; label dibedakan.
+        "outside_schedule" => ("DI LUAR JADWAL", "late"),
         "permit" | "sick" => ("IZIN", "permit"),
         _ => ("ALPA", "absent"),
     }
@@ -189,6 +191,7 @@ pub async fn profil(pool: &Pool, user_id: i64) -> Result<ProfilData> {
     Ok(ProfilData {
         name: p.full_name,
         username: p.username.unwrap_or_default(),
+        role: p.role.clone(),
         role_label: role_label.into(),
         email: p.email,
         phone: p.phone_number,

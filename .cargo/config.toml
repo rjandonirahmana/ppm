@@ -2,3 +2,13 @@
 # byproduct Leptos tidak gagal. (Sama seperti proyek Leptos lain di mesin ini.)
 [env]
 MACOSX_DEPLOYMENT_TARGET = "15.0"
+
+# macOS host-only: linker Apple baru (ld-prime, ld-1267 di Xcode 26) meng-dead-strip
+# simbol internal LLVM (anon.*.llvm dari monomorphisasi generik, mis. VecDeque fold)
+# yang MASIH direferensikan → "Undefined symbols for architecture arm64" saat me-link
+# cdylib byproduct native `libppm.dylib`. Paksa linker KLASIK (ld64) hanya di target
+# host; build wasm (target berbeda) tak terpengaruh. -ld_classic memang deprecated
+# (muncul warning) tapi masih ada & stabil di ld-1267. Bila kelak dihapus Apple,
+# alternatif: pasang `lld` (brew install llvm) lalu -fuse-ld=lld, atau codegen-units=1.
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-ld_classic"]

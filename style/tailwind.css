@@ -1,0 +1,106 @@
+/* Input Tailwind PPM AFM — di-compile cargo-leptos → /pkg/ppm.css (statis).
+   Menggantikan Play CDN. Utility di-purge lewat tailwind.config.js (content).
+   CSS kustom (kelas non-utility) ditaruh setelah utilities sebagai CSS biasa. */
+/* Tailwind v4 (versi yang diunduh cargo-leptos). `@config` memuat tema
+   Material-3 dari tailwind.config.js (v4 tak baca config JS otomatis). */
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+:root { color-scheme: light; }
+
+/* ── Token & kelas kustom (dulu CUSTOM_STYLE inline di <head>) ──────────────── */
+body{font-family:'Work Sans',sans-serif;background-color:#f9f9ff;}
+.spiritual-gradient{background:linear-gradient(135deg,#003527 0%,#064e3b 100%);}
+.pattern-bg{background-image:url('https://www.transparenttextures.com/patterns/cubes.png');opacity:.03;}
+.input-focus-ring:focus{box-shadow:0 0 0 4px rgba(0,53,39,.1);}
+/* Ikon Material Symbols — SELF-HOST subset 86 ikon (public/fonts/, ~28KB).
+   Tak lagi dari Google CDN → cepat, offline, tanpa flash teks. @font-face di
+   luar layer; kelasnya di @layer base agar utility ukuran (text-2xl, dll) tetap
+   bisa menimpa font-size. Inline style FILL 1 tetap menimpa variation-settings. */
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: block;
+  src: url('/fonts/material-symbols.woff2') format('woff2');
+}
+@layer base {
+  .material-symbols-outlined {
+    font-family: 'Material Symbols Outlined';
+    font-weight: normal;
+    font-style: normal;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    display: inline-block;
+    white-space: nowrap;
+    word-wrap: normal;
+    direction: ltr;
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  }
+}
+
+/* ── Interaktivitas global ──────────────────────────────────────────────── */
+button,a{-webkit-tap-highlight-color:transparent}
+button{transition:transform .15s ease,background-color .15s ease,border-color .15s ease,
+  box-shadow .15s ease,opacity .15s ease}
+button:active{transform:scale(.96)}
+.press{transition:transform .15s ease,box-shadow .15s ease}
+.press:active{transform:scale(.97)}
+.card-hover{transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+.card-hover:hover{transform:translateY(-2px);box-shadow:0 10px 26px rgba(0,53,39,.10)}
+
+/* Animasi masuk + berjenjang (stagger) untuk anak-anak sebuah container. */
+@keyframes pp-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.anim-in{animation:pp-in .5s cubic-bezier(.2,.7,.2,1) both}
+.stagger>*{animation:pp-in .5s cubic-bezier(.2,.7,.2,1) both}
+.stagger>*:nth-child(1){animation-delay:.04s}.stagger>*:nth-child(2){animation-delay:.09s}
+.stagger>*:nth-child(3){animation-delay:.14s}.stagger>*:nth-child(4){animation-delay:.19s}
+.stagger>*:nth-child(5){animation-delay:.24s}.stagger>*:nth-child(6){animation-delay:.29s}
+.stagger>*:nth-child(7){animation-delay:.34s}.stagger>*:nth-child(8){animation-delay:.39s}
+.stagger>*:nth-child(9){animation-delay:.44s}.stagger>*:nth-child(n+10){animation-delay:.5s}
+
+/* Bar progres tumbuh dari kiri. */
+@keyframes pp-bar{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.bar-grow{transform-origin:left;animation:pp-bar 1s .25s cubic-bezier(.2,.7,.2,1) both}
+
+/* Titik hidup (live/menunggu) berdenyut. */
+@keyframes pp-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.pulse-dot{animation:pp-pulse 1.6s ease-in-out infinite}
+
+/* Bottom-sheet naik (modal QR dsb). */
+@keyframes pp-sheet{from{transform:translateY(100%)}to{transform:none}}
+.sheet-in{animation:pp-sheet .3s cubic-bezier(.2,.8,.2,1) both}
+@keyframes pp-fade{from{opacity:0}to{opacity:1}}
+.fade-in{animation:pp-fade .25s ease both}
+
+/* Scroll-reveal (elemen [data-reveal]) — disembunyikan HANYA saat JS aktif. */
+.reveal-js [data-reveal]{opacity:0;transform:translateY(20px);
+  transition:opacity .65s cubic-bezier(.22,.61,.24,1),transform .65s cubic-bezier(.22,.61,.24,1)}
+.reveal-js [data-reveal].is-visible{opacity:1;transform:none}
+
+@media (prefers-reduced-motion:reduce){
+  .anim-in,.stagger>*,.bar-grow,.pulse-dot,.sheet-in,.fade-in{animation:none}
+  .reveal-js [data-reveal]{opacity:1;transform:none;transition:none}
+}
+
+/* Halaman mobile: DESKTOP = SAMA seperti MOBILE — kolom ponsel (max-w-md di
+   markup halaman) terpusat, SCROLL DI WINDOW (bukan container ber-transform!).
+   PENTING: jangan beri transform/overflow pada kolom — itu mengubah containing
+   block position:fixed → bottom-nav ikut ter-scroll ke tengah konten (bug).
+   Dengan window-scroll: nav `fixed bottom-0 inset-x-0 max-w-md mx-auto` otomatis
+   terkunci di dasar viewport & sejajar kolom. FAB diselaraskan via .ppm-fab. */
+.ppm-stage{min-height:100vh;}
+@media (min-width:768px){
+  .ppm-stage{background:#e9edf8;}
+  .ppm-stage>div{
+    min-height:100vh;
+    background:#f9f9ff;
+    border-inline:1px solid rgba(112,121,116,.18);
+    box-shadow:0 0 44px rgba(21,28,39,.10);
+  }
+  /* FAB: di mobile right-5 (tepi layar); di desktop rapat ke tepi KOLOM
+     (kolom max-w-md = 28rem → tepi kanan kolom = 50% - 14rem). */
+  .ppm-fab{right:calc(50% - 14rem + 1.25rem) !important;}
+}

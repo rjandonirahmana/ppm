@@ -1,6 +1,9 @@
 //! web/components.rs — Komponen bersama.
 
 use leptos::prelude::*;
+use leptos_router::hooks::use_location;
+
+use crate::models::SessionUser;
 
 /// Header mobile sticky: judul + lonceng notifikasi interaktif (popover).
 #[component]
@@ -87,6 +90,86 @@ pub struct NavDef {
     pub href: &'static str,
 }
 
+/// Path (prefix) yang MENAMPILKAN bottom-nav. Selain ini (/, /login, /menu,
+/// /halaqah*, /rekaman, /koneksi-ortu) tak ada nav.
+fn nav_visible(path: &str) -> bool {
+    const PREFIXES: &[&str] = &[
+        "/santri", "/izin", "/riwayat", "/sesi", "/profil", "/staf", "/guru",
+        "/dewan-guru", "/poin", "/poin-dewan", "/verifikasi-pamong",
+        "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua",
+    ];
+    PREFIXES
+        .iter()
+        .any(|p| path == *p || path.starts_with(&format!("{p}/")))
+}
+
+/// Item aktif = href sama atau path adalah sub-rute-nya (mis. /kelas/5 → /kelas).
+fn item_active(path: &str, href: &str) -> bool {
+    path == href || (href != "/" && path.starts_with(&format!("{href}/")))
+}
+
+/// Navbar bawah PERSISTEN — dirender SEKALI di `App` (di luar `<FlatRoutes>`),
+/// jadi TIDAK ikut ter-swap/shimmer saat pindah halaman. Item dari role (context
+/// sesi global), halaman aktif dari URL. Struktur dibangun sekali per-role; saat
+/// navigasi hanya atribut `class`/`style` yang re-eval (highlight bergeser),
+/// nav TIDAK dibangun ulang → tanpa kedip.
+#[component]
+pub fn BottomNav() -> impl IntoView {
+    let pathname = use_location().pathname;
+    let session = use_context::<Resource<Option<SessionUser>>>();
+    // <Transition> WAJIB: membaca Resource sesi harus di dalam Suspense/Transition
+    // (kalau tidak → hydration-mismatch). Transition (bukan Suspense) menjaga nav
+    // tetap tampil, tak blank, saat resource resolve.
+    view! {
+        <Transition fallback=|| ()>
+        {move || {
+            // Hanya melacak `session` (bukan pathname) → tak rebuild saat navigasi.
+            let role = session
+                .and_then(|s| s.get())
+                .flatten()
+                .map(|u| u.role)
+                .unwrap_or_default();
+            let items = nav_for(&role);
+            let cols = match items.len() {
+                3 => "grid grid-cols-3",
+                5 => "grid grid-cols-5",
+                _ => "grid grid-cols-4",
+            };
+            view! {
+                <nav
+                    class="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-surface-container-lowest border-t border-outline-variant/60 z-20"
+                    style=move || if nav_visible(&pathname.get()) { "" } else { "display:none" }
+                >
+                    <div class=cols>
+                        {items
+                            .iter()
+                            .map(|it| {
+                                let href = it.href;
+                                view! {
+                                    <a
+                                        href=href
+                                        class=move || {
+                                            if item_active(&pathname.get(), href) {
+                                                "flex flex-col items-center gap-0.5 py-2.5 text-primary"
+                                            } else {
+                                                "flex flex-col items-center gap-0.5 py-2.5 text-on-surface-variant"
+                                            }
+                                        }
+                                    >
+                                        <span class="material-symbols-outlined">{it.icon}</span>
+                                        <span class="text-[11px] font-medium">{it.label}</span>
+                                    </a>
+                                }
+                            })
+                            .collect_view()}
+                    </div>
+                </nav>
+            }
+        }}
+        </Transition>
+    }
+}
+
 /// Navigasi bawah mobile (fixed di dalam DeviceFrame).
 #[component]
 pub fn MobileNav(items: &'static [NavDef], active: &'static str) -> impl IntoView {
@@ -129,10 +212,17 @@ pub const NAV_SANTRI: &[NavDef] = &[
     NavDef { icon: "person", label: "Profil", href: "/profil" },
 ];
 
-/// Nav peran: pamong/dewan guru/admin (halaman dinamis).
+// ── Navbar STAF SERAGAM ──────────────────────────────────────────────────────
+// admin / pamong / guru / dewan-guru memakai item YANG SAMA (Beranda · Students ·
+// Kelas · Sesi · Profil) supaya navbar tak "berubah-ubah" antar halaman. Yang
+// beda HANYA tujuan "Beranda" (dashboard tiap peran, dari models::role_home).
+
+/// Nav peran: pamong (supervisor). Beranda → /verifikasi-pamong.
 pub const NAV_PAMONG: &[NavDef] = &[
-    NavDef { icon: "how_to_reg", label: "Verifikasi", href: "/verifikasi-pamong" },
-    NavDef { icon: "groups", label: "Sesi", href: "/sesi" },
+    NavDef { icon: "dashboard", label: "Beranda", href: "/verifikasi-pamong" },
+    NavDef { icon: "groups", label: "Students", href: "/students" },
+    NavDef { icon: "school", label: "Kelas", href: "/kelas" },
+    NavDef { icon: "cast_for_education", label: "Sesi", href: "/sesi" },
     NavDef { icon: "person", label: "Profil", href: "/profil" },
 ];
 
@@ -181,20 +271,31 @@ pub fn FetchError(err: String) -> impl IntoView {
     }
 }
 
-/// Nav peran: staf/admin.
+/// Nav peran: admin. Beranda → /staf.
 pub const NAV_STAF: &[NavDef] = &[
     NavDef { icon: "dashboard", label: "Beranda", href: "/staf" },
-    NavDef { icon: "groups", label: "Santri", href: "/poin" },
-    NavDef { icon: "school", label: "Kelas", href: "/halaqah" },
-    NavDef { icon: "monitoring", label: "Laporan", href: "/guru" },
+    NavDef { icon: "groups", label: "Students", href: "/students" },
+    NavDef { icon: "school", label: "Kelas", href: "/kelas" },
+    NavDef { icon: "cast_for_education", label: "Sesi", href: "/sesi" },
+    NavDef { icon: "person", label: "Profil", href: "/profil" },
 ];
 
-/// Nav peran: dewan guru.
+/// Nav peran: guru (teacher). Beranda → /guru.
 pub const NAV_GURU: &[NavDef] = &[
-    NavDef { icon: "home", label: "Home", href: "/guru" },
-    NavDef { icon: "stars", label: "Poin", href: "/poin-dewan" },
-    NavDef { icon: "verified_user", label: "Verifikasi", href: "/verifikasi-tahap-2" },
-    NavDef { icon: "insights", label: "Statistik", href: "/dewan-guru" },
+    NavDef { icon: "dashboard", label: "Beranda", href: "/guru" },
+    NavDef { icon: "groups", label: "Students", href: "/students" },
+    NavDef { icon: "school", label: "Kelas", href: "/kelas" },
+    NavDef { icon: "cast_for_education", label: "Sesi", href: "/sesi" },
+    NavDef { icon: "person", label: "Profil", href: "/profil" },
+];
+
+/// Nav peran: dewan guru. Beranda → /dewan-guru.
+pub const NAV_DEWAN: &[NavDef] = &[
+    NavDef { icon: "dashboard", label: "Beranda", href: "/dewan-guru" },
+    NavDef { icon: "groups", label: "Students", href: "/students" },
+    NavDef { icon: "school", label: "Kelas", href: "/kelas" },
+    NavDef { icon: "cast_for_education", label: "Sesi", href: "/sesi" },
+    NavDef { icon: "person", label: "Profil", href: "/profil" },
 ];
 
 /// Nav peran: orang tua.
@@ -204,6 +305,23 @@ pub const NAV_ORTU: &[NavDef] = &[
     NavDef { icon: "event_available", label: "Izin", href: "/orang-tua/izin" },
     NavDef { icon: "person", label: "Profil", href: "/profil" },
 ];
+
+/// SATU sumber kebenaran navbar bawah per-PERAN. Semua halaman WAJIB memakai ini
+/// (jangan hardcode / duplikat match) agar navbar konsisten saat pindah halaman.
+///   • santri  → NAV_SANTRI (Beranda·Riwayat·Sesi·Izin·Profil)
+///   • parent  → NAV_ORTU   (Beranda·Riwayat·Izin·Profil)
+///   • STAF (admin/pamong/guru/dewan) → item SAMA (Beranda·Students·Kelas·Sesi·
+///     Profil); hanya tujuan "Beranda" beda per peran.
+pub fn nav_for(role: &str) -> &'static [NavDef] {
+    match role {
+        "parent" => NAV_ORTU,
+        "supervisor" => NAV_PAMONG,
+        "teacher" => NAV_GURU,
+        "dewan_guru" => NAV_DEWAN,
+        "admin" => NAV_STAF,
+        _ => NAV_SANTRI, // santri + fallback aman
+    }
+}
 
 /// Bingkai halaman berorientasi MOBILE.
 ///

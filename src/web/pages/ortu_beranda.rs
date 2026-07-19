@@ -11,7 +11,7 @@ use leptos_meta::Title;
 
 use crate::models::{ChildMonitor, ParentHome, StudentSearchItem};
 use crate::web::api::{parent_home, request_connection_action, search_students_action};
-use crate::web::components::{FetchError, DeviceFrame, MobileHeader, MobileNav, NAV_ORTU};
+use crate::web::components::{FetchError, DeviceFrame, MobileHeader};
 
 #[component]
 pub fn OrtuBerandaPage() -> impl IntoView {
@@ -69,7 +69,6 @@ pub fn OrtuBerandaPage() -> impl IntoView {
                     </Suspense>
                 </div>
 
-                <MobileNav items=NAV_ORTU active="/orang-tua" />
             </div>
         </DeviceFrame>
     }

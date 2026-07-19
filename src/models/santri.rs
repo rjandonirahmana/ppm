@@ -67,6 +67,8 @@ pub struct IzinData {
 pub struct ProfilData {
     pub name: String,
     pub username: String,
+    /// Peran mentah (santri/parent/teacher/dewan_guru/supervisor/admin) — utk memilih nav.
+    pub role: String,
     /// Label peran tampilan, mis. "SANTRI".
     pub role_label: String,
     pub email: Option<String>,

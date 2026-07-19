@@ -7,7 +7,7 @@ use leptos_meta::Title;
 
 use crate::models::ProfilData;
 use crate::web::api::{logout_action, profil_data};
-use crate::web::components::{DeviceFrame, MobileHeader, MobileNav, NAV_SANTRI};
+use crate::web::components::{DeviceFrame, MobileHeader};
 
 #[component]
 pub fn ProfilPage() -> impl IntoView {
@@ -90,7 +90,6 @@ pub fn ProfilPage() -> impl IntoView {
                     </div>
                 </div>
 
-                <MobileNav items=NAV_SANTRI active="/profil" />
             </div>
         </DeviceFrame>
     }

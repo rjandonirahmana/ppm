@@ -36,6 +36,7 @@ pub fn role_home(role: &str) -> &'static str {
     match role {
         "admin" => "/staf",
         "teacher" => "/guru",
+        "dewan_guru" => "/dewan-guru",
         "supervisor" => "/verifikasi-pamong",
         "santri" => "/santri",
         "parent" => "/orang-tua",

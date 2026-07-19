@@ -5,6 +5,7 @@ pub mod attendance;
 pub mod auth;
 pub mod dashboard;
 pub mod fmt;
+pub mod kelas;
 pub mod parent;
 pub mod santri;
 pub mod sessions;

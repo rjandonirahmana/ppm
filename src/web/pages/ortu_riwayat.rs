@@ -7,7 +7,7 @@ use leptos_meta::Title;
 
 use crate::models::RiwayatItem;
 use crate::web::api::{child_riwayat, parent_home};
-use crate::web::components::{DeviceFrame, MobileHeader, MobileNav, NAV_ORTU};
+use crate::web::components::{DeviceFrame, MobileHeader};
 
 #[component]
 pub fn OrtuRiwayatPage() -> impl IntoView {
@@ -183,7 +183,6 @@ pub fn OrtuRiwayatPage() -> impl IntoView {
                     </Suspense>
                 </div>
 
-                <MobileNav items=NAV_ORTU active="/orang-tua/riwayat" />
             </div>
         </DeviceFrame>
     }

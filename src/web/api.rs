@@ -6,8 +6,9 @@
 use leptos::prelude::*;
 
 use crate::models::{
-    ChildRiwayat, ConnRequest, IzinData, PamongData, ParentHome, ParentPermitItem, ProfilData,
-    RiwayatData, SantriHome, SessionUser, SessionsData, StudentSearchItem,
+    AnalisisData, ChildRiwayat, ConnRequest, IzinData, KelasData, KelasDetail, PamongData,
+    ParentHome, ParentPermitItem, PoinData, ProfilData, RiwayatData, SantriHome, SessionUser,
+    SessionsData, StafHome, StudentSearchItem, StudentsData,
 };
 
 // ── Helper server-only ─────────────────────────────────────────────────────────
@@ -202,7 +203,7 @@ pub async fn profil_data() -> Result<ProfilData, ServerFnError> {
 /// SEMUA sesi. Orang tua tidak punya akses.
 #[server(GetSessions, "/api-fn")]
 pub async fn sessions_list() -> Result<SessionsData, ServerFnError> {
-    let sess = require_roles(&["santri", "teacher", "supervisor", "admin"]).await?;
+    let sess = require_roles(&["santri", "teacher", "supervisor", "admin", "dewan_guru"]).await?;
     let state = app_state().await?;
     crate::service::sessions::list_for(&state.pool, &sess)
         .await
@@ -319,4 +320,291 @@ pub async fn decide_pamong(att_id: i64, approve: bool) -> Result<(), ServerFnErr
         .await
         .map_err(err)?;
     Ok(())
+}
+
+/// Antrean verifikasi TAHAP 2 (dewan guru/admin) — final.
+#[server(GetVerifyData, "/api-fn")]
+pub async fn verify_data() -> Result<PamongData, ServerFnError> {
+    require_roles(&["dewan_guru", "admin"]).await?;
+    let state = app_state().await?;
+    crate::service::attendance::verify_data(&state.pool)
+        .await
+        .map_err(err)
+}
+
+/// Verifikasi final satu absensi (tahap 2).
+#[server(DecideVerify, "/api-fn")]
+pub async fn decide_verify(att_id: i64, approve: bool) -> Result<(), ServerFnError> {
+    let sess = require_roles(&["dewan_guru", "admin"]).await?;
+    let state = app_state().await?;
+    crate::service::attendance::decide_verify(&state.pool, att_id, sess.id, approve)
+        .await
+        .map_err(err)?;
+    Ok(())
+}
+
+// ── Manajemen Kelas (admin/dewan guru/pamong) ─────────────────────────────────────
+
+#[cfg(feature = "ssr")]
+const KELAS_ROLES: &[&str] = &["admin", "dewan_guru", "supervisor", "teacher"];
+
+/// Daftar kelas + statistik (/kelas).
+#[server(GetKelasList, "/api-fn")]
+pub async fn kelas_list() -> Result<KelasData, ServerFnError> {
+    let sess = require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::kelas_list(&state.pool, &sess.role)
+        .await
+        .map_err(err)
+}
+
+/// Detail kelas (/kelas/:id) — anggota, jadwal, sesi, opsi form.
+#[server(GetKelasDetail, "/api-fn")]
+pub async fn kelas_detail(class_id: i64) -> Result<KelasDetail, ServerFnError> {
+    let sess = require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::kelas_detail(&state.pool, &sess.role, class_id)
+        .await
+        .map_err(err)
+}
+
+/// Buat kelas baru (nama + kategori fleksibel).
+#[server(CreateClass, "/api-fn")]
+pub async fn create_class_action(
+    name: String,
+    category: String,
+    description: String,
+) -> Result<i64, ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::create_class(&state.pool, &name, &category, &description)
+        .await
+        .map_err(err)
+}
+
+/// Ubah kelas (nama + kategori) — Edit Detail Kelas.
+#[server(UpdateClass, "/api-fn")]
+pub async fn update_class_action(
+    class_id: i64,
+    name: String,
+    category: String,
+) -> Result<(), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::update_class(&state.pool, class_id, &name, &category)
+        .await
+        .map_err(err)
+}
+
+/// Kategori kelas yang sudah dipakai (dropdown + boleh ketik baru).
+#[server(GetCategories, "/api-fn")]
+pub async fn class_categories() -> Result<Vec<String>, ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::categories(&state.pool)
+        .await
+        .map_err(err)
+}
+
+/// Buat jadwal baru untuk sebuah kelas.
+#[server(CreateSchedule, "/api-fn")]
+pub async fn create_schedule_action(
+    class_id: i64,
+    title: String,
+    start_time: String,
+    end_time: String,
+    limit_time: String,
+    recurrence: String,
+    start_date: String,
+    end_date: String,
+) -> Result<i64, ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::create_schedule(
+        &state.pool, class_id, &title, &start_time, &end_time, &limit_time, &recurrence,
+        &start_date, &end_date,
+    )
+    .await
+    .map_err(err)
+}
+
+/// Buat sesi baru untuk sebuah kelas.
+#[server(CreateSession, "/api-fn")]
+pub async fn create_session_action(
+    class_id: i64,
+    schedule_id: i64,
+    teacher_id: i64,
+    title: String,
+    session_date: String,
+) -> Result<i64, ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::create_session(
+        &state.pool,
+        class_id,
+        Some(schedule_id),
+        Some(teacher_id),
+        &title,
+        &session_date,
+    )
+    .await
+    .map_err(err)
+}
+
+/// Tambah santri ke kelas (pada jadwal terpilih).
+#[server(AddMember, "/api-fn")]
+pub async fn add_member_action(
+    class_id: i64,
+    schedule_id: i64,
+    student_id: i64,
+) -> Result<(), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::add_member(&state.pool, class_id, schedule_id, student_id)
+        .await
+        .map_err(err)
+}
+
+/// Ubah jadwal.
+#[server(UpdateSchedule, "/api-fn")]
+pub async fn update_schedule_action(
+    schedule_id: i64,
+    title: String,
+    start_time: String,
+    end_time: String,
+    limit_time: String,
+    recurrence: String,
+    start_date: String,
+    end_date: String,
+) -> Result<(), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::update_schedule(
+        &state.pool, schedule_id, &title, &start_time, &end_time, &limit_time, &recurrence,
+        &start_date, &end_date,
+    )
+    .await
+    .map_err(err)
+}
+
+/// Hapus jadwal.
+#[server(DeleteSchedule, "/api-fn")]
+pub async fn delete_schedule_action(schedule_id: i64) -> Result<(), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::delete_schedule(&state.pool, schedule_id)
+        .await
+        .map_err(err)
+}
+
+/// Generate sesi satu bulan dari sebuah jadwal (materialisasi). Return jumlah baru.
+#[server(GenerateMonthSessions, "/api-fn")]
+pub async fn generate_month_action(
+    schedule_id: i64,
+    year: i32,
+    month: u32,
+) -> Result<i64, ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::generate_month_sessions(&state.pool, schedule_id, year, month)
+        .await
+        .map_err(err)
+}
+
+/// Keluarkan santri dari kelas.
+#[server(RemoveMember, "/api-fn")]
+pub async fn remove_member_action(class_id: i64, student_id: i64) -> Result<(), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::remove_member(&state.pool, class_id, student_id)
+        .await
+        .map_err(err)
+}
+
+/// Pasang/ubah pengajar sebuah sesi (0 = kosongkan).
+#[server(SetSessionTeacher, "/api-fn")]
+pub async fn set_session_teacher_action(session_id: i64, teacher_id: i64) -> Result<(), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::set_session_teacher(&state.pool, session_id, teacher_id)
+        .await
+        .map_err(err)
+}
+
+/// Tandai sesi libur / aktif kembali.
+#[server(SetSessionLibur, "/api-fn")]
+pub async fn set_session_libur_action(session_id: i64, libur: bool) -> Result<(), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::set_session_libur(&state.pool, session_id, libur)
+        .await
+        .map_err(err)
+}
+
+/// Cari santri (nama/NIS) untuk ditambahkan ke kelas.
+#[server(StaffSearchStudents, "/api-fn")]
+pub async fn staff_search_students(q: String) -> Result<Vec<StudentSearchItem>, ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::search_students(&state.pool, &q)
+        .await
+        .map_err(err)
+}
+
+/// Halaman Students: daftar santri + antrean verifikasi sesuai peran.
+#[server(GetStudentsData, "/api-fn")]
+pub async fn students_data() -> Result<StudentsData, ServerFnError> {
+    let sess = require_roles(&["admin", "dewan_guru", "supervisor", "teacher"]).await?;
+    let state = app_state().await?;
+    crate::service::kelas::students_data(&state.pool, &sess)
+        .await
+        .map_err(err)
+}
+
+// ── Sisi STAF / GURU / DEWAN GURU ────────────────────────────────────────────────
+
+/// Dashboard staf (/staf) — statistik hari ini, sesi live, kehadiran terbaru.
+#[server(GetStafHome, "/api-fn")]
+pub async fn staf_home_data() -> Result<StafHome, ServerFnError> {
+    let sess = require_roles(&["admin", "dewan_guru", "supervisor"]).await?;
+    let state = app_state().await?;
+    crate::service::dashboard::staf_home(&state.pool, &sess.name)
+        .await
+        .map_err(err)
+}
+
+/// Dashboard analisis (/guru → cakupan kelas sendiri, /dewan-guru → semua kelas).
+#[server(GetAnalisis, "/api-fn")]
+pub async fn analisis_data() -> Result<AnalisisData, ServerFnError> {
+    let sess = require_roles(&["teacher", "dewan_guru", "admin"]).await?;
+    let state = app_state().await?;
+    // Guru biasa: dibatasi ke kelas yang diampu sendiri. Dewan guru/admin: semua.
+    let teacher_id = (sess.role == "teacher").then_some(sess.id);
+    crate::service::dashboard::analisis(&state.pool, &sess.name, teacher_id)
+        .await
+        .map_err(err)
+}
+
+/// Papan poin santri (/poin, /poin-dewan). Dewan guru/admin melihat & mengelola
+/// SEMUA santri; guru/pamong hanya santri di kelas yang mereka ampu.
+#[server(GetPoinData, "/api-fn")]
+pub async fn poin_data_action() -> Result<PoinData, ServerFnError> {
+    let sess = require_roles(&["admin", "dewan_guru", "teacher", "supervisor"]).await?;
+    let state = app_state().await?;
+    let can_adjust = matches!(sess.role.as_str(), "admin" | "dewan_guru");
+    let teacher_id = (sess.role == "teacher").then_some(sess.id);
+    crate::service::dashboard::poin_data(&state.pool, teacher_id, can_adjust)
+        .await
+        .map_err(err)
+}
+
+/// Tambah/kurangi poin santri secara manual (dewan guru/admin saja).
+#[server(AdjustPoints, "/api-fn")]
+pub async fn adjust_points_action(student_id: i64, delta: i32, reason: String) -> Result<(), ServerFnError> {
+    let sess = require_roles(&["admin", "dewan_guru"]).await?;
+    let state = app_state().await?;
+    let reason = if reason.trim().is_empty() { "Penyesuaian manual".to_string() } else { reason };
+    crate::repository::adjust_points(&state.pool, student_id, delta, &reason, sess.id)
+        .await
+        .map_err(err)
 }

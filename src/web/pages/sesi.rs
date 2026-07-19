@@ -8,7 +8,7 @@ use leptos_meta::Title;
 
 use crate::models::SessionItem;
 use crate::web::api::sessions_list;
-use crate::web::components::{DeviceFrame, FetchError, MobileHeader, MobileNav, NAV_PAMONG, NAV_SANTRI};
+use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 
 fn status_badge(kind: &str) -> &'static str {
     match kind {
@@ -86,21 +86,6 @@ pub fn SesiPage() -> impl IntoView {
                     </Suspense>
                 </div>
 
-                // Nav menyesuaikan peran (santri vs staf).
-                <Suspense fallback=|| ()>
-                    {move || {
-                        let role = data
-                            .get()
-                            .and_then(|r| r.ok())
-                            .map(|d| d.role)
-                            .unwrap_or_else(|| "santri".into());
-                        if role == "santri" {
-                            view! { <MobileNav items=NAV_SANTRI active="/sesi" /> }.into_any()
-                        } else {
-                            view! { <MobileNav items=NAV_PAMONG active="/sesi" /> }.into_any()
-                        }
-                    }}
-                </Suspense>
             </div>
         </DeviceFrame>
     }

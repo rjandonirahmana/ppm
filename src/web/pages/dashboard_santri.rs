@@ -7,7 +7,7 @@ use leptos_meta::Title;
 
 use crate::models::{AttendanceItem, SantriHome};
 use crate::web::api::{connection_requests, respond_connection_action, santri_home};
-use crate::web::components::{FetchError, DeviceFrame, MobileNav, NotifBell, NAV_SANTRI};
+use crate::web::components::{FetchError, DeviceFrame, NotifBell};
 
 /// Warna aksen per jenis kehadiran (border kiri kartu + ikon).
 fn kind_colors(kind: &str) -> (&'static str, &'static str, &'static str, &'static str) {
@@ -127,7 +127,6 @@ pub fn SantriDashboardPage() -> impl IntoView {
                         })
                 }}
 
-                <MobileNav items=NAV_SANTRI active="/santri" />
             </div>
         </DeviceFrame>
     }

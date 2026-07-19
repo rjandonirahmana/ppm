@@ -10,6 +10,8 @@ pub fn point_rule(status: &str) -> (i32, &'static str, &'static str) {
     match status {
         "present" => (10, "Kedisiplinan", "attendance"),
         "late" => (2, "Kedisiplinan", "attendance"),
+        // Hadir tapi di luar jadwal: netral (pamong/dewan guru yang menilai).
+        "outside_schedule" => (0, "Di luar jadwal", "attendance"),
         "permit" | "sick" => (0, "Keterangan", "attendance"),
         _ => (-15, "Pelanggaran", "discipline"),
     }

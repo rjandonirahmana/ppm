@@ -7,7 +7,7 @@ use leptos_meta::Title;
 
 use crate::models::IzinData;
 use crate::web::api::{izin_data, submit_permit_action};
-use crate::web::components::{DeviceFrame, MobileNav, NotifBell, NAV_SANTRI};
+use crate::web::components::{DeviceFrame, NotifBell};
 
 #[component]
 pub fn IzinPage() -> impl IntoView {
@@ -249,7 +249,6 @@ pub fn IzinPage() -> impl IntoView {
                     </Suspense>
                 </div>
 
-                <MobileNav items=NAV_SANTRI active="/izin" />
             </div>
         </DeviceFrame>
     }

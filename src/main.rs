@@ -66,6 +66,32 @@ async fn main() -> Result<()> {
     // JwtService: key di-pre-compute sekali (pola e-ticketing).
     let state = Arc::new(AppState::new(pool, ppm::auth::JwtService::new(&cfg.jwt_secret)));
 
+    // ── Job AUTO-ABSENT (task internal) ──────────────────────────────────────
+    // Tiap 10 menit: tandai 'absent' untuk santri yang tak hadir pada sesi hari
+    // ini yang jendelanya sudah tutup. Set-based & idempotent (aman dijalankan
+    // berulang). Bisa diganti cron eksternal via endpoint di kemudian hari.
+    {
+        let pool = state.pool.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop {
+                tick.tick().await;
+                match ppm::repository::run_auto_absent(&pool).await {
+                    Ok(n) if n > 0 => tracing::info!("Auto-absent: {n} santri ditandai tidak hadir"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Auto-absent gagal: {e}"),
+                }
+                // Materialisasi sesi mendatang SEMUA kelas di sini (di luar jalur
+                // request) — dulu dilakukan tiap GET /kelas/:id → lambat.
+                match ppm::service::kelas::ensure_upcoming_all(&pool).await {
+                    Ok(n) if n > 0 => tracing::info!("Materialisasi sesi: {n} sesi baru"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Materialisasi sesi gagal: {e}"),
+                }
+            }
+        });
+    }
+
     let leptos_conf = get_configuration(Some("Cargo.toml"))
         .map_err(|e| anyhow::anyhow!("gagal load config leptos: {e}"))?;
     let leptos_options = leptos_conf.leptos_options;
