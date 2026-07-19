@@ -83,26 +83,62 @@ fn StafBody(d: StafHome) -> impl IntoView {
             <p class="text-body-sm text-on-surface-variant mt-1">"Ringkasan aktivitas dan laporan hari ini."</p>
         </div>
 
-        // ── Statistik ────────────────────────────────────────────
-        <div class="grid grid-cols-2 gap-3">
-            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
-                <span class="material-symbols-outlined text-primary">"group"</span>
-                <p class="text-body-sm text-on-surface-variant mt-2">"Total Santri"</p>
-                <p class="text-2xl font-bold text-on-background">{total_santri}</p>
-                <p class="text-[11px] text-success mt-1">{format!("+{santri_growth_month} bulan ini")}</p>
-            </div>
-            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
-                <span class="material-symbols-outlined text-primary">"how_to_reg"</span>
-                <p class="text-body-sm text-on-surface-variant mt-2">"Hadir Hari Ini"</p>
-                <p class="text-2xl font-bold text-on-background">
-                    {hadir_today}
-                    <span class="text-body-sm text-on-surface-variant font-normal">{format!(" / {total_santri}")}</span>
-                </p>
-                <div class="w-full h-1.5 bg-surface-container-high rounded-full overflow-hidden mt-2">
-                    <div class="bg-primary h-full" style=format!("width: {pct}%")></div>
+        // ── Statistik (mockup admin: Total Santri + Kelas Aktif) ─────────
+        {
+            let live_count = live.iter().filter(|s| s.state == "live").count();
+            let absen = (total_santri - hadir_today).max(0);
+            view! {
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+                        <div class="flex items-start justify-between">
+                            <span class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center">
+                                <span class="material-symbols-outlined">"group"</span>
+                            </span>
+                            <span class="text-[11px] font-bold text-success">{format!("+{santri_growth_month} baru")}</span>
+                        </div>
+                        <p class="text-2xl font-bold text-on-background mt-3" data-count=total_santri.to_string()>{total_santri}</p>
+                        <p class="text-body-sm text-on-surface-variant">"Total Santri"</p>
+                    </div>
+                    <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+                        <div class="flex items-start justify-between">
+                            <span class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center">
+                                <span class="material-symbols-outlined">"school"</span>
+                            </span>
+                            {(live_count > 0)
+                                .then(|| view! {
+                                    <span class="text-[11px] font-bold text-success flex items-center gap-1">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-success pulse-dot"></span>
+                                        "Live"
+                                    </span>
+                                })}
+                        </div>
+                        <p class="text-2xl font-bold text-on-background mt-3">{live.len()}</p>
+                        <p class="text-body-sm text-on-surface-variant">"Sesi Hari Ini"</p>
+                    </div>
                 </div>
-            </div>
-        </div>
+
+                // ── Hero: Kehadiran Hari Ini (kartu gradien mockup) ──────
+                <div class="spiritual-gradient rounded-2xl p-5 text-on-primary shadow-lg shadow-primary/20">
+                    <div class="flex items-center justify-between">
+                        <p class="text-body-lg font-bold">"Kehadiran Hari Ini"</p>
+                        <p class="text-display-md" data-count=pct.to_string()>{format!("{pct}%")}</p>
+                    </div>
+                    <div class="w-full h-2 bg-white/20 rounded-full overflow-hidden mt-3">
+                        <div class="bg-primary-fixed h-full bar-grow" style=format!("width: {pct}%")></div>
+                    </div>
+                    <div class="flex items-center justify-between mt-2.5 text-body-sm">
+                        <span class="flex items-center gap-1.5 opacity-90">
+                            <span class="w-1.5 h-1.5 rounded-full bg-primary-fixed"></span>
+                            {format!("{hadir_today} Hadir")}
+                        </span>
+                        <span class="flex items-center gap-1.5 opacity-70">
+                            <span class="w-1.5 h-1.5 rounded-full bg-white/40"></span>
+                            {format!("{absen} Belum/Absen")}
+                        </span>
+                    </div>
+                </div>
+            }
+        }
 
         <a
             href="/verifikasi-pamong"
@@ -116,6 +152,29 @@ fn StafBody(d: StafHome) -> impl IntoView {
                 <span class="material-symbols-outlined text-error">"pending_actions"</span>
             </div>
         </a>
+
+        // ── Alat Administrasi (grid mockup) ──────────────────────
+        <div>
+            <h3 class="text-body-lg font-bold text-on-background mb-2">"Alat Administrasi"</h3>
+            <div class="grid grid-cols-4 gap-2">
+                {[
+                    ("school", "Kelas", "/kelas"),
+                    ("groups", "Santri", "/students"),
+                    ("stars", "Poin", "/poin"),
+                    ("cast_for_education", "Sesi", "/sesi"),
+                ]
+                    .into_iter()
+                    .map(|(icon, label, href)| {
+                        view! {
+                            <a href=href class="bg-surface-container rounded-2xl p-3 flex flex-col items-center gap-1.5 press">
+                                <span class="material-symbols-outlined text-primary">{icon}</span>
+                                <span class="text-[11px] font-medium text-on-surface-variant">{label}</span>
+                            </a>
+                        }
+                    })
+                    .collect_view()}
+            </div>
+        </div>
 
         // ── Sesi Live ────────────────────────────────────────────
         <div>

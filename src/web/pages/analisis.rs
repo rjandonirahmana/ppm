@@ -70,29 +70,124 @@ fn AnalisisPage(title: &'static str) -> impl IntoView {
 
 #[component]
 fn AnalisisBody(d: AnalisisData) -> impl IntoView {
-    let AnalisisData { name, is_dewan, attendance_pct, avg_points, sessions_verified, trend, class_ranking, teacher_insight } = d;
+    let AnalisisData {
+        name,
+        is_dewan,
+        attendance_pct,
+        avg_points,
+        sessions_verified,
+        trend,
+        class_ranking,
+        teacher_insight,
+        today,
+    } = d;
     let scope_note = if is_dewan { "Seluruh pesantren" } else { "Kelas yang Anda ampu" };
+    // Jadwal berikutnya = sesi hari ini pertama yang live/terjadwal (hero).
+    let next = today.iter().find(|s| s.state != "break").cloned();
 
     view! {
         <div>
-            <p class="text-body-sm text-on-surface-variant">{name}</p>
+            <p class="text-body-sm text-on-surface-variant">{format!("Assalamu'alaikum, {name}")}</p>
             <p class="text-[11px] text-on-surface-variant/70 mt-0.5">{scope_note}" • 30 hari terakhir"</p>
         </div>
 
-        <div class="grid grid-cols-3 gap-2">
-            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3 text-center">
-                <p class="text-[10px] uppercase tracking-wider text-on-surface-variant">"Kehadiran"</p>
-                <p class="text-xl font-bold text-primary mt-1">{format!("{attendance_pct}%")}</p>
+        // ── Hero: jadwal berikutnya (mockup dewan guru) ─────────────────────
+        {next
+            .map(|s| {
+                let live = s.state == "live";
+                view! {
+                    <div class="spiritual-gradient rounded-2xl p-5 text-on-primary shadow-lg shadow-primary/20">
+                        <p class="text-[11px] font-bold tracking-[0.2em] opacity-80">
+                            {if live { "SEDANG BERLANGSUNG" } else { "JADWAL BERIKUTNYA" }}
+                        </p>
+                        <p class="text-display-md mt-1">{s.title.clone()}</p>
+                        <p class="text-body-sm opacity-85 mt-1">
+                            {format!("{} • {} • {} santri", s.time_label, s.teacher, s.santri_count)}
+                        </p>
+                        <a
+                            href="/sesi"
+                            class="mt-4 w-full py-3 rounded-xl bg-primary-fixed text-primary font-bold text-body-sm flex items-center justify-center gap-2 press"
+                        >
+                            <span class="material-symbols-outlined text-[18px]">"play_circle"</span>
+                            "Lihat Sesi"
+                        </a>
+                    </div>
+                }
+            })}
+
+        // ── Progres + statistik ─────────────────────────────────────────────
+        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 flex items-center justify-between">
+            <div>
+                <p class="text-body-sm text-on-surface-variant">"Kehadiran 30 Hari"</p>
+                <p class="text-headline-sm font-bold text-on-background">{format!("{attendance_pct}%")}</p>
             </div>
-            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3 text-center">
-                <p class="text-[10px] uppercase tracking-wider text-on-surface-variant">"Rata² Poin"</p>
-                <p class="text-xl font-bold text-primary mt-1">{avg_points}</p>
+            <svg viewBox="0 0 36 36" class="w-14 h-14 -rotate-90">
+                <circle cx="18" cy="18" r="15.9" fill="none" stroke-width="3.5"
+                    class="stroke-surface-container-high"></circle>
+                <circle cx="18" cy="18" r="15.9" fill="none" stroke-width="3.5" stroke-linecap="round"
+                    class="stroke-primary" pathLength="100"
+                    stroke-dasharray=format!("{attendance_pct} 100")></circle>
+            </svg>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+                <span class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center">
+                    <span class="material-symbols-outlined">"task_alt"</span>
+                </span>
+                <p class="text-2xl font-bold text-on-background mt-2" data-count=sessions_verified.to_string()>
+                    {sessions_verified}
+                </p>
+                <p class="text-body-sm text-on-surface-variant">"Absensi Terverifikasi"</p>
             </div>
-            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3 text-center">
-                <p class="text-[10px] uppercase tracking-wider text-on-surface-variant">"Terverifikasi"</p>
-                <p class="text-xl font-bold text-primary mt-1">{sessions_verified}</p>
+            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+                <span class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center">
+                    <span class="material-symbols-outlined">"stars"</span>
+                </span>
+                <p class="text-2xl font-bold text-on-background mt-2" data-count=avg_points.to_string()>
+                    {avg_points}
+                </p>
+                <p class="text-body-sm text-on-surface-variant">"Rata-rata Poin"</p>
             </div>
         </div>
+
+        // ── Sesi hari ini ───────────────────────────────────────────────────
+        {(!today.is_empty())
+            .then(|| {
+                view! {
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <h3 class="text-title-md text-on-background font-semibold">"Sesi Hari Ini"</h3>
+                            <a href="/sesi" class="text-body-sm font-semibold text-primary">"Lihat Semua"</a>
+                        </div>
+                        <div class="space-y-2">
+                            {today
+                                .iter()
+                                .cloned()
+                                .map(|s| {
+                                    let live = s.state == "live";
+                                    view! {
+                                        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3.5 flex items-center gap-3 card-hover">
+                                            <div class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center shrink-0">
+                                                <span class="material-symbols-outlined">"menu_book"</span>
+                                            </div>
+                                            <div class="flex-1 min-w-0">
+                                                <p class="text-body-sm font-semibold text-on-background truncate">{s.title.clone()}</p>
+                                                <p class="text-[11px] text-on-surface-variant truncate">
+                                                    {format!("{} • {}", s.time_label, s.teacher)}
+                                                </p>
+                                            </div>
+                                            {live
+                                                .then(|| view! {
+                                                    <span class="w-2 h-2 rounded-full bg-success pulse-dot shrink-0"></span>
+                                                })}
+                                        </div>
+                                    }
+                                })
+                                .collect_view()}
+                        </div>
+                    </div>
+                }
+            })}
 
         <div>
             <h3 class="text-title-md text-on-background font-semibold mb-3">"Tren Kehadiran (7 hari)"</h3>

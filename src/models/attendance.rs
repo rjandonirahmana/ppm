@@ -46,6 +46,14 @@ pub struct PendingAtt {
 pub struct PamongData {
     pub pending: Vec<PendingAtt>,
     pub approved_today: i64,
+    /// Statistik hari ini (hero dashboard pamong/dewan).
+    pub total_santri: i64,
+    pub hadir_today: i64,
+    pub pct: i32,
+    /// Sesi hari ini (kartu "Kelas untuk Diverifikasi").
+    pub today: Vec<super::kelas::LiveSesi>,
+    /// Kehadiran terbaru.
+    pub latest: Vec<super::kelas::LatestAtt>,
 }
 
 // ── Device RFID ────────────────────────────────────────────────────────────────

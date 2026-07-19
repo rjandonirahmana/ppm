@@ -81,6 +81,9 @@ pub struct AnalisisData {
     pub trend: Vec<TrendPoint>,
     pub class_ranking: Vec<ClassRank>,
     pub teacher_insight: Vec<TeacherInsight>,
+    /// Sesi hari ini (hero "Jadwal Berikutnya" + daftar).
+    #[serde(default)]
+    pub today: Vec<LiveSesi>,
 }
 
 // ── Poin santri ─────────────────────────────────────────────────────────────────

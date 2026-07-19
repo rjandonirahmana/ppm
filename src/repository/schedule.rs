@@ -195,3 +195,157 @@ pub async fn sessions_of_class(
         .context("sessions_of_class")?;
     Ok(rows.into_iter().map(row_to_session).collect())
 }
+
+// ── Detail sesi (staf): info + absensi + chat + rekaman ──────────────────────
+
+pub struct SessionDetailRow {
+    pub id: i64,
+    pub class_id: i64,
+    pub title: Option<String>,
+    pub class_name: String,
+    pub session_date: NaiveDate,
+    pub start_time: Option<NaiveTime>,
+    pub status: String,
+    pub teacher: Option<String>,
+    pub recording_path: Option<String>,
+    pub recording_size: Option<i64>,
+}
+
+pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetailRow>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(
+            "SELECT s.id, s.class_id, COALESCE(s.title, cs.title), c.name, s.session_date, \
+                    cs.start_time, s.status, t.full_name, s.recording_path, s.recording_size \
+             FROM class_sessions s \
+             JOIN classes c ON c.id = s.class_id \
+             LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
+             LEFT JOIN users t ON t.id = s.teacher_id \
+             WHERE s.id = $1",
+            &[&id],
+        )
+        .await
+        .context("session_detail")?;
+    Ok(row.map(|r| SessionDetailRow {
+        id: r.get(0),
+        class_id: r.get(1),
+        title: r.get(2),
+        class_name: r.get(3),
+        session_date: r.get(4),
+        start_time: r.get(5),
+        status: r.get(6),
+        teacher: r.get(7),
+        recording_path: r.get(8),
+        recording_size: r.get(9),
+    }))
+}
+
+/// Anggota kelas + status absensinya PADA sesi ini (NULL = belum tercatat).
+pub async fn session_attendance(
+    pool: &Pool,
+    session_id: i64,
+    class_id: i64,
+) -> Result<Vec<(i64, String, Option<String>, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT u.id, u.full_name, u.nis, a.status, a.scanned_at \
+             FROM (SELECT DISTINCT user_id FROM class_participants WHERE class_id = $2) cp \
+             JOIN users u ON u.id = cp.user_id AND u.role = 'santri' \
+             LEFT JOIN attendances a ON a.user_id = u.id AND a.class_session_id = $1 \
+             ORDER BY u.full_name",
+            &[&session_id, &class_id],
+        )
+        .await
+        .context("session_attendance")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3), r.get(4)))
+        .collect())
+}
+
+/// Transkrip chat sesi (pesan terhapus disembunyikan), urut waktu.
+pub async fn session_chats(
+    pool: &Pool,
+    session_id: i64,
+    limit: i64,
+) -> Result<Vec<(String, String, chrono::DateTime<chrono::Utc>)>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT u.full_name, ch.message, ch.created_at \
+             FROM class_session_chats ch JOIN users u ON u.id = ch.user_id \
+             WHERE ch.session_id = $1 AND ch.is_deleted = FALSE \
+             ORDER BY ch.created_at ASC LIMIT $2",
+            &[&session_id, &limit],
+        )
+        .await
+        .context("session_chats")?;
+    Ok(rows.into_iter().map(|r| (r.get(0), r.get(1), r.get(2))).collect())
+}
+
+/// Tandai HADIR manual oleh staf (method='manual', gate 'manual'). Idempotent
+/// lewat UNIQUE(user_id, class_session_id) → sudah tercatat = tak diubah.
+/// Masuk antrean verifikasi normal (pamong_status/verify_status 'pending').
+pub async fn mark_manual_present(
+    pool: &Pool,
+    student_id: i64,
+    session_id: i64,
+) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "INSERT INTO attendances \
+                (user_id, class_session_id, class_schedule_id, gate_label, status, method, note) \
+             SELECT $1, s.id, s.class_schedule_id, 'manual', 'present', 'manual', 'ditandai staf' \
+             FROM class_sessions s WHERE s.id = $2 \
+             ON CONFLICT (user_id, class_session_id) DO NOTHING",
+            &[&student_id, &session_id],
+        )
+        .await
+        .context("mark_manual_present")?;
+    Ok(n > 0)
+}
+
+/// Kirim satu pesan chat sesi.
+pub async fn insert_session_chat(
+    pool: &Pool,
+    session_id: i64,
+    user_id: i64,
+    message: &str,
+) -> Result<()> {
+    let c = pool.get().await?;
+    c.execute(
+        "INSERT INTO class_session_chats (session_id, user_id, message) VALUES ($1, $2, $3)",
+        &[&session_id, &user_id, &message],
+    )
+    .await
+    .context("insert_session_chat")?;
+    Ok(())
+}
+
+/// Apakah user peserta kelas ini? (akses santri ke ruang sesi live)
+pub async fn is_class_participant(pool: &Pool, class_id: i64, user_id: i64) -> Result<bool> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM class_participants WHERE class_id = $1 AND user_id = $2)",
+            &[&class_id, &user_id],
+        )
+        .await
+        .context("is_class_participant")?;
+    Ok(row.get(0))
+}
+
+/// Jumlah peserta unik sebuah kelas (header ruang live).
+pub async fn class_member_count(pool: &Pool, class_id: i64) -> Result<i64> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "SELECT COUNT(DISTINCT user_id) FROM class_participants WHERE class_id = $1",
+            &[&class_id],
+        )
+        .await
+        .context("class_member_count")?;
+    Ok(row.get(0))
+}

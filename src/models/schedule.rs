@@ -37,3 +37,61 @@ pub struct SessionsData {
     pub all_scope: bool,
     pub items: Vec<SessionItem>,
 }
+
+/// Satu baris absensi pada detail sesi (anggota kelas + status di sesi itu).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionAttRow {
+    pub user_id: i64,
+    pub name: String,
+    pub nis: String,
+    /// "HADIR"/"TERLAMBAT"/"ALPA"/… atau "BELUM TERCATAT"
+    pub status_label: String,
+    /// present|late|absent|permit|sick|none
+    pub status_kind: String,
+    /// "05:02 WIB" bila tercatat
+    pub time_label: String,
+}
+
+/// Satu pesan chat sesi.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionChatItem {
+    pub name: String,
+    pub message: String,
+    pub time_label: String,
+}
+
+/// Payload halaman detail sesi /sesi/:id (staf).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionDetailData {
+    pub id: i64,
+    pub title: String,
+    pub class_name: String,
+    pub date_label: String,
+    pub time_label: String,
+    pub status_label: String,
+    pub status_kind: String,
+    pub teacher: String,
+    pub hadir: i64,
+    pub total: i64,
+    pub attendance: Vec<SessionAttRow>,
+    pub chats: Vec<SessionChatItem>,
+    /// URL/path rekaman bila sudah ada (kolom class_sessions.recording_path).
+    pub recording_url: Option<String>,
+    pub recording_label: String,
+}
+
+/// Payload ruang sesi live /sesi/:id/live (staf + santri peserta).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionLiveData {
+    pub id: i64,
+    pub title: String,
+    pub class_name: String,
+    pub teacher: String,
+    /// scheduled|ongoing|finished|cancelled
+    pub status_kind: String,
+    /// true = boleh mulai/akhiri sesi (staf).
+    pub can_manage: bool,
+    pub chats: Vec<SessionChatItem>,
+    /// Jumlah peserta kelas (indikator "128" di header).
+    pub member_count: i64,
+}

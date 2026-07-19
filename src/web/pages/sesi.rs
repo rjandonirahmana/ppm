@@ -71,9 +71,24 @@ pub fn SesiPage() -> impl IntoView {
                                                 }
                                                     .into_any()
                                             } else {
+                                                // Staf → detail sesi (absensi/chat/rekaman);
+                                                // santri → RUANG LIVE (ikut & bertanya).
+                                                let is_santri = d.role == "santri";
                                                 d.items
                                                     .into_iter()
-                                                    .map(|it| view! { <SessionCard it=it /> })
+                                                    .map(|it| {
+                                                        let id = it.id;
+                                                        let href = if is_santri {
+                                                            format!("/sesi/{id}/live")
+                                                        } else {
+                                                            format!("/sesi/{id}")
+                                                        };
+                                                        view! {
+                                                            <a href=href class="block">
+                                                                <SessionCard it=it />
+                                                            </a>
+                                                        }
+                                                    })
                                                     .collect_view()
                                                     .into_any()
                                             }}

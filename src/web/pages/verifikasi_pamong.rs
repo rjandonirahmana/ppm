@@ -68,7 +68,26 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                 .map(|res| match res {
                                     Ok(d) => {
                                         let pending_count = d.pending.len();
+                                        let hadir_label = format!("{} / {}", d.hadir_today, d.total_santri);
+                                        let pct = d.pct;
                                         view! {
+                                            // ── Hero: santri aktif hari ini ──────
+                                            <div class="spiritual-gradient rounded-2xl p-5 text-on-primary shadow-lg shadow-primary/20">
+                                                <p class="text-[11px] font-bold tracking-[0.2em] opacity-80">
+                                                    "SANTRI AKTIF"
+                                                </p>
+                                                <div class="flex items-end justify-between mt-1">
+                                                    <p class="text-display-lg">{hadir_label}</p>
+                                                    <p class="text-body-sm opacity-85">{format!("{pct}% hadir hari ini")}</p>
+                                                </div>
+                                                <div class="w-full h-2 bg-white/20 rounded-full overflow-hidden mt-3">
+                                                    <div
+                                                        class="bg-primary-fixed h-full bar-grow"
+                                                        style=format!("width: {pct}%")
+                                                    ></div>
+                                                </div>
+                                            </div>
+
                                             // ── Statistik ────────────────────────
                                             <div class="grid grid-cols-2 gap-3">
                                                 <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
@@ -123,6 +142,82 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                     .collect_view()
                                                     .into_any()
                                             }}
+
+                                            // ── Sesi hari ini (verifikasi kelas) ──
+                                            {(!d.today.is_empty())
+                                                .then(|| {
+                                                    view! {
+                                                        <div>
+                                                            <h3 class="text-body-lg font-bold text-on-background mb-2">
+                                                                "Sesi Hari Ini"
+                                                            </h3>
+                                                            <div class="space-y-2">
+                                                                {d.today
+                                                                    .iter()
+                                                                    .cloned()
+                                                                    .map(|s| {
+                                                                        let live = s.state == "live";
+                                                                        view! {
+                                                                            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3.5 flex items-center gap-3 card-hover">
+                                                                                <div class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center shrink-0">
+                                                                                    <span class="material-symbols-outlined">"menu_book"</span>
+                                                                                </div>
+                                                                                <div class="flex-1 min-w-0">
+                                                                                    <p class="text-body-sm font-semibold text-on-background truncate">{s.title.clone()}</p>
+                                                                                    <p class="text-[11px] text-on-surface-variant truncate">
+                                                                                        {format!("{} • {} • {} santri", s.teacher, s.time_label, s.santri_count)}
+                                                                                    </p>
+                                                                                </div>
+                                                                                {live
+                                                                                    .then(|| view! {
+                                                                                        <span class="w-2 h-2 rounded-full bg-success pulse-dot shrink-0"></span>
+                                                                                    })}
+                                                                            </div>
+                                                                        }
+                                                                    })
+                                                                    .collect_view()}
+                                                            </div>
+                                                        </div>
+                                                    }
+                                                })}
+
+                                            // ── Kehadiran terbaru ────────────────
+                                            {(!d.latest.is_empty())
+                                                .then(|| {
+                                                    view! {
+                                                        <div>
+                                                            <h3 class="text-body-lg font-bold text-on-background mb-2">
+                                                                "Kehadiran Terbaru"
+                                                            </h3>
+                                                            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl px-4 py-1">
+                                                                {d.latest
+                                                                    .iter()
+                                                                    .cloned()
+                                                                    .map(|a| {
+                                                                        let badge = match a.kind.as_str() {
+                                                                            "present" => "px-2 py-0.5 rounded-full text-[10px] font-bold bg-success/10 text-success",
+                                                                            "late" => "px-2 py-0.5 rounded-full text-[10px] font-bold bg-warning/10 text-warning",
+                                                                            "absent" => "px-2 py-0.5 rounded-full text-[10px] font-bold bg-error-container text-error",
+                                                                            _ => "px-2 py-0.5 rounded-full text-[10px] font-bold bg-surface-container-highest text-on-surface-variant",
+                                                                        };
+                                                                        view! {
+                                                                            <div class="flex items-center gap-3 py-2.5 border-b border-outline-variant/40 last:border-0">
+                                                                                <div class="w-8 h-8 rounded-full bg-secondary-container text-primary flex items-center justify-center text-[11px] font-bold shrink-0">
+                                                                                    {a.initial.clone()}
+                                                                                </div>
+                                                                                <div class="flex-1 min-w-0">
+                                                                                    <p class="text-body-sm font-semibold text-on-background truncate">{a.name.clone()}</p>
+                                                                                    <p class="text-[10px] text-on-surface-variant">{a.time_label.clone()}</p>
+                                                                                </div>
+                                                                                <span class=badge>{a.status_label.clone()}</span>
+                                                                            </div>
+                                                                        }
+                                                                    })
+                                                                    .collect_view()}
+                                                            </div>
+                                                        </div>
+                                                    }
+                                                })}
                                         }
                                             .into_any()
                                     }

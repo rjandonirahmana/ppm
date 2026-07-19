@@ -78,18 +78,9 @@ fn initial_of(name: &str) -> String {
         .to_uppercase()
 }
 
-/// Dashboard staf/admin (/staf): statistik hari ini + sesi live + kehadiran terbaru.
-pub async fn staf_home(pool: &Pool, name: &str) -> Result<StafHome> {
-    let (stats, live, latest) = tokio::join!(
-        repo::staf_stats(pool),
-        repo::today_sessions(pool, 6),
-        repo::latest_attendance(pool, 8),
-    );
-    let (total_santri, santri_growth_month, hadir_today, izin_pending) = stats?;
-    let pct = if total_santri > 0 { ((hadir_today * 100) / total_santri) as i32 } else { 0 };
-
-    let live = live?
-        .into_iter()
+/// Mapping baris sesi hari ini → LiveSesi (dipakai staf/pamong/dewan).
+pub(crate) fn map_live(rows: Vec<crate::repository::LiveSesiRow>) -> Vec<LiveSesi> {
+    rows.into_iter()
         .map(|s| LiveSesi {
             title: s.title,
             teacher: s.teacher,
@@ -104,10 +95,12 @@ pub async fn staf_home(pool: &Pool, name: &str) -> Result<StafHome> {
                 .map(|t| format!("{} WIB", t.format("%H:%M")))
                 .unwrap_or_else(|| "-".into()),
         })
-        .collect();
+        .collect()
+}
 
-    let latest = latest?
-        .into_iter()
+/// Mapping kehadiran terbaru → LatestAtt (dipakai staf/pamong).
+pub(crate) fn map_latest(rows: Vec<crate::repository::LatestAttRow>) -> Vec<LatestAtt> {
+    rows.into_iter()
         .map(|a| {
             let (status_label, kind) = super::santri::status_display(&a.status);
             LatestAtt {
@@ -119,7 +112,21 @@ pub async fn staf_home(pool: &Pool, name: &str) -> Result<StafHome> {
                 kind: kind.into(),
             }
         })
-        .collect();
+        .collect()
+}
+
+/// Dashboard staf/admin (/staf): statistik hari ini + sesi live + kehadiran terbaru.
+pub async fn staf_home(pool: &Pool, name: &str) -> Result<StafHome> {
+    let (stats, live, latest) = tokio::join!(
+        repo::staf_stats(pool),
+        repo::today_sessions(pool, 6),
+        repo::latest_attendance(pool, 8),
+    );
+    let (total_santri, santri_growth_month, hadir_today, izin_pending) = stats?;
+    let pct = if total_santri > 0 { ((hadir_today * 100) / total_santri) as i32 } else { 0 };
+
+    let live = map_live(live?);
+    let latest = map_latest(latest?);
 
     Ok(StafHome {
         name: name.to_string(),
@@ -138,7 +145,7 @@ const HARI_PENDEK: [&str; 7] = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"]
 /// Dashboard analisis guru (/guru, cakupan kelas sendiri) atau dewan guru
 /// (/dewan-guru, `teacher_id = None` → seluruh pesantren).
 pub async fn analisis(pool: &Pool, name: &str, teacher_id: Option<i64>) -> Result<AnalisisData> {
-    let (summary, trend, ranking, insight) = tokio::join!(
+    let (summary, trend, ranking, insight, today) = tokio::join!(
         repo::analisis_summary(pool, teacher_id),
         repo::attendance_trend_7d(pool, teacher_id),
         repo::class_ranking(pool, teacher_id, 5),
@@ -149,8 +156,10 @@ pub async fn analisis(pool: &Pool, name: &str, teacher_id: Option<i64>) -> Resul
                 Ok(vec![])
             }
         },
+        repo::today_sessions(pool, 6),
     );
     let (attendance_pct, avg_points, sessions_verified) = summary?;
+    let today = map_live(today?);
 
     let trend = trend?
         .into_iter()
@@ -181,6 +190,7 @@ pub async fn analisis(pool: &Pool, name: &str, teacher_id: Option<i64>) -> Resul
         trend,
         class_ranking,
         teacher_insight,
+        today,
     })
 }
 

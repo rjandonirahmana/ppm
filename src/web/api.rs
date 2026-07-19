@@ -210,6 +210,63 @@ pub async fn sessions_list() -> Result<SessionsData, ServerFnError> {
         .map_err(err)
 }
 
+/// Detail sesi (staf): absensi anggota + chat + rekaman.
+#[server(GetSessionDetail, "/api-fn")]
+pub async fn session_detail_data(
+    session_id: i64,
+) -> Result<crate::models::SessionDetailData, ServerFnError> {
+    let sess = require_roles(&["teacher", "supervisor", "admin", "dewan_guru"]).await?;
+    let state = app_state().await?;
+    crate::service::sessions::detail_for(&state.pool, &sess, session_id)
+        .await
+        .map_err(err)
+}
+
+/// Ruang sesi live: info + chat (staf & santri peserta kelas).
+#[server(GetSessionLive, "/api-fn")]
+pub async fn session_live_data(
+    session_id: i64,
+) -> Result<crate::models::SessionLiveData, ServerFnError> {
+    let sess = require_roles(&["santri", "teacher", "supervisor", "admin", "dewan_guru"]).await?;
+    let state = app_state().await?;
+    crate::service::sessions::live_for(&state.pool, &sess, session_id)
+        .await
+        .map_err(err)
+}
+
+/// Kirim pesan chat sesi.
+#[server(PostSessionChat, "/api-fn")]
+pub async fn post_session_chat(session_id: i64, message: String) -> Result<(), ServerFnError> {
+    let sess = require_roles(&["santri", "teacher", "supervisor", "admin", "dewan_guru"]).await?;
+    let state = app_state().await?;
+    crate::service::sessions::post_chat(&state.pool, &sess, session_id, &message)
+        .await
+        .map_err(err)
+}
+
+/// Mulai/akhiri sesi live (staf).
+#[server(SetSessionLive, "/api-fn")]
+pub async fn set_session_live(session_id: i64, start: bool) -> Result<(), ServerFnError> {
+    let sess = require_roles(&["teacher", "supervisor", "admin", "dewan_guru"]).await?;
+    let state = app_state().await?;
+    crate::service::sessions::set_live(&state.pool, &sess, session_id, start)
+        .await
+        .map_err(err)
+}
+
+/// Tandai santri HADIR manual pada sebuah sesi (staf).
+#[server(MarkSessionPresent, "/api-fn")]
+pub async fn mark_session_present(
+    session_id: i64,
+    student_id: i64,
+) -> Result<(), ServerFnError> {
+    let sess = require_roles(&["teacher", "supervisor", "admin", "dewan_guru"]).await?;
+    let state = app_state().await?;
+    crate::service::sessions::mark_present(&state.pool, &sess, session_id, student_id)
+        .await
+        .map_err(err)
+}
+
 // ── Sisi ORANG TUA ─────────────────────────────────────────────────────────────
 
 /// Cari santri (nama/NIS) untuk koneksi.

@@ -76,10 +76,16 @@ pub async fn record_scan(pool: &Pool, req: &RfidScanRequest) -> Result<RfidScanR
     })
 }
 
-/// Data halaman verifikasi pamong (antrean + jumlah disetujui hari ini, paralel).
+/// Data halaman verifikasi pamong: antrean + statistik hari ini + sesi hari ini
+/// + kehadiran terbaru (dashboard pamong ala mockup).
 pub async fn pamong_data(pool: &Pool) -> Result<PamongData> {
-    let (pending, approved_today) =
-        tokio::join!(repo::pending_pamong(pool, 50), repo::approved_today(pool));
+    let (pending, approved_today, stats, today, latest) = tokio::join!(
+        repo::pending_pamong(pool, 50),
+        repo::approved_today(pool),
+        repo::staf_stats(pool),
+        repo::today_sessions(pool, 5),
+        repo::latest_attendance(pool, 6),
+    );
 
     let pending = pending?
         .into_iter()
@@ -93,9 +99,17 @@ pub async fn pamong_data(pool: &Pool) -> Result<PamongData> {
         })
         .collect();
 
+    let (total_santri, _growth, hadir_today, _izin) = stats?;
+    let pct = if total_santri > 0 { ((hadir_today * 100) / total_santri) as i32 } else { 0 };
+
     Ok(PamongData {
         pending,
         approved_today: approved_today?,
+        total_santri,
+        hadir_today,
+        pct,
+        today: super::dashboard::map_live(today?),
+        latest: super::dashboard::map_latest(latest?),
     })
 }
 
@@ -109,8 +123,11 @@ pub async fn decide_pamong(pool: &Pool, att_id: i64, approver: i64, approve: boo
 /// Antrean verifikasi final + jumlah terverifikasi hari ini. Reuse PamongData
 /// (pending + count) — `approved_today` di sini bermakna "terverifikasi hari ini".
 pub async fn verify_data(pool: &Pool) -> Result<PamongData> {
-    let (pending, verified_today) =
-        tokio::join!(repo::pending_verify(pool, 50), repo::verified_today(pool));
+    let (pending, verified_today, stats) = tokio::join!(
+        repo::pending_verify(pool, 50),
+        repo::verified_today(pool),
+        repo::staf_stats(pool),
+    );
     let pending = pending?
         .into_iter()
         .map(|p| PendingAtt {
@@ -122,9 +139,16 @@ pub async fn verify_data(pool: &Pool) -> Result<PamongData> {
             gate: p.gate_label.unwrap_or_else(|| "-".into()),
         })
         .collect();
+    let (total_santri, _g, hadir_today, _i) = stats?;
+    let pct = if total_santri > 0 { ((hadir_today * 100) / total_santri) as i32 } else { 0 };
     Ok(PamongData {
         pending,
         approved_today: verified_today?,
+        total_santri,
+        hadir_today,
+        pct,
+        today: vec![],
+        latest: vec![],
     })
 }
 
