@@ -7,8 +7,8 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::role_home;
-use crate::web::api::{get_session, login_action};
+use crate::models::{role_home, SessionUser};
+use crate::web::api::login_action;
 
 #[component]
 pub fn LoginPage() -> impl IntoView {
@@ -18,10 +18,11 @@ pub fn LoginPage() -> impl IntoView {
     let error = RwSignal::new(Option::<String>::None);
 
     // Sudah punya sesi (JWT cookie masih hidup)? Langsung masuk — tak perlu
-    // login ulang. get_session sekaligus MEMPERPANJANG sesi (sliding).
-    let session = Resource::new(|| (), |_| async move { get_session().await });
+    // login ulang. Pakai CONTEXT sesi global dari App (audit poin 4); sliding
+    // refresh sudah terjadi saat resource global fetch di awal load.
+    let session = use_context::<Resource<Option<SessionUser>>>();
     Effect::new(move |_| {
-        if let Some(Ok(Some(user))) = session.get() {
+        if let Some(Some(user)) = session.and_then(|s| s.get()) {
             let path = role_home(&user.role);
             #[cfg(target_arch = "wasm32")]
             if let Some(w) = web_sys::window() {

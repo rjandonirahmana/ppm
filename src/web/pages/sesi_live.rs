@@ -1,9 +1,10 @@
 //! web/pages/sesi_live.rs — Ruang sesi LIVE (/sesi/:id/live) ala mockup Halaqah.
 //!
 //! Staf (dewan/guru/pamong/admin): mulai/akhiri sesi. Santri peserta kelas: ikut
-//! & bertanya lewat chat. Chat & status di-refresh polling 4 dtk (tanpa WS).
-//! CATATAN: SUARA online (WebRTC) BELUM tersedia — ruang ini menyiapkan sesi
-//! live + tanya-jawab; audio menyusul (butuh subsistem SFU terpisah).
+//! & bertanya lewat chat. Chat & status di-refresh via SSE /api/live-events/{id}
+//! (event-driven; fallback polling 4 dtk bila EventSource gagal).
+//! SUARA: AudioDock (web/live_audio_ui.rs) — dipasang DI LUAR Suspense supaya
+//! siaran/putar audio tidak mati tiap refetch membangun ulang LiveBody.
 
 use leptos::prelude::*;
 use leptos_meta::Title;
@@ -12,6 +13,7 @@ use leptos_router::hooks::use_params_map;
 use crate::models::SessionLiveData;
 use crate::web::api::{post_session_chat, session_live_data, set_session_live};
 use crate::web::components::{DeviceFrame, FetchError};
+use crate::web::live_audio_ui::AudioDock;
 
 #[component]
 pub fn SesiLivePage() -> impl IntoView {
@@ -21,25 +23,60 @@ pub fn SesiLivePage() -> impl IntoView {
     let data =
         Resource::new(move || session_id.get(), |id| async move { session_live_data(id).await });
 
-    // Polling chat/status tiap 4 dtk (klien saja; SSR tak boleh set_interval).
+    // Turunan untuk AudioDock (di luar Suspense — lihat catatan modul).
+    let is_live = Memo::new(move |_| {
+        matches!(&data.get(), Some(Ok(d)) if d.status_kind == "ongoing")
+    });
+    let can_manage = Memo::new(move |_| matches!(&data.get(), Some(Ok(d)) if d.can_manage));
+    let recording_url =
+        Memo::new(move |_| data.get().and_then(|r| r.ok()).and_then(|d| d.recording_url));
+
+    // Chat/status kini EVENT-DRIVEN via SSE (audit poin 3): refetch hanya saat
+    // server memberi sinyal (chat masuk/status berubah/rekaman siap) — bukan
+    // polling 4 dtk. Safety-poll 60 dtk sebagai jaring pengaman; bila
+    // EventSource gagal dibuat, fallback ke polling 4 dtk lama.
     #[cfg(target_arch = "wasm32")]
     {
-        let handle = set_interval_with_handle(
-            move || data.refetch(),
-            std::time::Duration::from_secs(4),
-        )
-        .ok();
-        on_cleanup(move || {
-            if let Some(h) = handle {
-                h.clear();
+        use std::time::Duration;
+        use wasm_bindgen::closure::Closure;
+        use wasm_bindgen::JsCast;
+
+        let url = format!("/api/live-events/{}", session_id.get_untracked());
+        match web_sys::EventSource::new(&url) {
+            Ok(es) => {
+                let on_msg = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(
+                    move |_: web_sys::MessageEvent| data.refetch(),
+                );
+                es.set_onmessage(Some(on_msg.as_ref().unchecked_ref()));
+                let slow =
+                    set_interval_with_handle(move || data.refetch(), Duration::from_secs(60)).ok();
+                // SendWrapper: EventSource/Closure bukan Send, on_cleanup butuh
+                // Send — aman karena cleanup jalan di thread browser yang sama.
+                let held = send_wrapper::SendWrapper::new((es, on_msg));
+                on_cleanup(move || {
+                    let (es, _cb) = held.take();
+                    es.close();
+                    if let Some(h) = slow {
+                        h.clear();
+                    }
+                });
             }
-        });
+            Err(_) => {
+                let handle =
+                    set_interval_with_handle(move || data.refetch(), Duration::from_secs(4)).ok();
+                on_cleanup(move || {
+                    if let Some(h) = handle {
+                        h.clear();
+                    }
+                });
+            }
+        }
     }
 
     view! {
         <Title text="Sesi Live — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-28 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-44 max-w-md mx-auto">
                 <Suspense fallback=|| {
                     view! {
                         <div class="px-5 pt-5 space-y-3 animate-pulse">
@@ -66,6 +103,12 @@ pub fn SesiLivePage() -> impl IntoView {
                             })
                     }}
                 </Suspense>
+                <AudioDock
+                    session_id=session_id
+                    is_live=is_live
+                    can_manage=can_manage
+                    recording_url=recording_url
+                />
             </div>
         </DeviceFrame>
     }

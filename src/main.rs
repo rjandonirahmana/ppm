@@ -63,8 +63,25 @@ async fn main() -> Result<()> {
         tracing::warn!("Seed admin gagal (lanjut jalan): {e}");
     }
 
+    // RustFS untuk rekaman siaran (opsional). aws-sdk-s3 pakai rustls →
+    // crypto provider (ring) wajib di-install sekali sebelum klien dibuat.
+    let storage = match &cfg.rustfs {
+        Some(rc) => {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let s = Arc::new(ppm::service::storage::StorageService::new(rc));
+            if let Err(e) = s.init().await {
+                tracing::warn!("RustFS init gagal (lanjut jalan, rekaman bisa gagal pindah): {e}");
+            }
+            Some(s)
+        }
+        None => {
+            tracing::info!("RustFS nonaktif (RUSTFS_ENDPOINT tak diset) — rekaman disimpan lokal");
+            None
+        }
+    };
+
     // JwtService: key di-pre-compute sekali (pola e-ticketing).
-    let state = Arc::new(AppState::new(pool, ppm::auth::JwtService::new(&cfg.jwt_secret)));
+    let state = Arc::new(AppState::new(pool, ppm::auth::JwtService::new(&cfg.jwt_secret), storage));
 
     // ── Job AUTO-ABSENT (task internal) ──────────────────────────────────────
     // Tiap 10 menit: tandai 'absent' untuk santri yang tak hadir pada sesi hari
@@ -117,9 +134,19 @@ async fn main() -> Result<()> {
         .route("/api/rfid/scan", post(ppm::device_api::rfid_scan))
         .layer(axum::Extension(state.clone()));
 
+    // ── Siaran suara sesi (chunked HTTP; file = rekaman) ─────────────────────
+    use ppm::web::live_audio;
+    let live_audio_routes: axum::Router = axum::Router::new()
+        .route("/api/live-audio/{id}/chunk", post(live_audio::post_chunk))
+        .route("/api/live-audio/{id}/data", get(live_audio::get_data))
+        .route("/api/live-audio/{id}/download", get(live_audio::download))
+        .route("/api/live-events/{id}", get(ppm::web::live_events::events))
+        .layer(axum::Extension(state.clone()));
+
     let app: axum::Router = axum::Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .merge(device_routes)
+        .merge(live_audio_routes)
         .merge(leptos_router)
         .layer(tower_http::compression::CompressionLayer::new());
 

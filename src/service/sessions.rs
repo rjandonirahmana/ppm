@@ -21,43 +21,53 @@ fn status_display(status: &str) -> (&'static str, &'static str) {
 }
 
 pub async fn list_for(pool: &Pool, user: &SessionUser) -> Result<SessionsData> {
-    // Hanya sesi 1 MINGGU TERAKHIR yang sudah lewat (s/d hari ini WIB).
-    let until = Utc::now().with_timezone(&wib()).date_naive();
-    let since = until - Duration::days(7);
-    let all_scope = matches!(user.role.as_str(), "admin" | "supervisor" | "dewan_guru");
-    let rows = if all_scope {
-        repo::all_sessions(pool, since, until, 100).await?
-    } else if user.role == "teacher" {
-        repo::sessions_for_teacher(pool, user.id, since, until, 100).await?
+    // Dua daftar (tab): TERJADWAL = hari ini s/d +7 hari; SUDAH LEWAT =
+    // kemarin s/d −7 hari. Keduanya urut tanggal DESC.
+    let today = Utc::now().with_timezone(&wib()).date_naive();
+    let since = today - Duration::days(7);
+    let until = today + Duration::days(7);
+    let yesterday = today - Duration::days(1);
+    // Guru & dewan guru = SATU entitas: sama-sama lihat & kelola SEMUA sesi.
+    let all_scope = matches!(user.role.as_str(), "admin" | "supervisor" | "dewan_guru" | "teacher");
+    let (upcoming_rows, past_rows) = if all_scope {
+        tokio::join!(
+            repo::all_sessions(pool, today, until, 100),
+            repo::all_sessions(pool, since, yesterday, 100),
+        )
     } else {
-        repo::sessions_for_student(pool, user.id, since, until, 100).await?
+        tokio::join!(
+            repo::sessions_for_student(pool, user.id, today, until, 100),
+            repo::sessions_for_student(pool, user.id, since, yesterday, 100),
+        )
     };
 
-    let items = rows
-        .into_iter()
-        .map(|r| {
-            let (status_label, status_kind) = status_display(&r.status);
-            SessionItem {
-                id: r.id,
-                title: r.title.unwrap_or_else(|| r.class_name.clone()),
-                class_name: r.class_name,
-                date_label: fmt_date(r.session_date),
-                time_label: r
-                    .start_time
-                    .map(|t| format!("{} WIB", t.format("%H:%M")))
-                    .unwrap_or_else(|| "-".into()),
-                status_label: status_label.into(),
-                status_kind: status_kind.into(),
-                teacher: r.teacher.unwrap_or_else(|| "-".into()),
-                teacher_id: r.teacher_id,
-            }
-        })
-        .collect();
+    let to_items = |rows: Vec<repo::SessionRow>| -> Vec<SessionItem> {
+        rows.into_iter()
+            .map(|r| {
+                let (status_label, status_kind) = status_display(&r.status);
+                SessionItem {
+                    id: r.id,
+                    title: r.title.unwrap_or_else(|| r.class_name.clone()),
+                    class_name: r.class_name,
+                    date_label: fmt_date(r.session_date),
+                    time_label: r
+                        .start_time
+                        .map(|t| format!("{} WIB", t.format("%H:%M")))
+                        .unwrap_or_else(|| "-".into()),
+                    status_label: status_label.into(),
+                    status_kind: status_kind.into(),
+                    teacher: r.teacher.unwrap_or_else(|| "-".into()),
+                    teacher_id: r.teacher_id,
+                }
+            })
+            .collect()
+    };
 
     Ok(SessionsData {
         role: user.role.clone(),
         all_scope,
-        items,
+        upcoming: to_items(upcoming_rows?),
+        past: to_items(past_rows?),
     })
 }
 
@@ -99,9 +109,10 @@ pub async fn detail_for(
         anyhow::bail!("Sesi tidak ditemukan.");
     };
 
-    let (att_rows, chat_rows) = tokio::join!(
+    let (att_rows, chat_rows, teachers) = tokio::join!(
         repo::session_attendance(pool, session_id, d.class_id),
         repo::session_chats(pool, session_id, 200),
+        repo::teacher_options(pool),
     );
 
     let wib_tz = crate::service::fmt::wib();
@@ -162,6 +173,11 @@ pub async fn detail_for(
         chats,
         recording_url: d.recording_path,
         recording_label,
+        teacher_id: d.teacher_id,
+        teacher_options: teachers?
+            .into_iter()
+            .map(|(id, name)| crate::models::TeacherOption { id, name })
+            .collect(),
     })
 }
 
@@ -238,6 +254,7 @@ pub async fn live_for(
         can_manage: is_staff(&user.role),
         chats,
         member_count,
+        recording_url: (d.status == "finished").then_some(d.recording_path).flatten(),
     })
 }
 

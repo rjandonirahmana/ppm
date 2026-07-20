@@ -133,25 +133,6 @@ pub async fn all_sessions(
     Ok(rows.into_iter().map(row_to_session).collect())
 }
 
-/// Sesi kelas yang DIAJAR guru ini saja, dalam rentang [since, until].
-pub async fn sessions_for_teacher(
-    pool: &Pool,
-    teacher_id: i64,
-    since: chrono::NaiveDate,
-    until: chrono::NaiveDate,
-    limit: i64,
-) -> Result<Vec<SessionRow>> {
-    let c = pool.get().await?;
-    let sql = format!(
-        "{SESSION_COLS} WHERE s.teacher_id = $1 AND s.session_date >= $2 AND s.session_date <= $3 \
-         ORDER BY s.session_date DESC, s.id DESC LIMIT $4"
-    );
-    let rows = c
-        .query(&sql, &[&teacher_id, &since, &until, &limit])
-        .await
-        .context("sessions_for_teacher")?;
-    Ok(rows.into_iter().map(row_to_session).collect())
-}
 
 /// Sesi kelas-kelas yang DIIKUTI santri ini saja, dalam rentang [since, until].
 pub async fn sessions_for_student(
@@ -209,6 +190,7 @@ pub struct SessionDetailRow {
     pub teacher: Option<String>,
     pub recording_path: Option<String>,
     pub recording_size: Option<i64>,
+    pub teacher_id: Option<i64>,
 }
 
 pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetailRow>> {
@@ -216,7 +198,8 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
     let row = c
         .query_opt(
             "SELECT s.id, s.class_id, COALESCE(s.title, cs.title), c.name, s.session_date, \
-                    cs.start_time, s.status, t.full_name, s.recording_path, s.recording_size \
+                    cs.start_time, s.status, t.full_name, s.recording_path, s.recording_size, \
+                    s.teacher_id \
              FROM class_sessions s \
              JOIN classes c ON c.id = s.class_id \
              LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
@@ -237,6 +220,7 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
         teacher: r.get(7),
         recording_path: r.get(8),
         recording_size: r.get(9),
+        teacher_id: r.get(10),
     }))
 }
 

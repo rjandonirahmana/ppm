@@ -1,15 +1,17 @@
 //! web/pages/sesi_detail.rs — Detail satu sesi (/sesi/:id, STAF).
 //!
-//! Tiga bagian: ABSENSI (anggota kelas + status di sesi ini + "Tandai Hadir"
-//! manual → masuk antrean verifikasi normal), CHAT (transkrip), REKAMAN
-//! (tombol unduh bila recording_path terisi; pipeline rekaman menyusul).
+//! Empat bagian: KELOLA (mulai/akhiri sesi + ganti pengajar — dewan guru/admin/
+//! pamong), ABSENSI (anggota kelas + status + "Tandai Hadir" manual → antrean
+//! verifikasi normal), CHAT (transkrip), REKAMAN (unduh bila tersedia).
 
 use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::hooks::use_params_map;
 
 use crate::models::{SessionAttRow, SessionChatItem, SessionDetailData};
-use crate::web::api::{mark_session_present, session_detail_data};
+use crate::web::api::{
+    mark_session_present, session_detail_data, set_session_live, set_session_teacher_action,
+};
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 
 #[component]
@@ -61,6 +63,35 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
     let is_cancelled = d.status_kind == "cancelled";
     let busy_id = RwSignal::new(Option::<i64>::None);
 
+    // ── Kontrol kelola sesi (dewan guru = guru, admin, pamong) ──────────────
+    let is_live = d.status_kind == "ongoing";
+    let is_finished = d.status_kind == "finished";
+    let cur_teacher = d.teacher_id.unwrap_or(0);
+    let teacher_options = StoredValue::new(d.teacher_options.clone());
+    let busy_ctl = RwSignal::new(false);
+    let toggle_live = move |_| {
+        if busy_ctl.get_untracked() {
+            return;
+        }
+        busy_ctl.set(true);
+        leptos::task::spawn_local(async move {
+            let _ = set_session_live(session_id, !is_live).await;
+            busy_ctl.set(false);
+            refetch();
+        });
+    };
+    let set_teacher = move |tid: i64| {
+        if busy_ctl.get_untracked() {
+            return;
+        }
+        busy_ctl.set(true);
+        leptos::task::spawn_local(async move {
+            let _ = set_session_teacher_action(session_id, tid).await;
+            busy_ctl.set(false);
+            refetch();
+        });
+    };
+
     view! {
         // ── Hero info sesi ──────────────────────────────────────────────────
         <div class="spiritual-gradient rounded-2xl p-5 text-on-primary shadow-lg shadow-primary/20 anim-in">
@@ -88,6 +119,67 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                     "Ruang Sesi"
                 </a>
             </div>
+        </div>
+
+        // ── Kelola sesi: mulai/akhiri + pengajar ────────────────────────────
+        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 anim-in">
+            <div class="flex items-center gap-2 mb-3">
+                <span class="material-symbols-outlined text-on-background">"tune"</span>
+                <h2 class="text-body-lg font-bold text-on-background">"Kelola Sesi"</h2>
+            </div>
+            <label class="text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
+                "Pengajar"
+            </label>
+            <select
+                class="mt-1 w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-60"
+                disabled=move || busy_ctl.get()
+                on:change=move |ev| set_teacher(event_target_value(&ev).parse().unwrap_or(0))
+            >
+                <option value="0" selected=cur_teacher == 0>
+                    "— Belum ditentukan —"
+                </option>
+                {teacher_options
+                    .get_value()
+                    .into_iter()
+                    .map(|o| {
+                        let val = o.id.to_string();
+                        let sel = o.id == cur_teacher;
+                        view! {
+                            <option value=val selected=sel>
+                                {o.name}
+                            </option>
+                        }
+                    })
+                    .collect_view()}
+            </select>
+            {(!is_cancelled)
+                .then(|| {
+                    let (label, icon, cls) = if is_live {
+                        (
+                            "Akhiri Sesi",
+                            "call_end",
+                            "mt-3 w-full py-3 rounded-xl bg-error text-on-error font-bold text-body-sm flex items-center justify-center gap-2 press disabled:opacity-50",
+                        )
+                    } else if is_finished {
+                        (
+                            "Mulai Ulang Sesi",
+                            "restart_alt",
+                            "mt-3 w-full py-3 rounded-xl bg-surface-container-highest text-on-background font-bold text-body-sm flex items-center justify-center gap-2 press disabled:opacity-50",
+                        )
+                    } else {
+                        (
+                            "Mulai Sesi",
+                            "play_circle",
+                            "mt-3 w-full py-3 rounded-xl bg-primary text-on-primary font-bold text-body-sm flex items-center justify-center gap-2 press disabled:opacity-50",
+                        )
+                    };
+                    view! {
+                        <button class=cls disabled=move || busy_ctl.get() on:click=toggle_live>
+                            <span class="material-symbols-outlined text-[18px]">{icon}</span>
+                            {label}
+                        </button>
+                    }
+                })}
         </div>
 
         // ── Absensi ─────────────────────────────────────────────────────────

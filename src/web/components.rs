@@ -5,7 +5,8 @@ use leptos_router::hooks::use_location;
 
 use crate::models::SessionUser;
 
-/// Header mobile sticky: judul + lonceng notifikasi interaktif (popover).
+/// Header mobile sticky: judul + lonceng notifikasi + tombol setting (→ /profil,
+/// calon pengganti item Profil di navbar — item navbar SEMENTARA dipertahankan).
 #[component]
 pub fn MobileHeader(
     title: &'static str,
@@ -33,6 +34,13 @@ pub fn MobileHeader(
                     })}
             </div>
             <NotifBell />
+            <a
+                href="/profil"
+                class="w-9 h-9 rounded-full flex items-center justify-center text-on-surface hover:bg-surface-container press"
+                aria-label="Pengaturan"
+            >
+                <span class="material-symbols-outlined">"settings"</span>
+            </a>
         </header>
     }
 }

@@ -926,3 +926,22 @@ pub async fn active_schedules_all(
         .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3), r.get(4), r.get(5)))
         .collect())
 }
+
+/// Update kolom rekaman sesi (dipanggil tiap chunk siaran — best effort).
+pub async fn update_recording(
+    pool: &Pool,
+    session_id: i64,
+    path: &str,
+    mime: &str,
+    size: i64,
+) -> Result<()> {
+    let c = pool.get().await?;
+    c.execute(
+        "UPDATE class_sessions SET recording_path = $2, recording_mime_type = $3, \
+         recording_size = $4 WHERE id = $1",
+        &[&session_id, &path, &mime, &size],
+    )
+    .await
+    .context("update_recording")?;
+    Ok(())
+}

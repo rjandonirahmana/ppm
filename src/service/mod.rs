@@ -7,5 +7,7 @@ pub mod dashboard;
 pub mod fmt;
 pub mod kelas;
 pub mod parent;
+pub mod recording;
 pub mod santri;
 pub mod sessions;
+pub mod storage;

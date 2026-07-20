@@ -7,13 +7,13 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::role_home;
-use crate::web::api::get_session;
+use crate::models::{role_home, SessionUser};
 
 #[component]
 pub fn BerandaPage() -> impl IntoView {
     // Sesi (bila ada) → tombol portal langsung ke dashboard peran, tanpa login.
-    let session = Resource::new(|| (), |_| async move { get_session().await });
+    // Pakai CONTEXT sesi global dari App (audit poin 4) — jangan fetch sendiri.
+    let session = use_context::<Resource<Option<SessionUser>>>();
 
     view! {
         <Title text="PPM Al-Faqih Mandiri — Pondok Pesantren Mahasiswa Depok" />
@@ -51,7 +51,7 @@ pub fn BerandaPage() -> impl IntoView {
                         }
                     }>
                         {move || {
-                            let sess = session.get().and_then(|r| r.ok()).flatten();
+                            let sess = session.and_then(|s| s.get()).flatten();
                             let (href, icon, label) = match &sess {
                                 Some(u) => (role_home(&u.role), "arrow_forward", "Buka Portal"),
                                 None => ("/login", "login", "Masuk Portal"),

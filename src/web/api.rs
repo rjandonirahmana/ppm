@@ -241,7 +241,9 @@ pub async fn post_session_chat(session_id: i64, message: String) -> Result<(), S
     let state = app_state().await?;
     crate::service::sessions::post_chat(&state.pool, &sess, session_id, &message)
         .await
-        .map_err(err)
+        .map_err(err)?;
+    state.notify_live(session_id); // dorong SSE → pendengar refetch chat
+    Ok(())
 }
 
 /// Mulai/akhiri sesi live (staf).
@@ -251,7 +253,13 @@ pub async fn set_session_live(session_id: i64, start: bool) -> Result<(), Server
     let state = app_state().await?;
     crate::service::sessions::set_live(&state.pool, &sess, session_id, start)
         .await
-        .map_err(err)
+        .map_err(err)?;
+    state.notify_live(session_id); // dorong SSE → pendengar refetch status
+    if !start {
+        // Sesi diakhiri → pindahkan rekaman lokal ke RustFS (background).
+        crate::service::recording::finalize_async(state, session_id);
+    }
+    Ok(())
 }
 
 /// Tandai santri HADIR manual pada sebuah sesi (staf).

@@ -33,9 +33,13 @@ pub struct SessionItem {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionsData {
     pub role: String,
-    /// true = melihat SEMUA sesi (admin/pamong/dewan guru).
+    /// true = melihat SEMUA sesi (admin/pamong/dewan guru — guru & dewan guru
+    /// SATU entitas, tidak dibedakan).
     pub all_scope: bool,
-    pub items: Vec<SessionItem>,
+    /// KANAN: sesi yang BELUM lewat (hari ini ke depan), urut tanggal DESC.
+    pub upcoming: Vec<SessionItem>,
+    /// KIRI: sesi yang SUDAH lewat, maksimal 7 hari ke belakang, urut DESC.
+    pub past: Vec<SessionItem>,
 }
 
 /// Satu baris absensi pada detail sesi (anggota kelas + status di sesi itu).
@@ -78,6 +82,10 @@ pub struct SessionDetailData {
     /// URL/path rekaman bila sudah ada (kolom class_sessions.recording_path).
     pub recording_url: Option<String>,
     pub recording_label: String,
+    /// Pengajar saat ini (None = belum ditentukan) + pilihan pengajar —
+    /// dewan guru bisa ganti pengajar langsung dari halaman detail sesi.
+    pub teacher_id: Option<i64>,
+    pub teacher_options: Vec<super::kelas::TeacherOption>,
 }
 
 /// Payload ruang sesi live /sesi/:id/live (staf + santri peserta).
@@ -94,4 +102,6 @@ pub struct SessionLiveData {
     pub chats: Vec<SessionChatItem>,
     /// Jumlah peserta kelas (indikator "128" di header).
     pub member_count: i64,
+    /// URL unduh rekaman — terisi HANYA saat sesi selesai & rekaman ada.
+    pub recording_url: Option<String>,
 }

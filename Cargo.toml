@@ -18,7 +18,6 @@ crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [package.metadata.leptos]
-name = "ppm"
 output-name = "ppm"
 site-root = "target/site"
 site-pkg-dir = "pkg"
@@ -29,7 +28,6 @@ assets-dir = "public"
 site-addr = "0.0.0.0:3000"
 reload-port = 3001
 browserquery = "defaults"
-env = "DEV"
 bin-features = ["ssr"]
 lib-features = ["hydrate"]
 lib-profile-release = "wasm-release"
@@ -68,12 +66,37 @@ web-sys = { version = "0.3", features = [
     "Storage",
     "Event",
     "MouseEvent",
+    # Siaran suara sesi (web/live_audio_ui.rs): mic → MediaRecorder (guru),
+    # MediaSource playback (santri).
+    "Navigator",
+    "MediaDevices",
+    "MediaStream",
+    "MediaStreamTrack",
+    "MediaStreamConstraints",
+    "MediaRecorder",
+    "MediaRecorderOptions",
+    "BlobEvent",
+    "Blob",
+    "MediaSource",
+    "MediaSourceReadyState",
+    "SourceBuffer",
+    "HtmlAudioElement",
+    "HtmlMediaElement",
+    "TimeRanges",
+    "Url",
+    # SSE ruang live (pengganti polling).
+    "EventSource",
+    "MessageEvent",
 ] }
 
 # ── Server-only deps (bukan wasm32) ────────────────────────────────────────────
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 mimalloc = "0.1"
-tokio = { version = "1", features = ["full"] }
+# Fitur eksplisit (bukan "full"): net=TcpListener, time=interval/sleep,
+# fs=finalisasi rekaman, sync/macros/rt — hasil audit Jul 2026.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "fs", "sync"] }
+# BroadcastStream utk endpoint SSE ruang live.
+tokio-stream = { version = "0.1", features = ["sync"] }
 axum = { version = "0.8", features = ["multipart"] }
 tower = "0.5"
 tower-http = { version = "0.7", features = ["fs", "compression-gzip", "compression-br", "trace"] }
@@ -87,6 +110,11 @@ deadpool-postgres = "0.14"
 bcrypt = "0.15"
 jsonwebtoken = "9"
 
+# Storage rekaman → RustFS (S3-compatible), pola e-ticketing/wedding-web.
+aws-sdk-s3 = "1"
+# aws-sdk-s3 memakai rustls; sediakan crypto provider (ring) agar tak panik.
+rustls = { version = "0.23", features = ["ring"], default-features = false }
+
 # Config / Logging
 dotenvy = "0.15"
 tracing = "0.1"
@@ -96,6 +124,16 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
 getrandom = { version = "0.3", features = ["wasm_js"] }
+# Klien siaran suara + SSE (pola dari e-ticketing live_stream.rs).
+send_wrapper = "0.6"
+js-sys = "0.3"
+wasm-bindgen-futures = "0.4"
+gloo-net = { version = "0.7", features = ["http"] }
+gloo-timers = { version = "0.4", features = ["futures"] }
+
+# ── Dev deps (integration test tests/live_audio.rs) ───────────────────────────
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
 
 # ── Profiles ────────────────────────────────────────────────────────────────────
 [profile.dev]

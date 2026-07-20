@@ -1,7 +1,9 @@
-//! web/pages/sesi.rs — Daftar Sesi Kelas (/sesi).
+//! web/pages/sesi.rs — Daftar Sesi Kelas (/sesi), dua TAB klik.
 //!
-//! Santri → sesi kelas yang diikutinya; admin/pamong/dewan guru → SEMUA sesi
-//! (kelak bisa mengelola/update sesi dari sini). Nav bawah menyesuaikan peran.
+//! Santri → sesi kelas yang diikutinya; admin/pamong/dewan guru (guru = dewan
+//! guru, SATU entitas) → SEMUA sesi, klik kartu → /sesi/:id utk kelola (mulai
+//! sesi, ganti pengajar). Tab "Terjadwal" = 7 hari ke depan; "Sudah Lewat" =
+//! 7 hari ke belakang; keduanya urut tanggal DESC, daftar full-width.
 
 use leptos::prelude::*;
 use leptos_meta::Title;
@@ -19,9 +21,20 @@ fn status_badge(kind: &str) -> &'static str {
     }
 }
 
+fn tab_cls(active: bool) -> &'static str {
+    if active {
+        "py-2.5 rounded-lg bg-surface-container-lowest text-primary font-bold text-body-sm shadow-sm press"
+    } else {
+        "py-2.5 rounded-lg text-on-surface-variant font-semibold text-body-sm press"
+    }
+}
+
 #[component]
 pub fn SesiPage() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { sessions_list().await });
+    // Tab aktif: false = Terjadwal (default), true = Sudah Lewat. Hidup di level
+    // komponen supaya pilihan tak reset saat resource refetch.
+    let show_past = RwSignal::new(false);
 
     Effect::new(move |_| {
         if let Some(Err(e)) = data.get() {
@@ -55,6 +68,12 @@ pub fn SesiPage() -> impl IntoView {
                             data.get()
                                 .map(|res| match res {
                                     Ok(d) => {
+                                        // Staf (admin/pamong/guru=dewan guru) → detail sesi
+                                        // (kelola); santri → RUANG LIVE (ikut & bertanya).
+                                        let is_santri = d.role == "santri";
+                                        let n_up = d.upcoming.len();
+                                        let n_past = d.past.len();
+                                        let lists = StoredValue::new((d.upcoming, d.past));
                                         view! {
                                             <p class="text-body-sm text-on-surface-variant">
                                                 {if d.all_scope {
@@ -63,35 +82,58 @@ pub fn SesiPage() -> impl IntoView {
                                                     "Sesi kelas yang kamu ikuti."
                                                 }}
                                             </p>
-                                            {if d.items.is_empty() {
-                                                view! {
-                                                    <div class="bg-surface-container rounded-2xl p-8 text-center text-body-sm text-on-surface-variant">
-                                                        "Belum ada sesi kelas."
-                                                    </div>
-                                                }
-                                                    .into_any()
-                                            } else {
-                                                // Staf → detail sesi (absensi/chat/rekaman);
-                                                // santri → RUANG LIVE (ikut & bertanya).
-                                                let is_santri = d.role == "santri";
-                                                d.items
-                                                    .into_iter()
-                                                    .map(|it| {
-                                                        let id = it.id;
-                                                        let href = if is_santri {
-                                                            format!("/sesi/{id}/live")
-                                                        } else {
-                                                            format!("/sesi/{id}")
-                                                        };
+                                            // Tab klik: Terjadwal (7 hari ke depan) vs
+                                            // Sudah Lewat (7 hari ke belakang), DESC.
+                                            <div class="grid grid-cols-2 gap-1 bg-surface-container rounded-xl p-1">
+                                                <button
+                                                    class=move || tab_cls(!show_past.get())
+                                                    on:click=move |_| show_past.set(false)
+                                                >
+                                                    {format!("Terjadwal ({n_up})")}
+                                                </button>
+                                                <button
+                                                    class=move || tab_cls(show_past.get())
+                                                    on:click=move |_| show_past.set(true)
+                                                >
+                                                    {format!("Sudah Lewat ({n_past})")}
+                                                </button>
+                                            </div>
+                                            <div class="space-y-3">
+                                                {move || {
+                                                    let (up, past) = lists.get_value();
+                                                    let (items, empty) = if show_past.get() {
+                                                        (past, "Tidak ada sesi 7 hari terakhir.")
+                                                    } else {
+                                                        (up, "Belum ada sesi 7 hari ke depan.")
+                                                    };
+                                                    if items.is_empty() {
                                                         view! {
-                                                            <a href=href class="block">
-                                                                <SessionCard it=it />
-                                                            </a>
+                                                            <div class="bg-surface-container rounded-2xl p-8 text-center text-body-sm text-on-surface-variant">
+                                                                {empty}
+                                                            </div>
                                                         }
-                                                    })
-                                                    .collect_view()
-                                                    .into_any()
-                                            }}
+                                                            .into_any()
+                                                    } else {
+                                                        items
+                                                            .into_iter()
+                                                            .map(|it| {
+                                                                let id = it.id;
+                                                                let href = if is_santri {
+                                                                    format!("/sesi/{id}/live")
+                                                                } else {
+                                                                    format!("/sesi/{id}")
+                                                                };
+                                                                view! {
+                                                                    <a href=href class="block">
+                                                                        <SessionCard it=it />
+                                                                    </a>
+                                                                }
+                                                            })
+                                                            .collect_view()
+                                                            .into_any()
+                                                    }
+                                                }}
+                                            </div>
                                         }
                                             .into_any()
                                     }

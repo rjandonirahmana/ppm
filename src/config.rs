@@ -11,6 +11,18 @@ pub struct AppConfig {
     pub database_url: String,
     pub db_pool_max_size: usize,
     pub jwt_secret: String,
+    /// RustFS (S3-compatible) untuk rekaman siaran — None = simpan lokal saja.
+    pub rustfs: Option<RustFsConfig>,
+}
+
+/// Kredensial RustFS (pola e-ticketing/wedding-web). Aktif bila RUSTFS_ENDPOINT
+/// di-set. Bucket default "ppm" (bucket sendiri); key tetap berprefix `ppm/...`.
+pub struct RustFsConfig {
+    pub endpoint: String,
+    pub access_key: String,
+    pub secret_key: String,
+    pub bucket: String,
+    pub public_url: String,
 }
 
 impl AppConfig {
@@ -21,12 +33,27 @@ impl AppConfig {
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(3000),
-            database_url: env::var("DATABASE_URL").context("DATABASE_URL wajib di-set (.env)")?,
+            database_url: env::var("DATABASE_URL")
+                .unwrap_or_else(|_| "dev-secret-ubah-di-prod".into()),
+            // Default 8 (bukan 16): VPS 2 CPU/4GB — hemat memori (audit Jul 2026).
             db_pool_max_size: env::var("DB_POOL_MAX_SIZE")
                 .ok()
                 .and_then(|p| p.parse().ok())
-                .unwrap_or(16),
+                .unwrap_or(8),
             jwt_secret: env::var("JWT_SECRET").unwrap_or_else(|_| "dev-secret-ubah-di-prod".into()),
+            rustfs: match env::var("RUSTFS_ENDPOINT") {
+                Ok(endpoint) => Some(RustFsConfig {
+                    endpoint,
+                    access_key: env::var("RUSTFS_ACCESS_KEY")
+                        .context("RUSTFS_ACCESS_KEY wajib bila RUSTFS_ENDPOINT di-set")?,
+                    secret_key: env::var("RUSTFS_SECRET_KEY")
+                        .context("RUSTFS_SECRET_KEY wajib bila RUSTFS_ENDPOINT di-set")?,
+                    bucket: env::var("RUSTFS_BUCKET").unwrap_or_else(|_| "ppm".into()),
+                    public_url: env::var("RUSTFS_PUBLIC_URL")
+                        .context("RUSTFS_PUBLIC_URL wajib bila RUSTFS_ENDPOINT di-set")?,
+                }),
+                Err(_) => None,
+            },
         })
     }
 }
