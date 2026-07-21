@@ -68,7 +68,7 @@ pub fn IzinPage() -> impl IntoView {
     view! {
         <Title text="Ajukan Perizinan — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 // ── Header dgn poin ────────────────────────────────────────
                 <header class="sticky top-0 z-20 bg-surface/90 backdrop-blur border-b border-outline-variant/50 px-5 py-3 flex items-center gap-3">
                     <div class="flex-1">
@@ -91,10 +91,14 @@ pub fn IzinPage() -> impl IntoView {
                     <NotifBell />
                 </header>
 
-                <div class="px-5 pt-5 space-y-4 stagger">
+                <div class="px-5 pt-5 space-y-4 md:space-y-0 md:grid md:grid-cols-3 md:gap-5 md:items-start stagger">
+                    // Sidebar (statistik+riwayat) DULUAN di DOM → mobile tetap
+                    // urutan asli (status dulu, baru form). Di desktop didorong
+                    // ke kanan via order-2 (form default order-0 = kiri).
+                    <div class="space-y-4 md:order-2">
                     <Suspense fallback=|| {
                         view! {
-                            <div class="space-y-3 animate-pulse">
+                            <div class="animate-pulse space-y-3">
                                 <div class="h-36 bg-surface-container rounded-2xl"></div>
                                 <div class="h-28 bg-surface-container rounded-2xl"></div>
                             </div>
@@ -107,14 +111,60 @@ pub fn IzinPage() -> impl IntoView {
                         }}
                     </Suspense>
 
+                    <Suspense fallback=|| ()>
+                        {move || {
+                            data.get()
+                                .and_then(|r| r.ok())
+                                .filter(|d| !d.permits.is_empty())
+                                .map(|d| {
+                                    view! {
+                                        <div class="space-y-3">
+                                            <h2 class="text-headline-sm text-on-background pt-2">
+                                                "Pengajuan Terakhir"
+                                            </h2>
+                                            {d.permits
+                                                .into_iter()
+                                                .map(|p| {
+                                                    let badge = match p.status_kind.as_str() {
+                                                        "approved" => "px-3 py-1.5 rounded-full text-label-md bg-success/10 text-success",
+                                                        "rejected" => "px-3 py-1.5 rounded-full text-label-md bg-error-container text-error",
+                                                        _ => "px-3 py-1.5 rounded-full text-label-md bg-warning/10 text-warning",
+                                                    };
+                                                    view! {
+                                                        <div class="ppm-card p-4 flex items-center gap-3">
+                                                            <div class="w-11 h-11 rounded-xl bg-info/10 text-info flex items-center justify-center shrink-0">
+                                                                <span class="material-symbols-outlined">"medical_services"</span>
+                                                            </div>
+                                                            <div class="flex-1 min-w-0">
+                                                                <p class="text-body-md font-semibold text-on-background">
+                                                                    {p.kind_label}
+                                                                </p>
+                                                                <p class="text-body-sm text-on-surface-variant">
+                                                                    {p.range_label}
+                                                                </p>
+                                                            </div>
+                                                            <span class=badge>{p.status_label}</span>
+                                                        </div>
+                                                    }
+                                                })
+                                                .collect_view()}
+                                        </div>
+                                    }
+                                })
+                        }}
+                    </Suspense>
+                    </div>
+
+                    <div class="md:col-span-2 space-y-4 md:order-1 md:row-start-1">
                     // ── Formulir Izin ──────────────────────────────────────
-                    <div class="flex items-center gap-2 pt-2">
+                    <div class="flex items-center gap-2 pt-2 md:pt-0">
                         <span class="material-symbols-outlined text-on-background">"edit_note"</span>
                         <h2 class="text-headline-sm text-on-background">"Formulir Izin"</h2>
                     </div>
 
                     <form
-                        class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-5 space-y-5"
+                        class="ppm-card p-5 space-y-5"
+                        method="post"
                         on:submit=on_submit
                     >
                         {move || {
@@ -203,50 +253,7 @@ pub fn IzinPage() -> impl IntoView {
                             {move || if busy.get() { "Mengirim…" } else { "Ajukan Izin Sekarang" }}
                         </button>
                     </form>
-
-                    // ── Pengajuan terakhir ─────────────────────────────────
-                    <Suspense fallback=|| ()>
-                        {move || {
-                            data.get()
-                                .and_then(|r| r.ok())
-                                .filter(|d| !d.permits.is_empty())
-                                .map(|d| {
-                                    view! {
-                                        <div class="space-y-3">
-                                            <h2 class="text-headline-sm text-on-background pt-2">
-                                                "Pengajuan Terakhir"
-                                            </h2>
-                                            {d.permits
-                                                .into_iter()
-                                                .map(|p| {
-                                                    let badge = match p.status_kind.as_str() {
-                                                        "approved" => "px-3 py-1.5 rounded-full text-label-md bg-success/10 text-success",
-                                                        "rejected" => "px-3 py-1.5 rounded-full text-label-md bg-error-container text-error",
-                                                        _ => "px-3 py-1.5 rounded-full text-label-md bg-warning/10 text-warning",
-                                                    };
-                                                    view! {
-                                                        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 flex items-center gap-3">
-                                                            <div class="w-11 h-11 rounded-xl bg-info/10 text-info flex items-center justify-center shrink-0">
-                                                                <span class="material-symbols-outlined">"medical_services"</span>
-                                                            </div>
-                                                            <div class="flex-1 min-w-0">
-                                                                <p class="text-body-md font-semibold text-on-background">
-                                                                    {p.kind_label}
-                                                                </p>
-                                                                <p class="text-body-sm text-on-surface-variant">
-                                                                    {p.range_label}
-                                                                </p>
-                                                            </div>
-                                                            <span class=badge>{p.status_label}</span>
-                                                        </div>
-                                                    }
-                                                })
-                                                .collect_view()}
-                                        </div>
-                                    }
-                                })
-                        }}
-                    </Suspense>
+                    </div>
                 </div>
 
             </div>
@@ -273,14 +280,14 @@ fn IzinStats(d: IzinData) -> impl IntoView {
 
         // Hadir / Absen
         <div class="grid grid-cols-2 gap-3">
-            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-5 text-center card-hover">
+            <div class="ppm-card p-5 text-center card-hover">
                 <span class="material-symbols-outlined text-success text-3xl">"check_circle"</span>
                 <p class="text-3xl font-bold text-on-background mt-1" data-count=d.hadir.to_string()>
                     {d.hadir}
                 </p>
                 <p class="text-body-sm text-on-surface-variant">"Hadir"</p>
             </div>
-            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-5 text-center card-hover">
+            <div class="ppm-card p-5 text-center card-hover">
                 <span class="material-symbols-outlined text-error text-3xl">"warning"</span>
                 <p class="text-3xl font-bold text-on-background mt-1" data-count=d.absen.to_string()>
                     {d.absen}

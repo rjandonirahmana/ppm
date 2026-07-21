@@ -19,9 +19,17 @@ use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 #[component]
 pub fn KelasDetailPage() -> impl IntoView {
     let params = use_params_map();
-    let class_id =
-        Memo::new(move |_| params.read().get("id").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0));
-    let data = Resource::new(move || class_id.get(), |id| async move { kelas_detail(id).await });
+    let class_id = Memo::new(move |_| {
+        params
+            .read()
+            .get("id")
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0)
+    });
+    let data = Resource::new(
+        move || class_id.get(),
+        |id| async move { kelas_detail(id).await },
+    );
 
     Effect::new(move |_| {
         if let Some(Err(e)) = data.get() {
@@ -40,15 +48,18 @@ pub fn KelasDetailPage() -> impl IntoView {
     view! {
         <Title text="Detail Kelas — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Detail Kelas" back_href="/kelas" />
 
                 <div class="px-5 pt-5 space-y-4">
                     <Suspense fallback=|| {
                         view! {
-                            <div class="space-y-3 animate-pulse">
+                            <div class="animate-pulse space-y-3">
                                 <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                <div class="h-32 bg-surface-container rounded-2xl"></div>
+                                <div class="grid gap-3 md:grid-cols-2">
+                                    <div class="h-32 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-32 bg-surface-container rounded-2xl hidden md:block"></div>
+                                </div>
                             </div>
                         }
                     }>
@@ -118,7 +129,7 @@ fn DetailBody(
             {move || {
                 if editing.get() {
                     view! {
-                        <form class="space-y-3" on:submit=save>
+                        <form class="space-y-3" method="post" on:submit=save>
                             <p class="text-body-lg font-bold flex items-center gap-2">
                                 <span class="material-symbols-outlined">"edit"</span>
                                 "Edit Detail Kelas"
@@ -342,7 +353,7 @@ fn SantriTab(
                     .collect();
                 if list.is_empty() {
                     return view! {
-                        <div class="bg-surface-container rounded-2xl p-8 text-center text-body-sm text-on-surface-variant">
+                        <div class="ppm-empty">
                             {if total == 0 {
                                 "Belum ada santri di kelas ini."
                             } else {
@@ -352,7 +363,9 @@ fn SantriTab(
                     }
                         .into_any();
                 }
-                list.into_iter()
+                view! {
+                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                        {list.into_iter()
                     .map(|m| {
                         let sid = m.id;
                         let initial = m.name.chars().next().unwrap_or('S').to_string();
@@ -360,7 +373,7 @@ fn SantriTab(
                         let ang = m.angkatan.clone();
                         view! {
                             <div
-                                class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3 flex items-center gap-3 card-hover anim-in"
+                                class="ppm-card p-3 flex items-center gap-3 card-hover anim-in"
                                 style="border-left:4px solid #064e3b"
                             >
                                 <div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold shrink-0">
@@ -391,7 +404,9 @@ fn SantriTab(
                             </div>
                         }
                     })
-                    .collect_view()
+                    .collect_view()}
+                    </div>
+                }
                     .into_any()
             }}
         </div>
@@ -446,7 +461,10 @@ fn AddMemberForm(
                 }
                 Err(e) => {
                     let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((
+                        false,
+                        m.rsplit(": ").next().unwrap_or(&m).to_string(),
+                    )));
                 }
             }
             busy.set(false);
@@ -454,7 +472,7 @@ fn AddMemberForm(
     };
 
     view! {
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 space-y-3">
+        <div class="ppm-card p-4 space-y-3">
             <div class="flex items-center gap-2">
                 <span class="material-symbols-outlined text-primary">"person_add"</span>
                 <h3 class="text-body-md font-bold text-on-background">"Tambah Santri"</h3>
@@ -558,28 +576,32 @@ fn JadwalTab(
     let schedules = d.schedules.clone();
     let weekly = d.weekly_sessions;
     let avg = d.avg_duration_min;
-    let status = if schedules.is_empty() { "Belum diatur" } else { "Terjadwal" };
+    let status = if schedules.is_empty() {
+        "Belum diatur"
+    } else {
+        "Terjadwal"
+    };
     view! {
         <div class="space-y-3 stagger">
             <BuatJadwalForm class_id=class_id refetch=refetch />
 
             // ── Statistik jadwal (mockup Jadwal Kelas) ──────────────────────
-            <div class="grid grid-cols-3 gap-2">
-                <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3 text-center">
+            <div class="grid grid-cols-3 gap-2 md:max-w-xl">
+                <div class="ppm-card p-3 text-center">
                     <span class="material-symbols-outlined text-primary">"calendar_month"</span>
                     <p class="text-headline-sm font-bold text-on-background" data-count=weekly.to_string()>
                         {weekly}
                     </p>
                     <p class="text-[10px] text-on-surface-variant tracking-wide">"Sesi / Minggu"</p>
                 </div>
-                <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3 text-center">
+                <div class="ppm-card p-3 text-center">
                     <span class="material-symbols-outlined text-primary">"schedule"</span>
                     <p class="text-headline-sm font-bold text-on-background" data-count=avg.to_string()>
                         {avg}
                     </p>
                     <p class="text-[10px] text-on-surface-variant tracking-wide">"Menit Rata²"</p>
                 </div>
-                <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3 text-center">
+                <div class="ppm-card p-3 text-center">
                     <span class="material-symbols-outlined text-primary">"autorenew"</span>
                     <p class="text-body-md font-bold text-on-background mt-2">{status}</p>
                     <p class="text-[10px] text-on-surface-variant tracking-wide">"Rutinitas"</p>
@@ -590,16 +612,20 @@ fn JadwalTab(
 
             {if schedules.is_empty() {
                 view! {
-                    <div class="bg-surface-container rounded-2xl p-8 text-center text-body-sm text-on-surface-variant">
+                    <div class="ppm-empty">
                         "Belum ada jadwal."
                     </div>
                 }
                     .into_any()
             } else {
-                schedules
-                    .into_iter()
-                    .map(|s| view! { <JadwalCard s=s refetch=refetch /> })
-                    .collect_view()
+                view! {
+                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                        {schedules
+                            .into_iter()
+                            .map(|s| view! { <JadwalCard s=s refetch=refetch /> })
+                            .collect_view()}
+                    </div>
+                }
                     .into_any()
             }}
         </div>
@@ -621,6 +647,8 @@ fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> im
     let e_rec = RwSignal::new(s.recurrence.clone());
     let e_sd = RwSignal::new(s.start_date.clone());
     let e_ed = RwSignal::new(s.end_date.clone());
+    let e_cat = RwSignal::new(s.category.clone());
+    let e_late = RwSignal::new(s.late_points.clone());
 
     let save = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -637,16 +665,21 @@ fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> im
             e_rec.get_untracked(),
             e_sd.get_untracked(),
             e_ed.get_untracked(),
+            e_cat.get_untracked(),
+            e_late.get_untracked(),
         );
         leptos::task::spawn_local(async move {
-            match update_schedule_action(sid, a.0, a.1, a.2, a.3, a.4, a.5, a.6).await {
+            match update_schedule_action(sid, a.0, a.1, a.2, a.3, a.4, a.5, a.6, a.7, a.8).await {
                 Ok(_) => {
                     editing.set(false);
                     refetch();
                 }
                 Err(e) => {
                     let s = e.to_string();
-                    msg.set(Some((false, s.rsplit(": ").next().unwrap_or(&s).to_string())));
+                    msg.set(Some((
+                        false,
+                        s.rsplit(": ").next().unwrap_or(&s).to_string(),
+                    )));
                 }
             }
             busy.set(false);
@@ -670,16 +703,27 @@ fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> im
     let recurrence_label = s.recurrence_label.clone();
     let time_label = s.time_label.clone();
     let date_label = s.date_label.clone();
-    let field = "w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface";
+    let category_ro = s.category.clone();
+    let late_ro = s.late_points.clone();
+    let field =
+        "w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface";
     view! {
         <div
-            class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 card-hover anim-in"
+            class="ppm-card p-4 card-hover anim-in"
             style="border-left:4px solid #064e3b"
         >
             <div class="flex items-center justify-between gap-2">
                 <p class="text-body-md font-bold text-on-background truncate">{title_ro}</p>
                 <div class="flex items-center gap-2 shrink-0">
-                    <span class="px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-secondary-container text-primary">
+                    {(!category_ro.is_empty())
+                        .then(|| {
+                            view! {
+                                <span class="ppm-chip bg-primary/10 text-primary">
+                                    {category_ro.clone()}
+                                </span>
+                            }
+                        })}
+                    <span class="ppm-chip bg-secondary-container text-primary">
                         {recurrence_label}
                     </span>
                     <button
@@ -708,7 +752,7 @@ fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> im
                 if editing.get() {
                     // ── Form EDIT jadwal (tanggal/jam/recurrence) ──────────
                     view! {
-                        <form class="mt-3 space-y-2 anim-in" on:submit=save>
+                        <form class="mt-3 space-y-2 anim-in" method="post" on:submit=save>
                             <input
                                 type="text"
                                 class=field
@@ -716,6 +760,26 @@ fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> im
                                 prop:value=move || e_title.get()
                                 on:input=move |ev| e_title.set(event_target_value(&ev))
                             />
+                            <input
+                                type="text"
+                                list="kategori-detail"
+                                class=field
+                                placeholder="Kategori (mis. Pengajian/Sholat) — kosongkan = ikut kategori kelas"
+                                prop:value=move || e_cat.get()
+                                on:input=move |ev| e_cat.set(event_target_value(&ev))
+                            />
+                            <label class="space-y-1 block">
+                                <span class="text-[11px] text-on-surface-variant">
+                                    "Poin jika telat di jadwal ini (kosongkan = default +2)"
+                                </span>
+                                <input
+                                    type="number"
+                                    class=field
+                                    placeholder="mis. -5 utk sholat"
+                                    prop:value=move || e_late.get()
+                                    on:input=move |ev| e_late.set(event_target_value(&ev))
+                                />
+                            </label>
                             <div class="grid grid-cols-2 gap-2">
                                 <label class="space-y-1">
                                     <span class="text-[11px] text-on-surface-variant">"Jam mulai"</span>
@@ -812,6 +876,15 @@ fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> im
                             <span class="material-symbols-outlined text-[15px]">"calendar_month"</span>
                             {date_label.clone()}
                         </p>
+                        {(!late_ro.is_empty())
+                            .then(|| {
+                                view! {
+                                    <p class="text-body-sm text-on-surface-variant flex items-center gap-1">
+                                        <span class="material-symbols-outlined text-[15px]">"bolt"</span>
+                                        "Telat: " {late_ro.clone()} " poin"
+                                    </p>
+                                }
+                            })}
                         <div class="flex justify-end mt-3 pt-3 border-t border-outline-variant/40">
                             <button
                                 class="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-error-container/60 text-error text-body-sm font-semibold press disabled:opacity-60"
@@ -840,6 +913,8 @@ fn BuatJadwalForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) -> 
     let recurrence = RwSignal::new("daily".to_string());
     let start_d = RwSignal::new(String::new());
     let end_d = RwSignal::new(String::new());
+    let category = RwSignal::new(String::new());
+    let point = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
 
@@ -858,10 +933,14 @@ fn BuatJadwalForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) -> 
             recurrence.get_untracked(),
             start_d.get_untracked(),
             end_d.get_untracked(),
+            category.get_untracked(),
+            point.get_untracked(),
         );
         leptos::task::spawn_local(async move {
-            match create_schedule_action(class_id, args.0, args.1, args.2, args.3, args.4, args.5, args.6)
-                .await
+            match create_schedule_action(
+                class_id, args.0, args.1, args.2, args.3, args.4, args.5, args.6, args.7, args.8,
+            )
+            .await
             {
                 Ok(_) => {
                     msg.set(Some((true, "Jadwal dibuat.".into())));
@@ -871,18 +950,24 @@ fn BuatJadwalForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) -> 
                     limit_t.set(String::new());
                     start_d.set(String::new());
                     end_d.set(String::new());
+                    category.set(String::new());
+                    point.set(String::new());
                     refetch();
                 }
                 Err(e) => {
                     let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((
+                        false,
+                        m.rsplit(": ").next().unwrap_or(&m).to_string(),
+                    )));
                 }
             }
             busy.set(false);
         });
     };
 
-    let field = "w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface";
+    let field =
+        "w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface";
     view! {
         {move || {
             if !open.get() {
@@ -900,7 +985,8 @@ fn BuatJadwalForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) -> 
             let field = field;
             view! {
                 <form
-                    class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 space-y-3 anim-in"
+                    class="ppm-card p-4 space-y-3 anim-in"
+                    method="post"
                     on:submit=submit
                 >
                     <h3 class="text-body-md font-bold text-on-background">"Jadwal Baru"</h3>
@@ -922,6 +1008,26 @@ fn BuatJadwalForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) -> 
                         prop:value=move || title.get()
                         on:input=move |ev| title.set(event_target_value(&ev))
                     />
+                    <input
+                        type="text"
+                        list="kategori-detail"
+                        class=field
+                        placeholder="Kategori (mis. Pengajian/Sholat) — kosongkan = ikut kategori kelas"
+                        prop:value=move || category.get()
+                        on:input=move |ev| category.set(event_target_value(&ev))
+                    />
+                    <label class="space-y-1 block">
+                        <span class="text-label-md text-on-surface-variant">
+                            "Poin jika telat (kosongkan = default +2)"
+                        </span>
+                        <input
+                            type="number"
+                            class=field
+                            placeholder="mis. -5 utk sholat"
+                            prop:value=move || point.get()
+                            on:input=move |ev| point.set(event_target_value(&ev))
+                        />
+                    </label>
                     <div class="grid grid-cols-2 gap-2">
                         <label class="space-y-1">
                             <span class="text-label-md text-on-surface-variant">"Jam mulai"</span>
@@ -1038,16 +1144,20 @@ fn SesiTab(
 
             {if sessions.is_empty() {
                 view! {
-                    <div class="bg-surface-container rounded-2xl p-8 text-center text-body-sm text-on-surface-variant">
+                    <div class="ppm-empty">
                         "Belum ada sesi. Buat jadwal dulu agar sesi ter-generate."
                     </div>
                 }
                     .into_any()
             } else {
-                sessions
-                    .into_iter()
-                    .map(|s| view! { <SesiCard s=s teacher_options=teacher_opts refetch=refetch /> })
-                    .collect_view()
+                view! {
+                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                        {sessions
+                            .into_iter()
+                            .map(|s| view! { <SesiCard s=s teacher_options=teacher_opts refetch=refetch /> })
+                            .collect_view()}
+                    </div>
+                }
                     .into_any()
             }}
         </div>
@@ -1066,15 +1176,19 @@ fn SesiCard(
     let busy = RwSignal::new(false);
 
     let badge = if is_libur {
-        "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-error-container text-error"
+        "ppm-chip bg-error-container text-error"
     } else {
         match s.status_kind.as_str() {
-            "ongoing" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-success/10 text-success",
-            "finished" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-surface-container-highest text-on-surface-variant",
-            _ => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-info/10 text-info",
+            "ongoing" => "ppm-chip bg-success/10 text-success",
+            "finished" => "ppm-chip bg-surface-container-highest text-on-surface-variant",
+            _ => "ppm-chip bg-info/10 text-info",
         }
     };
-    let status_text = if is_libur { "Libur".to_string() } else { s.status_label.clone() };
+    let status_text = if is_libur {
+        "Libur".to_string()
+    } else {
+        s.status_label.clone()
+    };
     let when = format!("{} • {}", s.date_label, s.time_label);
 
     let set_teacher = move |tid: i64| {
@@ -1110,7 +1224,7 @@ fn SesiCard(
 
     view! {
         <div
-            class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 card-hover anim-in"
+            class="ppm-card p-4 card-hover anim-in"
             style=border
         >
             <div class="flex items-center justify-between gap-2">
@@ -1210,14 +1324,18 @@ fn BuatSesiForm(
                 }
                 Err(e) => {
                     let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((
+                        false,
+                        m.rsplit(": ").next().unwrap_or(&m).to_string(),
+                    )));
                 }
             }
             busy.set(false);
         });
     };
 
-    let field = "w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface";
+    let field =
+        "w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface";
     view! {
         {move || {
             if !open.get() {
@@ -1235,7 +1353,8 @@ fn BuatSesiForm(
             let field = field;
             view! {
                 <form
-                    class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 space-y-3 anim-in"
+                    class="ppm-card p-4 space-y-3 anim-in"
+                    method="post"
                     on:submit=submit
                 >
                     <h3 class="text-body-md font-bold text-on-background">"Sesi Baru"</h3>

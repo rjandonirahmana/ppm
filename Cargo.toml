@@ -99,7 +99,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time",
 tokio-stream = { version = "0.1", features = ["sync"] }
 axum = { version = "0.8", features = ["multipart"] }
 tower = "0.5"
-tower-http = { version = "0.7", features = ["fs", "compression-gzip", "compression-br", "trace"] }
+tower-http = { version = "0.7", features = ["fs", "compression-gzip", "compression-br", "trace", "set-header"] }
 
 # Database
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"] }
@@ -109,6 +109,11 @@ deadpool-postgres = "0.14"
 # Auth
 bcrypt = "0.15"
 jsonwebtoken = "9"
+
+# Export laporan: PDF (font base-14 bawaan PDF, TANPA file font eksternal —
+# lihat service/export.rs) + Excel (.xlsx, tanpa dependensi sistem).
+printpdf = "0.11"
+rust_xlsxwriter = "0.96"
 
 # Storage rekaman → RustFS (S3-compatible), pola e-ticketing/wedding-web.
 aws-sdk-s3 = "1"

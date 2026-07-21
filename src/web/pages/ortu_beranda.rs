@@ -37,15 +37,21 @@ pub fn OrtuBerandaPage() -> impl IntoView {
     view! {
         <Title text="Pantauan Orang Tua — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Pantauan Orang Tua" />
 
                 <div class="px-5 pt-5 space-y-4 stagger">
                     <Suspense fallback=|| {
                         view! {
-                            <div class="space-y-3 animate-pulse">
+                            <div class="animate-pulse space-y-3">
                                 <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                <div class="h-40 bg-surface-container rounded-2xl"></div>
+                                <div class="grid gap-3 md:grid-cols-3 md:items-start">
+                                    <div class="md:col-span-2 space-y-3">
+                                        <div class="h-28 bg-surface-container rounded-2xl"></div>
+                                        <div class="h-40 bg-surface-container rounded-2xl"></div>
+                                    </div>
+                                    <div class="h-40 bg-surface-container rounded-2xl"></div>
+                                </div>
                             </div>
                         }
                     }>
@@ -268,7 +274,7 @@ fn SearchPanel(refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
     };
 
     view! {
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+        <div class="ppm-card p-4">
             <p class="text-[11px] font-bold tracking-[0.15em] text-on-surface-variant">
                 "CARI SANTRI"
             </p>
@@ -359,6 +365,10 @@ fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
     let dash = format!("{},100", m.pct.clamp(0, 100));
 
     view! {
+        // Desktop: profil+status+ring col-span-2 (kiri), izin jadi sidebar
+        // kanan — konten sama, disusun 2 kolom di layar lebar.
+        <div class="space-y-5 md:space-y-0 md:grid md:grid-cols-3 md:gap-5 md:items-start">
+        <div class="md:col-span-2 space-y-5">
         // Kartu anak
         <div class="spiritual-gradient rounded-2xl p-5 text-on-primary flex items-center gap-4 shadow-lg shadow-primary/20">
             <div class="w-16 h-16 rounded-xl bg-primary-fixed text-primary flex items-center justify-center text-2xl font-bold shrink-0">
@@ -375,7 +385,7 @@ fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
         </div>
 
         // Status kehadiran hari ini
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+        <div class="ppm-card p-4">
             <div class="flex items-center justify-between">
                 <h3 class="text-body-lg font-bold text-primary">"Status Kehadiran"</h3>
                 <span class="text-[10px] font-bold tracking-[0.15em] text-on-surface-variant">
@@ -417,7 +427,7 @@ fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
 
         // Ring persentase + hitungan
         <div class="grid grid-cols-2 gap-3">
-            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 flex flex-col items-center">
+            <div class="ppm-card p-4 flex flex-col items-center">
                 <p class="text-[11px] font-bold tracking-[0.12em] text-on-surface-variant text-center">
                     "PERSENTASE KEHADIRAN"
                 </p>
@@ -438,7 +448,7 @@ fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
                     </div>
                 </div>
             </div>
-            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 flex flex-col justify-center divide-y divide-outline-variant/40">
+            <div class="ppm-card p-4 flex flex-col justify-center divide-y divide-outline-variant/40">
                 <div class="flex items-center justify-between py-2">
                     <span class="text-body-md text-on-surface-variant">"Hadir"</span>
                     <span class="text-body-lg font-bold text-success" data-count=m.hadir.to_string()>
@@ -458,6 +468,7 @@ fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
                     </span>
                 </div>
             </div>
+        </div>
         </div>
 
         // Permohonan izin
@@ -489,7 +500,7 @@ fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
                             _ => "px-3 py-1.5 rounded-full text-label-md bg-warning/10 text-warning",
                         };
                         view! {
-                            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 flex items-center gap-3 mb-2 card-hover">
+                            <div class="ppm-card p-4 flex items-center gap-3 mb-2 card-hover">
                                 <div class="w-11 h-11 rounded-xl bg-info/10 text-info flex items-center justify-center shrink-0">
                                     <span class="material-symbols-outlined">"medical_services"</span>
                                 </div>
@@ -504,6 +515,7 @@ fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
                     .collect_view()
                     .into_any()
             }}
+        </div>
         </div>
     }
 }

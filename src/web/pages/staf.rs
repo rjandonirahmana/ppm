@@ -13,10 +13,10 @@ use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 
 fn status_badge(kind: &str) -> &'static str {
     match kind {
-        "late" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-warning/10 text-warning",
-        "permit" | "sick" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-info/10 text-info",
-        "absent" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-error-container text-error",
-        _ => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-success/10 text-success",
+        "late" => "ppm-chip bg-warning/10 text-warning",
+        "permit" | "sick" => "ppm-chip bg-info/10 text-info",
+        "absent" => "ppm-chip bg-error-container text-error",
+        _ => "ppm-chip bg-success/10 text-success",
     }
 }
 
@@ -47,15 +47,22 @@ pub fn StafDashboardPage() -> impl IntoView {
     view! {
         <Title text="Dashboard Staf — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Dashboard Staf" subtitle="Ringkasan aktivitas hari ini" />
                 <div class="px-5 pt-5 space-y-5 stagger">
                     <Suspense fallback=|| {
                         view! {
                             <div class="space-y-3 animate-pulse">
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-24 bg-surface-container rounded-2xl col-span-2 md:col-span-1"></div>
+                                </div>
+                                <div class="h-28 bg-surface-container rounded-2xl"></div>
+                                <div class="grid md:grid-cols-3 gap-3">
+                                    <div class="h-40 bg-surface-container rounded-2xl md:col-span-2"></div>
+                                    <div class="h-40 bg-surface-container rounded-2xl"></div>
+                                </div>
                             </div>
                         }
                     }>
@@ -83,15 +90,16 @@ fn StafBody(d: StafHome) -> impl IntoView {
             <p class="text-body-sm text-on-surface-variant mt-1">"Ringkasan aktivitas dan laporan hari ini."</p>
         </div>
 
-        // ── Statistik (mockup admin: Total Santri + Kelas Aktif) ─────────
+        // ── Statistik — mobile: 2 kartu + izin di bawah; DESKTOP (mockup
+        // framed_desktop): SATU baris 3 kartu. ────────────────────────────
         {
             let live_count = live.iter().filter(|s| s.state == "live").count();
             let absen = (total_santri - hadir_today).max(0);
             view! {
-                <div class="grid grid-cols-2 gap-3">
-                    <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div class="ppm-card p-4">
                         <div class="flex items-start justify-between">
-                            <span class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center">
+                            <span class="w-10 h-10 ppm-tile">
                                 <span class="material-symbols-outlined">"group"</span>
                             </span>
                             <span class="text-[11px] font-bold text-success">{format!("+{santri_growth_month} baru")}</span>
@@ -99,9 +107,9 @@ fn StafBody(d: StafHome) -> impl IntoView {
                         <p class="text-2xl font-bold text-on-background mt-3" data-count=total_santri.to_string()>{total_santri}</p>
                         <p class="text-body-sm text-on-surface-variant">"Total Santri"</p>
                     </div>
-                    <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+                    <div class="ppm-card p-4">
                         <div class="flex items-start justify-between">
-                            <span class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center">
+                            <span class="w-10 h-10 ppm-tile">
                                 <span class="material-symbols-outlined">"school"</span>
                             </span>
                             {(live_count > 0)
@@ -115,6 +123,18 @@ fn StafBody(d: StafHome) -> impl IntoView {
                         <p class="text-2xl font-bold text-on-background mt-3">{live.len()}</p>
                         <p class="text-body-sm text-on-surface-variant">"Sesi Hari Ini"</p>
                     </div>
+                    <a
+                        href="/verifikasi-pamong"
+                        class="col-span-2 md:col-span-1 block bg-error-container/40 border border-error/30 rounded-2xl p-4 hover:bg-error-container/60 transition-colors"
+                    >
+                        <div class="flex items-center justify-between h-full">
+                            <div>
+                                <p class="text-body-sm text-on-surface-variant">"Permohonan Izin"</p>
+                                <p class="text-xl font-bold text-on-background">{format!("{izin_pending} Menunggu")}</p>
+                            </div>
+                            <span class="material-symbols-outlined text-error">"pending_actions"</span>
+                        </div>
+                    </a>
                 </div>
 
                 // ── Hero: Kehadiran Hari Ini (kartu gradien mockup) ──────
@@ -140,19 +160,6 @@ fn StafBody(d: StafHome) -> impl IntoView {
             }
         }
 
-        <a
-            href="/verifikasi-pamong"
-            class="block bg-error-container/40 border border-error/30 rounded-2xl p-4 hover:bg-error-container/60 transition-colors"
-        >
-            <div class="flex items-center justify-between">
-                <div>
-                    <p class="text-body-sm text-on-surface-variant">"Permohonan Izin"</p>
-                    <p class="text-xl font-bold text-on-background">{format!("{izin_pending} Menunggu")}</p>
-                </div>
-                <span class="material-symbols-outlined text-error">"pending_actions"</span>
-            </div>
-        </a>
-
         // ── Alat Administrasi (grid mockup) ──────────────────────
         <div>
             <h3 class="text-body-lg font-bold text-on-background mb-2">"Alat Administrasi"</h3>
@@ -176,33 +183,37 @@ fn StafBody(d: StafHome) -> impl IntoView {
             </div>
         </div>
 
-        // ── Sesi Live ────────────────────────────────────────────
-        <div>
-            <h3 class="text-title-md text-on-background font-semibold mb-3">"Sesi Kelas Hari Ini"</h3>
-            <div class="space-y-2">
-                {if live.is_empty() {
-                    view! {
-                        <p class="text-body-sm text-on-surface-variant text-center py-4">
-                            "Belum ada sesi terjadwal hari ini."
-                        </p>
-                    }
-                        .into_any()
-                } else {
-                    live.into_iter().map(|s| view! { <LiveSesiCard s=s /> }).collect_view().into_any()
-                }}
+        // ── Area 2 KOLOM di desktop (mockup: antrean kiri, panel "Selesai
+        // Hari Ini" lavender kanan); mobile tetap bertumpuk. ──────────────
+        <div class="space-y-5 md:space-y-0 md:grid md:grid-cols-3 md:gap-5 md:items-start">
+            // ── Sesi Live ────────────────────────────────────────
+            <div class="md:col-span-2">
+                <h3 class="text-title-md text-on-background font-semibold mb-3">"Sesi Kelas Hari Ini"</h3>
+                <div class="space-y-2">
+                    {if live.is_empty() {
+                        view! {
+                            <p class="text-body-sm text-on-surface-variant text-center py-4">
+                                "Belum ada sesi terjadwal hari ini."
+                            </p>
+                        }
+                            .into_any()
+                    } else {
+                        live.into_iter().map(|s| view! { <LiveSesiCard s=s /> }).collect_view().into_any()
+                    }}
+                </div>
             </div>
-        </div>
 
-        // ── Kehadiran Terbaru ────────────────────────────────────
-        <div>
-            <h3 class="text-title-md text-on-background font-semibold mb-3">"Kehadiran Terbaru"</h3>
-            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl divide-y divide-outline-variant/40">
-                {if latest.is_empty() {
-                    view! { <p class="text-body-sm text-on-surface-variant text-center py-6">"Belum ada catatan hari ini."</p> }
-                        .into_any()
-                } else {
-                    latest.into_iter().map(|a| view! { <LatestRow a=a /> }).collect_view().into_any()
-                }}
+            // ── Kehadiran Terbaru (desktop: panel lavender ala mockup) ──
+            <div class="md:bg-surface-container-low md:rounded-2xl md:p-4">
+                <h3 class="text-title-md text-on-background font-semibold mb-3">"Kehadiran Terbaru"</h3>
+                <div class="ppm-card divide-y divide-outline-variant/40">
+                    {if latest.is_empty() {
+                        view! { <p class="text-body-sm text-on-surface-variant text-center py-6">"Belum ada catatan hari ini."</p> }
+                            .into_any()
+                    } else {
+                        latest.into_iter().map(|a| view! { <LatestRow a=a /> }).collect_view().into_any()
+                    }}
+                </div>
             </div>
         </div>
     }

@@ -327,7 +327,7 @@ fn FotoCard(icon: &'static str, label: &'static str, tall: bool) -> impl IntoVie
 #[component]
 fn KegiatanCard(icon: &'static str, title: &'static str, desc: &'static str) -> impl IntoView {
     view! {
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-6 hover:border-primary/40 card-hover">
+        <div class="ppm-card p-6 hover:border-primary/40 card-hover">
             <div class="w-12 h-12 rounded-xl bg-secondary-container flex items-center justify-center text-primary mb-4">
                 <span class="material-symbols-outlined text-2xl">{icon}</span>
             </div>
@@ -351,7 +351,7 @@ fn StatItem(num: &'static str, label: &'static str) -> impl IntoView {
 fn KontakItem(icon: &'static str, title: &'static str, children: Children) -> impl IntoView {
     view! {
         <div class="flex items-start gap-4">
-            <div class="w-11 h-11 rounded-xl bg-secondary-container flex items-center justify-center text-primary shrink-0">
+            <div class="w-11 h-11 ppm-tile">
                 <span class="material-symbols-outlined">{icon}</span>
             </div>
             <div>

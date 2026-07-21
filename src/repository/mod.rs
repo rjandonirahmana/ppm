@@ -3,6 +3,8 @@
 
 pub mod attendance;
 pub mod device;
+pub mod gate;
+pub mod hafalan;
 pub mod kelas;
 pub mod parents;
 pub mod permits;
@@ -11,6 +13,8 @@ pub mod users;
 
 pub use attendance::*;
 pub use device::*;
+pub use gate::*;
+pub use hafalan::*;
 pub use kelas::*;
 pub use parents::*;
 pub use permits::*;

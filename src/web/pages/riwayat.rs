@@ -20,10 +20,10 @@ fn kind_border(kind: &str) -> &'static str {
 
 fn kind_badge(kind: &str) -> &'static str {
     match kind {
-        "late" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-warning/10 text-warning",
-        "permit" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-info/10 text-info",
-        "absent" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-error-container text-error",
-        _ => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-success/10 text-success",
+        "late" => "ppm-chip bg-warning/10 text-warning",
+        "permit" => "ppm-chip bg-info/10 text-info",
+        "absent" => "ppm-chip bg-error-container text-error",
+        _ => "ppm-chip bg-success/10 text-success",
     }
 }
 
@@ -49,16 +49,23 @@ pub fn RiwayatPage() -> impl IntoView {
     view! {
         <Title text="Riwayat Kehadiran — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Riwayat Kehadiran" />
 
                 <div class="px-5 pt-5 space-y-4 stagger">
                     <Suspense fallback=|| {
                         view! {
-                            <div class="space-y-3 animate-pulse">
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
+                            <div class="animate-pulse space-y-3">
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                </div>
+                                <div class="h-10 bg-surface-container rounded-xl"></div>
+                                <div class="grid gap-3 md:grid-cols-2">
+                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                </div>
                             </div>
                         }
                     }>
@@ -96,7 +103,7 @@ fn RiwayatContent(d: RiwayatData, month_filter: RwSignal<String>) -> impl IntoVi
 
     view! {
         // ── Statistik semester ──────────────────────────────────────────────
-        <div class="space-y-3">
+        <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-3 md:gap-3">
             <StatCard
                 icon="check_circle" tone="text-success" num=d.hadir
                 label="HADIR" sub="Sesi Semester Ini"
@@ -147,33 +154,40 @@ fn RiwayatContent(d: RiwayatData, month_filter: RwSignal<String>) -> impl IntoVi
                 .collect();
             if list.is_empty() {
                 return view! {
-                    <div class="bg-surface-container rounded-2xl p-8 text-center text-body-sm text-on-surface-variant">
+                    <div class="ppm-empty">
                         "Belum ada catatan kehadiran."
                     </div>
                 }
                     .into_any();
             }
-            let mut out: Vec<AnyView> = Vec::new();
-            let mut last_month = String::new();
+            // Kelompokkan per bulan dulu → tiap grup jadi grid 2 kolom di
+            // desktop (header bulan tetap full-width, tak ikut grid).
+            let mut groups: Vec<(String, Vec<RiwayatItem>)> = Vec::new();
             for it in list {
-                if it.month != last_month {
-                    last_month = it.month.clone();
-                    let m = it.month.clone();
-                    out.push(
-                        view! {
-                            <div class="flex items-center gap-2 pt-3">
+                match groups.last_mut() {
+                    Some((m, v)) if *m == it.month => v.push(it),
+                    _ => groups.push((it.month.clone(), vec![it])),
+                }
+            }
+            groups
+                .into_iter()
+                .map(|(m, items)| {
+                    view! {
+                        <div class="pt-3">
+                            <div class="flex items-center gap-2 mb-2">
                                 <span class="material-symbols-outlined text-on-surface-variant text-xl">
                                     "calendar_month"
                                 </span>
                                 <h3 class="text-body-lg font-bold text-on-background">{m}</h3>
                             </div>
-                        }
-                            .into_any(),
-                    );
-                }
-                out.push(view! { <RiwayatCard it=it /> }.into_any());
-            }
-            out.into_any()
+                            <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                                {items.into_iter().map(|it| view! { <RiwayatCard it=it /> }).collect_view()}
+                            </div>
+                        </div>
+                    }
+                })
+                .collect_view()
+                .into_any()
         }}
     }
 }
@@ -189,7 +203,7 @@ fn StatCard(
     let head_cls = format!("flex items-center gap-1.5 {tone}");
     let num_cls = format!("text-3xl font-bold {tone} mt-1");
     view! {
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 card-hover">
+        <div class="ppm-card p-4 card-hover">
             <div class=head_cls>
                 <span class="material-symbols-outlined text-xl">{icon}</span>
                 <span class="text-[11px] font-bold tracking-[0.15em]">{label}</span>
@@ -214,7 +228,7 @@ fn RiwayatCard(it: RiwayatItem) -> impl IntoView {
     let pts_label = format!("{:+} Poin", it.points);
     view! {
         <div
-            class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 flex items-start gap-3 card-hover anim-in"
+            class="ppm-card p-4 flex items-start gap-3 card-hover anim-in"
             style=border
         >
             <div class="flex-1 min-w-0">

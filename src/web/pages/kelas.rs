@@ -34,16 +34,20 @@ pub fn KelasPage() -> impl IntoView {
     view! {
         <Title text="Manajemen Kelas — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Manajemen Kelas" subtitle="Kelola kurikulum & pembagian santri" />
 
                 <div class="px-5 pt-5 space-y-4 stagger">
                     <Suspense fallback=|| {
                         view! {
-                            <div class="space-y-3 animate-pulse">
+                            <div class="animate-pulse space-y-3">
                                 <div class="h-20 bg-surface-container rounded-2xl"></div>
-                                <div class="h-32 bg-surface-container rounded-2xl"></div>
-                                <div class="h-32 bg-surface-container rounded-2xl"></div>
+                                <div class="grid gap-4 md:grid-cols-2">
+                                    <div class="h-32 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-32 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-32 bg-surface-container rounded-2xl hidden md:block"></div>
+                                    <div class="h-32 bg-surface-container rounded-2xl hidden md:block"></div>
+                                </div>
                             </div>
                         }
                     }>
@@ -55,7 +59,7 @@ pub fn KelasPage() -> impl IntoView {
                                         view! {
                                             // ── Statistik ──────────────────────
                                             <div class="grid grid-cols-2 gap-3">
-                                                <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 flex items-center gap-3 card-hover">
+                                                <div class="ppm-card p-4 flex items-center gap-3 card-hover">
                                                     <div class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center">
                                                         <span class="material-symbols-outlined">"school"</span>
                                                     </div>
@@ -68,7 +72,7 @@ pub fn KelasPage() -> impl IntoView {
                                                         </p>
                                                     </div>
                                                 </div>
-                                                <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 flex items-center gap-3 card-hover">
+                                                <div class="ppm-card p-4 flex items-center gap-3 card-hover">
                                                     <div class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center">
                                                         <span class="material-symbols-outlined">"groups"</span>
                                                     </div>
@@ -133,15 +137,20 @@ pub fn KelasPage() -> impl IntoView {
                                                     .collect();
                                                 if list.is_empty() {
                                                     view! {
-                                                        <div class="bg-surface-container rounded-2xl p-8 text-center text-body-sm text-on-surface-variant">
+                                                        <div class="ppm-empty">
                                                             "Belum ada kelas. Tambahkan kelas baru di atas."
                                                         </div>
                                                     }
                                                         .into_any()
                                                 } else {
-                                                    list.into_iter()
-                                                        .map(|k| view! { <KelasCard k=k /> })
-                                                        .collect_view()
+                                                    // Desktop: kartu kelas 2 kolom (mockup manajemen kelas).
+                                                    view! {
+                                                        <div class="space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-4">
+                                                            {list.into_iter()
+                                                                .map(|k| view! { <KelasCard k=k /> })
+                                                                .collect_view()}
+                                                        </div>
+                                                    }
                                                         .into_any()
                                                 }
                                             }}
@@ -202,7 +211,8 @@ fn TambahKelas(show_form: RwSignal<bool>, refetch: impl Fn() + Copy + Send + 'st
             if show_form.get() {
                 view! {
                     <form
-                        class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-5 space-y-3 anim-in"
+                        class="ppm-card p-5 space-y-3 anim-in"
+                        method="post"
                         on:submit=submit
                     >
                         <div class="flex items-center gap-2">
@@ -286,7 +296,7 @@ fn KelasCard(k: KelasItem) -> impl IntoView {
     let href = format!("/kelas/{}", k.id);
     view! {
         <div
-            class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 card-hover anim-in"
+            class="ppm-card p-4 card-hover anim-in"
             style="border-left:4px solid #064e3b"
         >
             {(!k.category.is_empty())

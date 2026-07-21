@@ -14,10 +14,10 @@ use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 
 fn status_badge(kind: &str) -> &'static str {
     match kind {
-        "ongoing" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-success/10 text-success flex items-center gap-1",
-        "finished" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-surface-container-highest text-on-surface-variant flex items-center gap-1",
-        "cancelled" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-error-container text-error flex items-center gap-1",
-        _ => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-info/10 text-info flex items-center gap-1",
+        "ongoing" => "ppm-chip bg-success/10 text-success flex items-center gap-1",
+        "finished" => "ppm-chip bg-surface-container-highest text-on-surface-variant flex items-center gap-1",
+        "cancelled" => "ppm-chip bg-error-container text-error flex items-center gap-1",
+        _ => "ppm-chip bg-info/10 text-info flex items-center gap-1",
     }
 }
 
@@ -51,16 +51,20 @@ pub fn SesiPage() -> impl IntoView {
     view! {
         <Title text="Sesi Kelas — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Sesi Kelas" />
 
                 <div class="px-5 pt-5 space-y-3 stagger">
                     <Suspense fallback=|| {
                         view! {
-                            <div class="space-y-3 animate-pulse">
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
+                            <div class="animate-pulse space-y-3">
+                                <div class="h-10 bg-surface-container rounded-xl"></div>
+                                <div class="grid gap-3 md:grid-cols-2">
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-24 bg-surface-container rounded-2xl hidden md:block"></div>
+                                </div>
                             </div>
                         }
                     }>
@@ -98,7 +102,8 @@ pub fn SesiPage() -> impl IntoView {
                                                     {format!("Sudah Lewat ({n_past})")}
                                                 </button>
                                             </div>
-                                            <div class="space-y-3">
+                                            // Desktop: kartu sesi 2 kolom.
+                                            <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
                                                 {move || {
                                                     let (up, past) = lists.get_value();
                                                     let (items, empty) = if show_past.get() {
@@ -108,7 +113,7 @@ pub fn SesiPage() -> impl IntoView {
                                                     };
                                                     if items.is_empty() {
                                                         view! {
-                                                            <div class="bg-surface-container rounded-2xl p-8 text-center text-body-sm text-on-surface-variant">
+                                                            <div class="ppm-empty">
                                                                 {empty}
                                                             </div>
                                                         }
@@ -152,12 +157,12 @@ pub fn SesiPage() -> impl IntoView {
 fn SessionCard(it: SessionItem) -> impl IntoView {
     let badge = status_badge(&it.status_kind);
     let is_ongoing = it.status_kind == "ongoing";
-    let meta = format!("{} • {}", it.class_name, it.teacher);
+    let meta = format!("{} • {} • {}", it.class_name, it.category, it.teacher);
     let when = format!("{} • {}", it.date_label, it.time_label);
     view! {
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 card-hover anim-in">
+        <div class="ppm-card p-4 card-hover anim-in">
             <div class="flex items-start gap-3">
-                <div class="w-11 h-11 rounded-xl bg-secondary-container flex items-center justify-center text-primary shrink-0">
+                <div class="w-11 h-11 ppm-tile">
                     <span class="material-symbols-outlined">"menu_book"</span>
                 </div>
                 <div class="flex-1 min-w-0">

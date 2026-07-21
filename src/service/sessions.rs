@@ -5,11 +5,42 @@
 use anyhow::Result;
 use deadpool_postgres::Pool;
 
-use chrono::{Duration, Utc};
+use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
 use super::fmt::{fmt_date, wib};
-use crate::models::{SessionItem, SessionsData, SessionUser};
+use crate::models::{category_allows_recording, SessionItem, SessionsData, SessionUser};
 use crate::repository as repo;
+
+/// Jendela boleh MENGAKTIFKAN sesi (mulai/mulai-ulang): 10 menit sebelum jam
+/// mulai jadwal s/d 10 menit sesudah jam selesai jadwal (permintaan user).
+/// Sesi ad-hoc tanpa jadwal (start/end None) TIDAK dibatasi — tak ada acuan jam.
+fn start_window_reason(
+    date: NaiveDate,
+    start: Option<NaiveTime>,
+    end: Option<NaiveTime>,
+) -> Option<String> {
+    let (Some(start), Some(end)) = (start, end) else {
+        return None;
+    };
+    let window_start = NaiveDateTime::new(date, start) - Duration::minutes(10);
+    let window_end = NaiveDateTime::new(date, end) + Duration::minutes(10);
+    let now = Utc::now().with_timezone(&wib()).naive_local();
+    if now < window_start {
+        Some(format!(
+            "Sesi baru bisa dimulai mulai {} {} WIB (10 menit sebelum jadwal).",
+            fmt_date(window_start.date()),
+            window_start.format("%H:%M"),
+        ))
+    } else if now > window_end {
+        Some(format!(
+            "Jendela mulai sesi sudah lewat ({} {} WIB).",
+            fmt_date(window_end.date()),
+            window_end.format("%H:%M"),
+        ))
+    } else {
+        None
+    }
+}
 
 fn status_display(status: &str) -> (&'static str, &'static str) {
     match status {
@@ -58,6 +89,7 @@ pub async fn list_for(pool: &Pool, user: &SessionUser) -> Result<SessionsData> {
                     status_kind: status_kind.into(),
                     teacher: r.teacher.unwrap_or_else(|| "-".into()),
                     teacher_id: r.teacher_id,
+                    category: r.category.filter(|c| !c.is_empty()).unwrap_or_else(|| "-".into()),
                 }
             })
             .collect()
@@ -157,6 +189,7 @@ pub async fn detail_for(
 
     Ok(crate::models::SessionDetailData {
         id: d.id,
+        class_id: d.class_id,
         title: d.title.unwrap_or_else(|| d.class_name.clone()),
         class_name: d.class_name,
         date_label: fmt_date(d.session_date),
@@ -178,6 +211,8 @@ pub async fn detail_for(
             .into_iter()
             .map(|(id, name)| crate::models::TeacherOption { id, name })
             .collect(),
+        category: d.category.clone().filter(|c| !c.is_empty()).unwrap_or_else(|| "-".into()),
+        start_blocked_reason: start_window_reason(d.session_date, d.start_time, d.end_time),
     })
 }
 
@@ -245,6 +280,9 @@ pub async fn live_for(
         })
         .collect();
 
+    let can_record = d.category.as_deref().is_some_and(category_allows_recording);
+    let start_blocked_reason = start_window_reason(d.session_date, d.start_time, d.end_time);
+
     Ok(crate::models::SessionLiveData {
         id: d.id,
         title: d.title.unwrap_or_else(|| d.class_name.clone()),
@@ -255,6 +293,8 @@ pub async fn live_for(
         chats,
         member_count,
         recording_url: (d.status == "finished").then_some(d.recording_path).flatten(),
+        can_record,
+        start_blocked_reason,
     })
 }
 
@@ -279,7 +319,9 @@ pub async fn post_chat(
     repo::insert_session_chat(pool, session_id, user.id, msg).await
 }
 
-/// Mulai (ongoing) / akhiri (finished) sesi — staf saja.
+/// Mulai (ongoing) / akhiri (finished) sesi — staf saja. MULAI (start=true)
+/// dibatasi jendela ±10 menit dari jadwal (start_window_reason); AKHIRI bebas
+/// kapan saja (staf harus selalu bisa menutup sesi yang lupa diakhiri).
 pub async fn set_live(
     pool: &Pool,
     user: &SessionUser,
@@ -289,10 +331,43 @@ pub async fn set_live(
     if !is_staff(&user.role) {
         anyhow::bail!("forbidden");
     }
+    if start {
+        let Some(d) = repo::session_detail(pool, session_id).await? else {
+            anyhow::bail!("Sesi tidak ditemukan.");
+        };
+        if let Some(reason) = start_window_reason(d.session_date, d.start_time, d.end_time) {
+            anyhow::bail!(reason);
+        }
+    }
     let status = if start { "ongoing" } else { "finished" };
     if !repo::set_session_status(pool, session_id, status).await? {
         anyhow::bail!("Sesi tidak ditemukan.");
     }
     tracing::info!(by = user.id, session_id, status, "status sesi live diubah");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::start_window_reason;
+    use chrono::NaiveDate;
+
+    fn d() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 7, 20).unwrap()
+    }
+
+    #[test]
+    fn tanpa_jadwal_tak_dibatasi() {
+        assert!(start_window_reason(d(), None, None).is_none());
+    }
+
+    #[test]
+    fn jendela_dihitung_dari_tanggal_sesi_bukan_hari_ini() {
+        // Sesi tanggal lampau/mendatang (bukan hari ini) → selalu di luar
+        // jendela ±10 menit relatif "sekarang" nyata → harus terblokir.
+        let far_past = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let start = chrono::NaiveTime::from_hms_opt(4, 30, 0);
+        let end = chrono::NaiveTime::from_hms_opt(5, 0, 0);
+        assert!(start_window_reason(far_past, start, end).is_some());
+    }
 }

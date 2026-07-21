@@ -61,14 +61,18 @@ pub fn SantriDashboardPage() -> impl IntoView {
     view! {
         <Title text="Beranda Santri — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <Suspense fallback=|| {
                     view! {
-                        <div class="px-5 pt-6 space-y-4 animate-pulse">
+                        <div class="px-5 pt-6 animate-pulse">
                             <div class="h-12 bg-surface-container rounded-xl"></div>
-                            <div class="h-44 bg-surface-container rounded-2xl"></div>
-                            <div class="h-40 bg-surface-container rounded-2xl"></div>
-                            <div class="h-24 bg-surface-container rounded-2xl"></div>
+                            <div class="mt-4 grid gap-4 md:grid-cols-3 md:items-start">
+                                <div class="md:col-span-2 space-y-4">
+                                    <div class="h-44 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-40 bg-surface-container rounded-2xl"></div>
+                                </div>
+                                <div class="h-56 bg-surface-container rounded-2xl"></div>
+                            </div>
                         </div>
                     }
                 }>
@@ -190,6 +194,10 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
             // ── Permintaan koneksi orang tua (setujui/tolak oleh SANTRI) ────
             <ConnRequestsSection />
 
+            // Desktop: jadwal+riwayat kolom utama (kiri), progress jadi
+            // sidebar kanan — konten sama, cuma disusun 2 kolom di layar lebar.
+            <div class="space-y-6 md:space-y-0 md:grid md:grid-cols-3 md:gap-6 md:items-start">
+            <div class="md:col-span-2 space-y-6">
             // ── Jadwal Kelas Mendatang ──────────────────────────────────────
             <section>
                 <div class="flex items-center justify-between gap-3 mb-3">
@@ -204,11 +212,11 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
                     Some(s) => {
                         view! {
                             <div
-                                class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4"
+                                class="ppm-card p-4"
                                 style="border-left:4px solid #059669"
                             >
                                 <div class="flex gap-3">
-                                    <div class="w-12 h-12 rounded-xl bg-secondary-container flex items-center justify-center text-primary shrink-0">
+                                    <div class="w-12 h-12 ppm-tile">
                                         <span class="material-symbols-outlined">"menu_book"</span>
                                     </div>
                                     <div class="flex-1 min-w-0">
@@ -286,6 +294,7 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
                     "Lihat Semua Riwayat"
                 </a>
             </section>
+            </div>
 
             // ── Progress bulan ini ──────────────────────────────────────────
             <section class="bg-surface-container rounded-2xl p-5">
@@ -317,6 +326,7 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
                     "\"Sebaik-baik manusia adalah yang paling bermanfaat bagi orang lain.\""
                 </p>
             </section>
+            </div>
         </div>
     }
 }
@@ -408,7 +418,7 @@ fn AttendanceRow(item: AttendanceItem) -> impl IntoView {
     let (border, icon, wrap_cls, badge_cls) = kind_colors(&item.kind);
     view! {
         <div
-            class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3 flex items-center gap-3 card-hover"
+            class="ppm-card p-3 flex items-center gap-3 card-hover"
             style=border
         >
             <div class=wrap_cls>

@@ -77,6 +77,23 @@ pub async fn post_chunk(
     if body.is_empty() || body.len() > 2_000_000 {
         return StatusCode::BAD_REQUEST.into_response();
     }
+    // Pertahanan berlapis: klien (AudioDock) sudah sembunyikan tombol siaran
+    // untuk kategori selain "Pengajian", tapi endpoint tetap tolak di server —
+    // jangan percaya klien bisa dipaksa kirim request langsung. Cek HANYA di
+    // seq=0 (awal siaran; kategori kelas tak berubah di tengah siaran) — bukan
+    // tiap potongan, agar potongan susulan TIDAK bergantung DB (filosofi modul
+    // ini: siaran jalan lewat file lokal, tahan gangguan). DB tak terjangkau
+    // saat cek → fail-OPEN (log saja): ini lapis TAMBAHAN, gerbang utama tetap
+    // UI klien + is_staff di atas; hiccup DB tak boleh mematikan seluruh siaran.
+    if q.seq == 0 {
+        match crate::repository::session_category(&state.pool, session_id).await {
+            Ok(cat) if cat.as_deref().is_some_and(|c| !crate::models::category_allows_recording(c)) => {
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(session_id, "cek kategori sesi gagal (lanjut, fail-open): {e}"),
+        }
+    }
 
     let path = recording_file(session_id);
     if let Some(parent) = path.parent() {

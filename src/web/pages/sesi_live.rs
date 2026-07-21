@@ -30,6 +30,10 @@ pub fn SesiLivePage() -> impl IntoView {
     let can_manage = Memo::new(move |_| matches!(&data.get(), Some(Ok(d)) if d.can_manage));
     let recording_url =
         Memo::new(move |_| data.get().and_then(|r| r.ok()).and_then(|d| d.recording_url));
+    // Kategori kelas menentukan boleh/tidaknya siaran suara (HANYA "Pengajian" —
+    // lihat models::category_allows_recording); ditolak juga di server (defense
+    // in depth) bila klien dipaksa lewati pengecekan ini.
+    let can_record = Memo::new(move |_| matches!(&data.get(), Some(Ok(d)) if d.can_record));
 
     // Chat/status kini EVENT-DRIVEN via SSE (audit poin 3): refetch hanya saat
     // server memberi sinyal (chat masuk/status berubah/rekaman siap) — bukan
@@ -107,6 +111,7 @@ pub fn SesiLivePage() -> impl IntoView {
                     session_id=session_id
                     is_live=is_live
                     can_manage=can_manage
+                    can_record=can_record
                     recording_url=recording_url
                 />
             </div>
@@ -126,6 +131,9 @@ fn LiveBody(d: SessionLiveData, refetch: impl Fn() + Copy + Send + 'static) -> i
     let msg = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let err = RwSignal::new(Option::<String>::None);
+    let blocked_reason = d.start_blocked_reason.clone();
+    let start_disabled = !is_live && blocked_reason.is_some();
+    let ctl_err = RwSignal::new(Option::<String>::None);
     let send = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
         let m = msg.get_untracked();
@@ -153,8 +161,12 @@ fn LiveBody(d: SessionLiveData, refetch: impl Fn() + Copy + Send + 'static) -> i
             return;
         }
         busy.set(true);
+        ctl_err.set(None);
         leptos::task::spawn_local(async move {
-            let _ = set_session_live(session_id, !is_live).await;
+            if let Err(e) = set_session_live(session_id, !is_live).await {
+                let s = e.to_string();
+                ctl_err.set(Some(s.rsplit(": ").next().unwrap_or(&s).to_string()));
+            }
             busy.set(false);
             refetch();
         });
@@ -225,10 +237,26 @@ fn LiveBody(d: SessionLiveData, refetch: impl Fn() + Copy + Send + 'static) -> i
                         ("Mulai Sesi Live", "play_circle", "w-full py-3.5 rounded-xl bg-primary text-on-primary font-bold text-body-md flex items-center justify-center gap-2 press disabled:opacity-50")
                     };
                     view! {
-                        <button class=cls disabled=move || busy.get() on:click=toggle_live>
+                        <button
+                            class=cls
+                            disabled=move || busy.get() || start_disabled
+                            on:click=toggle_live
+                        >
                             <span class="material-symbols-outlined">{icon}</span>
                             {label}
                         </button>
+                        {move || {
+                            ctl_err
+                                .get()
+                                .or_else(|| start_disabled.then(|| blocked_reason.clone()).flatten())
+                                .map(|msg| {
+                                    view! {
+                                        <p class="mt-2 text-[11px] text-error bg-error-container/60 rounded-lg px-3 py-1.5 text-center">
+                                            {msg}
+                                        </p>
+                                    }
+                                })
+                        }}
                     }
                 })}
 
@@ -284,6 +312,7 @@ fn LiveBody(d: SessionLiveData, refetch: impl Fn() + Copy + Send + 'static) -> i
         // ── Input chat (fixed bawah, sejajar kolom) ─────────────────────────
         <form
             class="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-surface-container-lowest border-t border-outline-variant/60 px-4 py-3 flex items-center gap-2 z-20"
+            method="post"
             on:submit=send
         >
             {move || err.get().map(|e| view! {

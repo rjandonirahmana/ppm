@@ -50,7 +50,7 @@ pub fn OrtuRiwayatPage() -> impl IntoView {
     view! {
         <Title text="Riwayat Kehadiran Anak — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Riwayat Kehadiran" />
 
                 <div class="px-5 pt-5 space-y-4 stagger">
@@ -103,9 +103,16 @@ pub fn OrtuRiwayatPage() -> impl IntoView {
                     // ── Data riwayat anak terpilih ─────────────────────────
                     <Suspense fallback=|| {
                         view! {
-                            <div class="space-y-3 animate-pulse">
+                            <div class="animate-pulse space-y-3">
                                 <div class="h-32 bg-surface-container rounded-2xl"></div>
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                <div class="grid grid-cols-2 gap-3 md:max-w-lg">
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                </div>
+                                <div class="grid gap-3 md:grid-cols-2">
+                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                </div>
                             </div>
                         }
                     }>
@@ -146,8 +153,8 @@ pub fn OrtuRiwayatPage() -> impl IntoView {
                                         </div>
 
                                         // Kartu izin/alpa ringkas
-                                        <div class="grid grid-cols-2 gap-3">
-                                            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 card-hover">
+                                        <div class="grid grid-cols-2 gap-3 md:max-w-lg">
+                                            <div class="ppm-card p-4 card-hover">
                                                 <div class="w-10 h-10 rounded-xl bg-info/10 text-info flex items-center justify-center">
                                                     <span class="material-symbols-outlined">"event_busy"</span>
                                                 </div>
@@ -160,7 +167,7 @@ pub fn OrtuRiwayatPage() -> impl IntoView {
                                                     </p>
                                                 </div>
                                             </div>
-                                            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 card-hover">
+                                            <div class="ppm-card p-4 card-hover">
                                                 <div class="w-10 h-10 rounded-xl bg-error-container text-error flex items-center justify-center">
                                                     <span class="material-symbols-outlined">"cancel"</span>
                                                 </div>
@@ -192,60 +199,68 @@ pub fn OrtuRiwayatPage() -> impl IntoView {
 fn RiwayatList(items: Vec<RiwayatItem>) -> impl IntoView {
     if items.is_empty() {
         return view! {
-            <div class="bg-surface-container rounded-2xl p-8 text-center text-body-sm text-on-surface-variant">
+            <div class="ppm-empty">
                 "Belum ada catatan kehadiran."
             </div>
         }
             .into_any();
     }
-    let mut out: Vec<AnyView> = Vec::new();
-    let mut last_month = String::new();
+    // Kelompokkan per bulan → tiap grup jadi grid 2 kolom di desktop (header
+    // bulan tetap full-width).
+    let mut groups: Vec<(String, Vec<RiwayatItem>)> = Vec::new();
     for it in items {
-        if it.month != last_month {
-            last_month = it.month.clone();
-            let m = it.month.clone();
-            out.push(
-                view! {
-                    <div class="flex items-center gap-2 pt-2">
+        match groups.last_mut() {
+            Some((m, v)) if *m == it.month => v.push(it),
+            _ => groups.push((it.month.clone(), vec![it])),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(m, items)| {
+            view! {
+                <div class="pt-2">
+                    <div class="flex items-center gap-2 mb-2">
                         <span class="material-symbols-outlined text-on-surface-variant text-xl">
                             "calendar_month"
                         </span>
                         <h3 class="text-body-lg font-bold text-on-background">{m}</h3>
                     </div>
-                }
-                    .into_any(),
-            );
-        }
-        let border = match it.kind.as_str() {
-            "late" => "border-left:4px solid #f59e0b",
-            "permit" => "border-left:4px solid #2563eb",
-            "absent" => "border-left:4px solid #dc2626",
-            _ => "border-left:4px solid #059669",
-        };
-        let badge = match it.kind.as_str() {
-            "late" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-warning/10 text-warning",
-            "permit" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-info/10 text-info",
-            "absent" => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-error-container text-error",
-            _ => "px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-success/10 text-success",
-        };
-        out.push(
-            view! {
-                <div
-                    class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 card-hover anim-in"
-                    style=border
-                >
-                    <div class="flex items-center gap-2">
-                        <p class="text-body-md font-bold text-on-background truncate flex-1">{it.title}</p>
-                        <span class=badge>{it.status_label}</span>
+                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                        {items
+                            .into_iter()
+                            .map(|it| {
+                                let border = match it.kind.as_str() {
+                                    "late" => "border-left:4px solid #f59e0b",
+                                    "permit" => "border-left:4px solid #2563eb",
+                                    "absent" => "border-left:4px solid #dc2626",
+                                    _ => "border-left:4px solid #059669",
+                                };
+                                let badge = match it.kind.as_str() {
+                                    "late" => "ppm-chip bg-warning/10 text-warning",
+                                    "permit" => "ppm-chip bg-info/10 text-info",
+                                    "absent" => "ppm-chip bg-error-container text-error",
+                                    _ => "ppm-chip bg-success/10 text-success",
+                                };
+                                view! {
+                                    <div class="ppm-card p-4 card-hover anim-in" style=border>
+                                        <div class="flex items-center gap-2">
+                                            <p class="text-body-md font-bold text-on-background truncate flex-1">
+                                                {it.title}
+                                            </p>
+                                            <span class=badge>{it.status_label}</span>
+                                        </div>
+                                        <p class="text-body-sm text-on-surface-variant flex items-center gap-1 mt-1.5">
+                                            <span class="material-symbols-outlined text-[15px]">"schedule"</span>
+                                            {it.time_label}
+                                        </p>
+                                    </div>
+                                }
+                            })
+                            .collect_view()}
                     </div>
-                    <p class="text-body-sm text-on-surface-variant flex items-center gap-1 mt-1.5">
-                        <span class="material-symbols-outlined text-[15px]">"schedule"</span>
-                        {it.time_label}
-                    </p>
                 </div>
             }
-                .into_any(),
-        );
-    }
-    out.into_any()
+        })
+        .collect_view()
+        .into_any()
 }

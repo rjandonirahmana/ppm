@@ -113,7 +113,7 @@ pub async fn decide_pamong(pool: &Pool, att_id: i64, approver: i64, approve: boo
         .query_opt(
             "UPDATE attendances SET pamong_status = $2, pamong_by = $3, pamong_at = NOW() \
              WHERE id = $1 AND pamong_status = 'pending' \
-             RETURNING user_id, status",
+             RETURNING user_id, status, class_schedule_id",
             &[&att_id, &status, &approver],
         )
         .await
@@ -127,7 +127,24 @@ pub async fn decide_pamong(pool: &Pool, att_id: i64, approver: i64, approve: boo
     if approve {
         let user_id: i64 = row.get(0);
         let att_status: String = row.get(1);
-        let (delta, note, category) = crate::models::point_rule(&att_status);
+        let schedule_id: Option<i64> = row.get(2);
+        let (mut delta, mut note, category) = crate::models::point_rule(&att_status);
+        // Poin TERLAMBAT bisa dikustomisasi per jadwal (mis. sholat = -5,
+        // pengajian = tetap default) — lihat migrasi 13. Hanya berlaku utk
+        // status 'late'; status lain tetap pakai aturan global.
+        if att_status == "late" {
+            if let Some(sid) = schedule_id {
+                let custom: Option<i16> = tx
+                    .query_opt("SELECT late_points FROM class_schedules WHERE id = $1", &[&sid])
+                    .await
+                    .context("decide_pamong late_points")?
+                    .and_then(|r| r.get(0));
+                if let Some(lp) = custom {
+                    delta = lp as i32;
+                    note = "Kedisiplinan (kustom jadwal)";
+                }
+            }
+        }
         if delta != 0 {
             let reason = format!("Kehadiran ({att_status}) — {note}");
             tx.execute(
@@ -375,13 +392,25 @@ pub async fn decide_verify(pool: &Pool, att_id: i64, approver: i64, approve: boo
 
 // ── Auto-absent (job penutup sesi) ───────────────────────────────────────────────
 
-/// Tandai ABSENT (satu query set-based) untuk santri terdaftar yang TIDAK hadir
-/// pada sesi HARI INI yang jendelanya sudah tutup (end_time lewat). Auto-verified
-/// (pamong+dewan guru = approved, oleh sistem) + terapkan penalti poin langsung,
-/// agar tak membanjiri antrean verifikasi manusia. DIKECUALIKAN: sesi libur
-/// (cancelled), santri yang sudah punya catatan hari ini, dan santri dgn izin
-/// (permit_requests) disetujui yang mencakup hari ini. Idempotent (NOT EXISTS +
-/// UNIQUE(user_id,class_session_id)). Return jumlah absent baru.
+/// Tandai ABSENT — "Alpa" (satu query set-based) untuk santri terdaftar yang
+/// TIDAK ada kejelasan (bukan hadir/terlambat, bukan izin disetujui) pada sesi
+/// yang sudah TUNTAS. Auto-verified (pamong+dewan guru = approved, oleh sistem)
+/// + penalti poin langsung, agar tak membanjiri antrean verifikasi manusia &
+/// query analisa/report tinggal filter `status='absent'` (tak perlu hitung
+/// "tak ada baris" secara terpisah).
+///
+/// Sesi TUNTAS = tanggalnya sudah lewat (hari sebelumnya atau lebih lama), ATAU
+/// hari ini tapi jam selesai jadwalnya sudah lewat. Sesi TANPA jadwal (ad-hoc,
+/// `class_schedule_id` NULL — sebelumnya TERLEWAT total krn INNER JOIN jadwal)
+/// kini ikut tercakup lewat cabang "tanggal sudah lewat" (tak ada jam acuan utk
+/// hari yg sama → baru ditandai besoknya, aman drpd menembak terlalu dini) —
+/// keanggotaan sesi ad-hoc diambil dari SELURUH peserta kelas (cp.class_id),
+/// bukan salah satu jadwal spesifik. DIBATASI 3 hari ke belakang (jangan sampai
+/// downtime lama tiba-tiba menghukum retroaktif riwayat lama). DIKECUALIKAN:
+/// sesi libur (cancelled), santri yg sudah punya catatan pada sesi itu, dan
+/// santri dgn izin (permit_requests) disetujui yang mencakup TANGGAL SESI itu.
+/// Idempotent via NOT EXISTS (tak ada UNIQUE constraint di attendances —
+/// lihat roadmap #6). Return jumlah baris alpa baru.
 pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
@@ -391,24 +420,30 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
                 INSERT INTO attendances \
                     (user_id, class_session_id, class_schedule_id, status, method, \
                      pamong_status, pamong_at, verify_status, verified_at, note, gate_label, scanned_at) \
-                SELECT cp.user_id, s.id, s.class_schedule_id, 'absent', 'manual', \
+                SELECT DISTINCT cp.user_id, s.id, s.class_schedule_id, 'absent', 'manual', \
                        'approved', NOW(), 'approved', NOW(), 'Auto: tidak hadir', 'system', NOW() \
                 FROM class_sessions s \
-                JOIN class_schedules sch ON sch.id = s.class_schedule_id \
-                JOIN class_participants cp ON cp.class_schedule_id = s.class_schedule_id \
+                LEFT JOIN class_schedules sch ON sch.id = s.class_schedule_id \
+                JOIN class_participants cp \
+                    ON (s.class_schedule_id IS NOT NULL AND cp.class_schedule_id = s.class_schedule_id) \
+                    OR (s.class_schedule_id IS NULL AND cp.class_id = s.class_id) \
                 CROSS JOIN tz \
-                WHERE s.session_date = (tz.n)::date \
-                  AND s.status <> 'cancelled' \
-                  AND sch.end_time < (tz.n)::time \
+                WHERE s.status <> 'cancelled' \
+                  AND s.session_date >= (tz.n)::date - INTERVAL '3 days' \
+                  AND ( \
+                        s.session_date < (tz.n)::date \
+                        OR (s.session_date = (tz.n)::date AND sch.end_time IS NOT NULL \
+                            AND sch.end_time < (tz.n)::time) \
+                      ) \
                   AND NOT EXISTS (SELECT 1 FROM attendances a \
                         WHERE a.user_id = cp.user_id AND a.class_session_id = s.id) \
                   AND NOT EXISTS (SELECT 1 FROM attendances a2 \
                         WHERE a2.user_id = cp.user_id AND a2.class_schedule_id = s.class_schedule_id \
-                          AND (a2.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = (tz.n)::date) \
+                          AND (a2.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = s.session_date) \
                   AND NOT EXISTS (SELECT 1 FROM permit_requests p \
                         WHERE p.user_id = cp.user_id AND p.status = 'approved' \
-                          AND p.start_date <= (tz.n)::date \
-                          AND COALESCE(p.end_date, p.start_date) >= (tz.n)::date) \
+                          AND p.start_date <= s.session_date \
+                          AND COALESCE(p.end_date, p.start_date) >= s.session_date) \
                 RETURNING id, user_id \
              ), \
              lg AS ( \

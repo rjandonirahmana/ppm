@@ -2,6 +2,30 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Kategori kelas yang boleh siaran suara + rekaman. HANYA "Pengajian" — sholat
+/// dan kategori lain (Tahfidz, Cepatan, dst.) tidak butuh/boleh rekam suara.
+/// Dipakai KEDUA sisi: klien (sembunyikan AudioDock) & server (tolak upload
+/// chunk — web/live_audio.rs) — satu sumber kebenaran, bukan enum (kategori
+/// kelas tetap teks bebas, lihat migration 6_class_category.sql).
+pub fn category_allows_recording(category: &str) -> bool {
+    category.trim().eq_ignore_ascii_case("pengajian")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::category_allows_recording;
+
+    #[test]
+    fn hanya_pengajian_boleh_rekam() {
+        assert!(category_allows_recording("Pengajian"));
+        assert!(category_allows_recording("  pengajian  "));
+        assert!(category_allows_recording("PENGAJIAN"));
+        assert!(!category_allows_recording("Sholat"));
+        assert!(!category_allows_recording("Tahfidz"));
+        assert!(!category_allows_recording(""));
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScheduleInfo {
     pub title: String,
@@ -27,6 +51,8 @@ pub struct SessionItem {
     pub teacher: String,
     /// Pengajar terpasang (untuk pre-select dropdown assign). None = belum diisi.
     pub teacher_id: Option<i64>,
+    /// Kategori kelas (chip tampilan; "-" bila kosong).
+    pub category: String,
 }
 
 /// Payload halaman /sesi (nav dipilih dari role).
@@ -68,6 +94,7 @@ pub struct SessionChatItem {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionDetailData {
     pub id: i64,
+    pub class_id: i64,
     pub title: String,
     pub class_name: String,
     pub date_label: String,
@@ -86,6 +113,11 @@ pub struct SessionDetailData {
     /// dewan guru bisa ganti pengajar langsung dari halaman detail sesi.
     pub teacher_id: Option<i64>,
     pub teacher_options: Vec<super::kelas::TeacherOption>,
+    pub category: String,
+    /// Alasan tombol "Mulai Sesi" nonaktif (di luar jendela ±10 menit dari
+    /// jadwal), None = boleh mulai. Dihitung server-side (satu sumber
+    /// kebenaran — WIB "now" hanya diketahui server).
+    pub start_blocked_reason: Option<String>,
 }
 
 /// Payload ruang sesi live /sesi/:id/live (staf + santri peserta).
@@ -104,4 +136,10 @@ pub struct SessionLiveData {
     pub member_count: i64,
     /// URL unduh rekaman — terisi HANYA saat sesi selesai & rekaman ada.
     pub recording_url: Option<String>,
+    /// true = kategori kelas mengizinkan siaran suara (lihat
+    /// category_allows_recording) — AudioDock disembunyikan bila false.
+    pub can_record: bool,
+    /// Alasan tombol "Mulai Sesi Live" nonaktif (di luar jendela ±10 menit),
+    /// None = boleh mulai.
+    pub start_blocked_reason: Option<String>,
 }

@@ -5,16 +5,20 @@ use leptos_router::hooks::use_location;
 
 use crate::models::SessionUser;
 
-/// Header mobile sticky: judul + lonceng notifikasi + tombol setting (→ /profil,
-/// calon pengganti item Profil di navbar — item navbar SEMENTARA dipertahankan).
+/// Header: mobile = sticky bar (judul + lonceng + setting). Desktop (md+, ala
+/// TOPBAR mockup Admin Portal) = judul lebih besar non-sticky + **identitas
+/// user** (avatar inisial + nama + peran) menggantikan tombol setting — sidebar
+/// desktop sudah punya Settings/Logout sendiri, jadi header di sana cukup jadi
+/// heading halaman + identitas, bukan duplikasi kontrol.
 #[component]
 pub fn MobileHeader(
     title: &'static str,
     #[prop(optional)] back_href: Option<&'static str>,
     #[prop(optional)] subtitle: Option<&'static str>,
 ) -> impl IntoView {
+    let session = use_context::<Resource<Option<SessionUser>>>();
     view! {
-        <header class="sticky top-0 z-20 bg-surface/90 backdrop-blur border-b border-outline-variant/50 px-5 py-4 flex items-center gap-3">
+        <header class="sticky top-0 md:relative z-20 bg-surface/90 md:bg-transparent backdrop-blur md:backdrop-blur-none border-b border-outline-variant/50 md:border-0 px-5 md:px-0 py-4 md:pt-2 md:pb-5 flex items-center gap-3">
             {back_href
                 .map(|href| {
                     view! {
@@ -27,20 +31,55 @@ pub fn MobileHeader(
                     }
                 })}
             <div class="flex-1 min-w-0">
-                <h1 class="text-headline-sm text-on-background truncate">{title}</h1>
+                <h1 class="text-headline-sm md:text-display-md text-on-background truncate">{title}</h1>
                 {subtitle
                     .map(|s| {
                         view! { <p class="text-body-sm text-on-surface-variant truncate">{s}</p> }
                     })}
             </div>
-            <NotifBell />
+            <span class="md:hidden">
+                <NotifBell />
+            </span>
             <a
                 href="/profil"
-                class="w-9 h-9 rounded-full flex items-center justify-center text-on-surface hover:bg-surface-container press"
+                class="md:hidden w-9 h-9 rounded-full flex items-center justify-center text-on-surface hover:bg-surface-container press"
                 aria-label="Pengaturan"
             >
                 <span class="material-symbols-outlined">"settings"</span>
             </a>
+            // ── Identitas user (desktop saja) ────────────────────────────
+            <Transition fallback=|| ()>
+                {move || {
+                    let user = session.and_then(|s| s.get()).flatten();
+                    user.map(|u| {
+                        let initial: String = u
+                            .name
+                            .split_whitespace()
+                            .take(2)
+                            .filter_map(|w| w.chars().next())
+                            .collect();
+                        let role_label = match u.role.as_str() {
+                            "admin" => "Administrator",
+                            "supervisor" => "Pamong",
+                            "teacher" | "dewan_guru" => "Dewan Guru",
+                            "parent" => "Orang Tua",
+                            _ => "Santri",
+                        };
+                        view! {
+                            <div class="hidden md:flex items-center gap-3 pl-4 ml-1 border-l border-outline-variant/50 shrink-0">
+                                <NotifBell />
+                                <div class="text-right leading-tight">
+                                    <p class="text-body-sm font-bold text-on-background">{u.name}</p>
+                                    <p class="text-[11px] text-on-surface-variant">{role_label}</p>
+                                </div>
+                                <div class="w-10 h-10 rounded-full bg-secondary-container text-primary flex items-center justify-center text-body-sm font-bold shrink-0">
+                                    {initial.to_uppercase()}
+                                </div>
+                            </div>
+                        }
+                    })
+                }}
+            </Transition>
         </header>
     }
 }
@@ -66,7 +105,7 @@ pub fn NotifBell() -> impl IntoView {
                         view! {
                             // Backdrop transparan: klik di luar menutup popover.
                             <div class="fixed inset-0 z-30" on:click=move |_| open.set(false)></div>
-                            <div class="absolute right-0 top-12 z-40 w-72 bg-surface-container-lowest border border-outline-variant/60 rounded-2xl shadow-xl p-4 anim-in">
+                            <div class="absolute right-0 top-12 z-40 w-72 ppm-card shadow-xl p-4 anim-in">
                                 <div class="flex items-center justify-between mb-2">
                                     <p class="text-body-md font-bold text-on-background">"Notifikasi"</p>
                                     <button
@@ -102,7 +141,7 @@ pub struct NavDef {
 /// /halaqah*, /rekaman, /koneksi-ortu) tak ada nav.
 fn nav_visible(path: &str) -> bool {
     const PREFIXES: &[&str] = &[
-        "/santri", "/izin", "/riwayat", "/sesi", "/profil", "/staf", "/guru",
+        "/santri", "/izin", "/riwayat", "/sesi", "/profil", "/laporan", "/staf", "/guru",
         "/dewan-guru", "/poin", "/poin-dewan", "/verifikasi-pamong",
         "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua",
     ];
@@ -144,11 +183,113 @@ pub fn BottomNav() -> impl IntoView {
                 _ => "grid grid-cols-4",
             };
             view! {
+                // md:hidden — di desktop digantikan <DesktopSidebar/> (kondisi
+                // tampil keduanya identik: role ada + nav_visible).
                 <nav
-                    class="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-surface-container-lowest border-t border-outline-variant/60 z-20"
+                    class="md:hidden fixed bottom-0 inset-x-0 max-w-md mx-auto bg-surface-container-lowest border-t border-outline-variant/60 z-20"
                     style=move || if nav_visible(&pathname.get()) { "" } else { "display:none" }
                 >
                     <div class=cols>
+                        {items
+                            .iter()
+                            .map(|it| {
+                                let href = it.href;
+                                view! {
+                                    // Item aktif = PILL SAGE di ikon (bahasa
+                                    // desain ppm-design-new).
+                                    <a
+                                        href=href
+                                        class=move || {
+                                            if item_active(&pathname.get(), href) {
+                                                "flex flex-col items-center gap-0.5 py-2 text-primary"
+                                            } else {
+                                                "flex flex-col items-center gap-0.5 py-2 text-on-surface-variant"
+                                            }
+                                        }
+                                    >
+                                        <span class=move || {
+                                            if item_active(&pathname.get(), href) {
+                                                "material-symbols-outlined px-4 py-0.5 rounded-full bg-secondary-container"
+                                            } else {
+                                                "material-symbols-outlined px-4 py-0.5 rounded-full"
+                                            }
+                                        }>{it.icon}</span>
+                                        <span class=move || {
+                                            if item_active(&pathname.get(), href) {
+                                                "text-[11px] font-bold"
+                                            } else {
+                                                "text-[11px] font-medium"
+                                            }
+                                        }>{it.label}</span>
+                                    </a>
+                                }
+                            })
+                            .collect_view()}
+                    </div>
+                </nav>
+            }
+        }}
+        </Transition>
+    }
+}
+
+/// Sidebar DESKTOP (md+) — bahasa desain ppm-design-new "Admin Portal": panel
+/// emerald pekat kiri (logo → nav → identitas + Pengaturan + Keluar), item aktif
+/// = pill sage. Dirender persisten di `App` seperti BottomNav (context sesi +
+/// URL aktif); di desktop BottomNav disembunyikan, sidebar menggantikannya.
+/// CSS pendamping (margin konten, fixed offset) di style/tailwind.css via
+/// `body:has(.ppm-sidebar[data-open="1"])`.
+#[component]
+pub fn DesktopSidebar() -> impl IntoView {
+    let pathname = use_location().pathname;
+    let session = use_context::<Resource<Option<SessionUser>>>();
+    let logout = move |_| {
+        #[cfg(target_arch = "wasm32")]
+        leptos::task::spawn_local(async move {
+            let _ = crate::web::api::logout_action().await;
+            if let Some(w) = web_sys::window() {
+                let _ = w.location().replace("/login");
+            }
+        });
+    };
+    view! {
+        <Transition fallback=|| ()>
+        {move || {
+            let user = session.and_then(|s| s.get()).flatten();
+            let (role, name) = user.map(|u| (u.role, u.name)).unwrap_or_default();
+            let has_role = !role.is_empty();
+            let role_label = match role.as_str() {
+                "admin" => "Administrator",
+                "supervisor" => "Pamong",
+                "teacher" | "dewan_guru" => "Dewan Guru",
+                "parent" => "Orang Tua",
+                "santri" => "Santri",
+                _ => "",
+            };
+            let initial: String =
+                name.split_whitespace().take(2).filter_map(|w| w.chars().next()).collect();
+            let items = nav_for(&role);
+            view! {
+                <aside
+                    class="ppm-sidebar hidden md:flex fixed inset-y-0 left-0 w-64 z-30 flex-col bg-primary text-on-primary"
+                    data-open=move || {
+                        if has_role && nav_visible(&pathname.get()) { "1" } else { "0" }
+                    }
+                >
+                    // ── Brand ────────────────────────────────────────────
+                    <div class="flex items-center gap-3 px-5 pt-6 pb-5">
+                        <div class="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center">
+                            <span class="material-symbols-outlined">"mosque"</span>
+                        </div>
+                        <div class="leading-tight min-w-0">
+                            <p class="font-bold text-body-lg">"PPM AFM"</p>
+                            <p class="text-[10px] uppercase tracking-[0.18em] opacity-70">
+                                "Portal Absensi"
+                            </p>
+                        </div>
+                    </div>
+                    // ── Navigasi (item sama dgn navbar bawah) ────────────
+                    <nav class="flex-1 px-3 space-y-1 overflow-y-auto">
                         {items
                             .iter()
                             .map(|it| {
@@ -158,20 +299,48 @@ pub fn BottomNav() -> impl IntoView {
                                         href=href
                                         class=move || {
                                             if item_active(&pathname.get(), href) {
-                                                "flex flex-col items-center gap-0.5 py-2.5 text-primary"
+                                                "flex items-center gap-3 px-4 py-3 rounded-xl bg-secondary-container text-primary text-body-sm font-bold press"
                                             } else {
-                                                "flex flex-col items-center gap-0.5 py-2.5 text-on-surface-variant"
+                                                "flex items-center gap-3 px-4 py-3 rounded-xl text-on-primary/75 hover:bg-white/10 text-body-sm font-semibold press"
                                             }
                                         }
                                     >
-                                        <span class="material-symbols-outlined">{it.icon}</span>
-                                        <span class="text-[11px] font-medium">{it.label}</span>
+                                        <span class="material-symbols-outlined text-[20px]">
+                                            {it.icon}
+                                        </span>
+                                        {it.label}
                                     </a>
                                 }
                             })
                             .collect_view()}
+                    </nav>
+                    // ── Identitas + Pengaturan + Keluar ──────────────────
+                    <div class="px-3 pb-5 pt-3 border-t border-white/10 space-y-1">
+                        <div class="flex items-center gap-3 px-4 py-2.5">
+                            <div class="w-9 h-9 rounded-full bg-white/15 flex items-center justify-center text-body-sm font-bold shrink-0">
+                                {initial.to_uppercase()}
+                            </div>
+                            <div class="min-w-0 leading-tight">
+                                <p class="text-body-sm font-bold truncate">{name.clone()}</p>
+                                <p class="text-[11px] opacity-70">{role_label}</p>
+                            </div>
+                        </div>
+                        <a
+                            href="/profil"
+                            class="flex items-center gap-3 px-4 py-2.5 rounded-xl text-on-primary/75 hover:bg-white/10 text-body-sm font-semibold press"
+                        >
+                            <span class="material-symbols-outlined text-[20px]">"settings"</span>
+                            "Pengaturan"
+                        </a>
+                        <button
+                            class="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-on-primary/75 hover:bg-white/10 text-body-sm font-semibold press"
+                            on:click=logout
+                        >
+                            <span class="material-symbols-outlined text-[20px]">"logout"</span>
+                            "Keluar"
+                        </button>
                     </div>
-                </nav>
+                </aside>
             }
         }}
         </Transition>
@@ -217,12 +386,12 @@ pub const NAV_SANTRI: &[NavDef] = &[
     NavDef { icon: "history", label: "Riwayat", href: "/riwayat" },
     NavDef { icon: "groups", label: "Sesi", href: "/sesi" },
     NavDef { icon: "event_available", label: "Izin", href: "/izin" },
-    NavDef { icon: "person", label: "Profil", href: "/profil" },
+    NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
 ];
 
 // ── Navbar STAF SERAGAM ──────────────────────────────────────────────────────
 // admin / pamong / guru / dewan-guru memakai item YANG SAMA (Beranda · Students ·
-// Kelas · Sesi · Profil) supaya navbar tak "berubah-ubah" antar halaman. Yang
+// Kelas · Sesi · Laporan) supaya navbar tak "berubah-ubah" antar halaman. Yang
 // beda HANYA tujuan "Beranda" (dashboard tiap peran, dari models::role_home).
 
 /// Nav peran: pamong (supervisor). Beranda → /verifikasi-pamong.
@@ -231,7 +400,7 @@ pub const NAV_PAMONG: &[NavDef] = &[
     NavDef { icon: "groups", label: "Students", href: "/students" },
     NavDef { icon: "school", label: "Kelas", href: "/kelas" },
     NavDef { icon: "cast_for_education", label: "Sesi", href: "/sesi" },
-    NavDef { icon: "person", label: "Profil", href: "/profil" },
+    NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
 ];
 
 /// Tampilan error fetch yang JUJUR: error autentikasi → ajak login; error lain
@@ -285,7 +454,7 @@ pub const NAV_STAF: &[NavDef] = &[
     NavDef { icon: "groups", label: "Students", href: "/students" },
     NavDef { icon: "school", label: "Kelas", href: "/kelas" },
     NavDef { icon: "cast_for_education", label: "Sesi", href: "/sesi" },
-    NavDef { icon: "person", label: "Profil", href: "/profil" },
+    NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
 ];
 
 /// Nav peran: guru (teacher). Beranda → /guru.
@@ -294,7 +463,7 @@ pub const NAV_GURU: &[NavDef] = &[
     NavDef { icon: "groups", label: "Students", href: "/students" },
     NavDef { icon: "school", label: "Kelas", href: "/kelas" },
     NavDef { icon: "cast_for_education", label: "Sesi", href: "/sesi" },
-    NavDef { icon: "person", label: "Profil", href: "/profil" },
+    NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
 ];
 
 /// Nav peran: dewan guru. Beranda → /dewan-guru.
@@ -303,7 +472,7 @@ pub const NAV_DEWAN: &[NavDef] = &[
     NavDef { icon: "groups", label: "Students", href: "/students" },
     NavDef { icon: "school", label: "Kelas", href: "/kelas" },
     NavDef { icon: "cast_for_education", label: "Sesi", href: "/sesi" },
-    NavDef { icon: "person", label: "Profil", href: "/profil" },
+    NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
 ];
 
 /// Nav peran: orang tua.
@@ -311,15 +480,15 @@ pub const NAV_ORTU: &[NavDef] = &[
     NavDef { icon: "home", label: "Beranda", href: "/orang-tua" },
     NavDef { icon: "history", label: "Riwayat", href: "/orang-tua/riwayat" },
     NavDef { icon: "event_available", label: "Izin", href: "/orang-tua/izin" },
-    NavDef { icon: "person", label: "Profil", href: "/profil" },
+    NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
 ];
 
 /// SATU sumber kebenaran navbar bawah per-PERAN. Semua halaman WAJIB memakai ini
 /// (jangan hardcode / duplikat match) agar navbar konsisten saat pindah halaman.
-///   • santri  → NAV_SANTRI (Beranda·Riwayat·Sesi·Izin·Profil)
-///   • parent  → NAV_ORTU   (Beranda·Riwayat·Izin·Profil)
+///   • santri  → NAV_SANTRI (Beranda·Riwayat·Sesi·Izin·Laporan)
+///   • parent  → NAV_ORTU   (Beranda·Riwayat·Izin·Laporan)
 ///   • STAF (admin/pamong/guru/dewan) → item SAMA (Beranda·Students·Kelas·Sesi·
-///     Profil); hanya tujuan "Beranda" beda per peran.
+///     Laporan); hanya tujuan "Beranda" beda per peran.
 pub fn nav_for(role: &str) -> &'static [NavDef] {
     match role {
         "parent" => NAV_ORTU,

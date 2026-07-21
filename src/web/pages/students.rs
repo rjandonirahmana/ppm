@@ -35,16 +35,41 @@ pub fn StudentsPage() -> impl IntoView {
     view! {
         <Title text="Santri — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Santri" />
 
-                <div class="px-5 pt-5 space-y-4">
+                // Bar cari SELALU tampil di tab Daftar (bukan cuma di dalam
+                // Suspense) — santri bisa mulai mengetik walau data masih
+                // memuat; filter jalan begitu resource selesai. Prominent di
+                // mobile (dulu cuma muncul di desktop lewat kondisi md:).
+                // Disembunyikan saat tab Verifikasi aktif (tak relevan di sana).
+                <div class="px-5 pt-5" class:hidden=move || tab.get() == "verify">
+                    <div class="relative">
+                        <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">
+                            "search"
+                        </span>
+                        <input
+                            type="text"
+                            class="w-full pl-10 pr-3 py-3 bg-surface-container border-0 rounded-xl text-body-sm text-on-surface"
+                            placeholder="Cari nama atau NIS santri…"
+                            prop:value=move || query.get()
+                            on:input=move |ev| query.set(event_target_value(&ev))
+                        />
+                    </div>
+                </div>
+
+                <div class="px-5 pt-4 space-y-4">
                     <Suspense fallback=|| {
                         view! {
                             <div class="space-y-3 animate-pulse">
-                                <div class="h-12 bg-surface-container rounded-xl"></div>
-                                <div class="h-20 bg-surface-container rounded-2xl"></div>
-                                <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                <div class="h-10 bg-surface-container rounded-xl md:hidden"></div>
+                                <div class="space-y-0 rounded-2xl overflow-hidden divide-y divide-outline-variant/30">
+                                    <div class="h-16 bg-surface-container"></div>
+                                    <div class="h-16 bg-surface-container-low"></div>
+                                    <div class="h-16 bg-surface-container"></div>
+                                    <div class="h-16 bg-surface-container-low hidden md:block"></div>
+                                    <div class="h-16 bg-surface-container hidden md:block"></div>
+                                </div>
                             </div>
                         }
                     }>
@@ -157,23 +182,27 @@ fn TabBtn(tab: RwSignal<String>, value: &'static str, label: &'static str, badge
 #[component]
 fn StudentList(students: Vec<StudentRowItem>, total: usize, query: RwSignal<String>) -> impl IntoView {
     let students = StoredValue::new(students);
+    let shown = Memo::new(move |_| {
+        let q = query.get().to_lowercase();
+        students
+            .get_value()
+            .into_iter()
+            .filter(|s| q.is_empty() || s.name.to_lowercase().contains(&q) || s.nis.contains(&q))
+            .count()
+    });
     view! {
         <p class="text-body-sm text-on-surface-variant">
-            "Total " <b class="text-on-background">{total}</b> " santri terdaftar"
+            {move || {
+                let n = shown.get();
+                if query.get().is_empty() {
+                    format!("Total {total} santri terdaftar")
+                } else {
+                    format!("{n} dari {total} santri cocok")
+                }
+            }}
         </p>
-        <div class="relative">
-            <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">
-                "search"
-            </span>
-            <input
-                type="text"
-                class="w-full pl-10 pr-3 py-2.5 bg-surface-container border-0 rounded-xl text-body-sm text-on-surface"
-                placeholder="Cari nama atau NIS santri…"
-                prop:value=move || query.get()
-                on:input=move |ev| query.set(event_target_value(&ev))
-            />
-        </div>
-        <div class="space-y-2 stagger">
+        // Daftar ala TABEL mockup: satu kartu, baris ber-divider + hover.
+        <div class="ppm-card divide-y divide-outline-variant/40 overflow-hidden stagger">
             {move || {
                 let q = query.get().to_lowercase();
                 let list: Vec<_> = students
@@ -183,7 +212,7 @@ fn StudentList(students: Vec<StudentRowItem>, total: usize, query: RwSignal<Stri
                     .collect();
                 if list.is_empty() {
                     return view! {
-                        <div class="bg-surface-container rounded-2xl p-8 text-center text-body-sm text-on-surface-variant">
+                        <div class="p-8 text-center text-body-sm text-on-surface-variant">
                             "Tidak ada santri yang cocok."
                         </div>
                     }
@@ -194,23 +223,23 @@ fn StudentList(students: Vec<StudentRowItem>, total: usize, query: RwSignal<Stri
                         let meta = format!("NIS: {} • {}", s.nis, s.class_name);
                         let ang = s.angkatan.clone();
                         view! {
-                            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3 flex items-center gap-3 card-hover anim-in">
+                            <div class="p-3 md:px-4 flex items-center gap-3 hover:bg-surface-container-low transition-colors anim-in">
                                 <div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold shrink-0">
                                     {s.initial}
                                 </div>
                                 <div class="flex-1 min-w-0">
                                     <p class="text-body-md font-semibold text-on-background truncate">{s.name}</p>
                                     <p class="text-body-sm text-on-surface-variant truncate">{meta}</p>
-                                    {(!ang.is_empty())
-                                        .then(|| {
-                                            view! {
-                                                <span class="inline-block mt-1 px-2 py-0.5 rounded-full bg-secondary-container text-primary text-[10px] font-bold">
-                                                    "Angkatan " {ang}
-                                                </span>
-                                            }
-                                        })}
                                 </div>
-                                <div class="text-right shrink-0">
+                                {(!ang.is_empty())
+                                    .then(|| {
+                                        view! {
+                                            <span class="hidden sm:inline-block ppm-chip-sm bg-secondary-container text-primary shrink-0">
+                                                "Angkatan " {ang}
+                                            </span>
+                                        }
+                                    })}
+                                <div class="text-right shrink-0 w-14">
                                     <p class="text-body-lg font-bold text-primary">{s.points}</p>
                                     <p class="text-[10px] text-on-surface-variant">"Poin"</p>
                                 </div>
@@ -242,8 +271,8 @@ fn VerifyPanel(
     view! {
         <div class="space-y-3 stagger">
             <p class="text-body-sm text-on-surface-variant">{stage_label}</p>
-            <div class="grid grid-cols-2 gap-3">
-                <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+            <div class="grid grid-cols-2 gap-3 md:max-w-lg">
+                <div class="ppm-card p-4">
                     <div class="flex items-center gap-2 text-warning">
                         <span class="material-symbols-outlined pulse-dot">"pending_actions"</span>
                         <span class="text-2xl font-bold text-on-background" data-count=pending_n.to_string()>
@@ -252,7 +281,7 @@ fn VerifyPanel(
                     </div>
                     <p class="text-body-sm text-on-surface-variant mt-1">"Menunggu"</p>
                 </div>
-                <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+                <div class="ppm-card p-4">
                     <div class="flex items-center gap-2 text-success">
                         <span class="material-symbols-outlined">"done_all"</span>
                         <span class="text-2xl font-bold text-on-background" data-count=verified_today.to_string()>
@@ -274,7 +303,10 @@ fn VerifyPanel(
                 }
                     .into_any()
             } else {
-                pending
+                // Desktop: antrean verifikasi 2 kolom (mockup dashboard pamong).
+                view! {
+                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                        {pending
                     .into_iter()
                     .map(|p| {
                         let id = p.id;
@@ -283,7 +315,7 @@ fn VerifyPanel(
                         let scan = format!("{} • {}", p.time_label, p.gate);
                         let is_busy = move || busy_id.get() == Some(id);
                         view! {
-                            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 space-y-3 card-hover anim-in">
+                            <div class="ppm-card p-4 space-y-3 card-hover anim-in">
                                 <div class="flex items-center gap-3">
                                     <div class="w-11 h-11 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold shrink-0">
                                         {initial}
@@ -318,7 +350,9 @@ fn VerifyPanel(
                             </div>
                         }
                     })
-                    .collect_view()
+                    .collect_view()}
+                    </div>
+                }
                     .into_any()
             }}
         </div>

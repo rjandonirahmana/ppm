@@ -93,6 +93,23 @@ fn validate_end_date(ed: Option<NaiveDate>, today: NaiveDate) -> Result<()> {
     Ok(())
 }
 
+/// Parse input form "Poin jika telat" (kosong = None → pakai default global
+/// point_rule("late")). Boleh negatif (mis. "-5" utk jadwal sholat) atau
+/// positif; dibatasi wajar (-100..=100) agar tak salah ketik jadi ribuan.
+fn parse_late_points(s: &str) -> Result<Option<i16>> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+    let n: i16 = s
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Poin telat harus berupa angka (mis. -5 atau 2)."))?;
+    if !(-100..=100).contains(&n) {
+        bail!("Poin telat harus di antara -100 sampai 100.");
+    }
+    Ok(Some(n))
+}
+
 fn recurrence_label(t: &str) -> &'static str {
     match t {
         "daily" => "Harian",
@@ -245,6 +262,8 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
                 .unwrap_or_default(),
             recurrence: s.recurrence_type,
             id: s.id,
+            category: s.category.clone().unwrap_or_default(),
+            late_points: s.late_points.map(|n| n.to_string()).unwrap_or_default(),
         })
         .collect();
 
@@ -268,6 +287,7 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
                 status_kind: status_kind.into(),
                 teacher: r.teacher.unwrap_or_else(|| "-".into()),
                 teacher_id: r.teacher_id,
+                category: r.category.filter(|c| !c.is_empty()).unwrap_or_else(|| "-".into()),
             }
         })
         .collect();
@@ -382,11 +402,17 @@ pub async fn create_schedule(
     recurrence: &str,
     start_date: &str,
     end_date: &str,
+    category: &str,
+    late_points: &str,
 ) -> Result<i64> {
     let (st, et, lt, rec, sd, ed) =
         parse_schedule_fields(start_time, end_time, limit_time, recurrence, start_date, end_date)?;
     validate_end_date(ed, Utc::now().with_timezone(&wib()).date_naive())?;
-    let id = repo::create_schedule(pool, class_id, title.trim(), st, et, lt, rec, sd, ed).await?;
+    let cat = category.trim();
+    let cat = (!cat.is_empty()).then_some(cat);
+    let lp = parse_late_points(late_points)?;
+    let id =
+        repo::create_schedule(pool, class_id, title.trim(), st, et, lt, rec, sd, ed, cat, lp).await?;
     // Jadwal baru → langsung materialisasi sesi mendatang (sekali, di jalur
     // WRITE), agar sesi siap tanpa memperlambat GET detail kelas.
     let _ = ensure_upcoming_sessions(pool, class_id).await;
@@ -404,12 +430,19 @@ pub async fn update_schedule(
     recurrence: &str,
     start_date: &str,
     end_date: &str,
+    category: &str,
+    late_points: &str,
 ) -> Result<()> {
     let (st, et, lt, rec, sd, ed) =
         parse_schedule_fields(start_time, end_time, limit_time, recurrence, start_date, end_date)?;
     let today = Utc::now().with_timezone(&wib()).date_naive();
     validate_end_date(ed, today)?;
-    if !repo::update_schedule(pool, schedule_id, title.trim(), st, et, lt, rec, sd, ed).await? {
+    let cat = category.trim();
+    let cat = (!cat.is_empty()).then_some(cat);
+    let lp = parse_late_points(late_points)?;
+    if !repo::update_schedule(pool, schedule_id, title.trim(), st, et, lt, rec, sd, ed, cat, lp)
+        .await?
+    {
         bail!("Jadwal tidak ditemukan.");
     }
 

@@ -74,3 +74,28 @@ pub struct RfidScanResponse {
     /// present | late (bila tercatat).
     pub status: Option<String>,
 }
+
+// ── Device RFID — Gerbang UTAMA pondok (masuk/keluar, TERPISAH dari gerbang
+// kelas) ─────────────────────────────────────────────────────────────────────
+
+/// Respons scan gerbang pondok. Request memakai `RfidScanRequest` yang sama
+/// (api_key + card) — firmware gerbang pondok cukup pukul URL berbeda.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateScanResponse {
+    pub ok: bool,
+    pub message: String,
+    pub student: Option<String>,
+    /// Arah HASIL toggle: "in" (baru masuk) | "out" (baru keluar).
+    pub direction: Option<String>,
+}
+
+/// Satu baris santri yang berstatus "di luar pondok" — laporan admin/pamong.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutsideRow {
+    pub user_id: i64,
+    pub name: String,
+    pub nis: String,
+    pub class_name: String,
+    /// "20 Jul 2026 • 14:30 WIB"
+    pub since_label: String,
+}

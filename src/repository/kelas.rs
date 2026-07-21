@@ -366,6 +366,61 @@ pub async fn points_avg(pool: &Pool, teacher_id: Option<i64>) -> Result<(i32, i6
     Ok((row.get(0), row.get(1)))
 }
 
+/// Total poin pelanggaran (delta negatif, kategori 'discipline') 30 hari
+/// terakhir — kartu "Poin Pelanggaran Aktif" laporan institusi. Nilai POSITIF
+/// (magnitude, bukan negatif) agar langsung enak ditampilkan.
+pub async fn active_violation_points(pool: &Pool) -> Result<i64> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "SELECT COALESCE(-SUM(delta), 0)::BIGINT FROM point_logs \
+             WHERE delta < 0 AND category = 'discipline' AND created_at >= NOW() - INTERVAL '30 days'",
+            &[],
+        )
+        .await
+        .context("active_violation_points")?;
+    Ok(row.get(0))
+}
+
+/// Baris riwayat poin TERBARU seluruh santri (nama+kelas) — "Ringkasan Poin"
+/// laporan institusi.
+pub async fn recent_points_all(pool: &Pool, limit: i64) -> Result<Vec<(String, String, String, i32)>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT u.full_name, COALESCE(c.name, '-'), p.reason, p.delta \
+             FROM point_logs p \
+             JOIN users u ON u.id = p.user_id \
+             LEFT JOIN class_participants cp ON cp.user_id = u.id AND cp.is_primary \
+             LEFT JOIN classes c ON c.id = cp.class_id \
+             WHERE u.role = 'santri' \
+             ORDER BY p.created_at DESC LIMIT $1",
+            &[&limit],
+        )
+        .await
+        .context("recent_points_all")?;
+    Ok(rows.into_iter().map(|r| (r.get(0), r.get(1), r.get(2), r.get(3))).collect())
+}
+
+/// Riwayat poin SATU santri, dipisah prestasi (delta>0) / pelanggaran (delta<0)
+/// — rapor pribadi & laporan ortu.
+pub async fn point_history_of(
+    pool: &Pool,
+    user_id: i64,
+    limit: i64,
+) -> Result<Vec<(String, i32, chrono::DateTime<chrono::Utc>)>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT reason, delta, created_at FROM point_logs \
+             WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+            &[&user_id, &limit],
+        )
+        .await
+        .context("point_history_of")?;
+    Ok(rows.into_iter().map(|r| (r.get(0), r.get(1), r.get(2))).collect())
+}
+
 /// Tambah/kurangi poin manual (dewan guru/admin) + catat di point_logs.
 pub async fn adjust_points(
     pool: &Pool,
@@ -436,12 +491,17 @@ pub async fn list_classes(pool: &Pool) -> Result<Vec<ClassListRow>> {
 }
 
 /// Kategori kelas yang sudah dipakai (DISTINCT) — untuk dropdown + ketik baru.
+/// Kategori terpakai — GABUNGAN kategori kelas (Lambatan/Cepatan/dst.) DAN
+/// kategori jadwal (Pengajian/Sholat/dst., migrasi 10) — satu datalist dipakai
+/// utk form kelas maupun form jadwal.
 pub async fn distinct_categories(pool: &Pool) -> Result<Vec<String>> {
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT DISTINCT category FROM classes \
-             WHERE category IS NOT NULL AND category <> '' ORDER BY category",
+            "SELECT category FROM classes WHERE category IS NOT NULL AND category <> '' \
+             UNION \
+             SELECT category FROM class_schedules WHERE category IS NOT NULL AND category <> '' \
+             ORDER BY 1",
             &[],
         )
         .await
@@ -544,6 +604,13 @@ pub struct SchedRow {
     pub recurrence_type: String,
     pub start_date: chrono::NaiveDate,
     pub end_date: Option<chrono::NaiveDate>,
+    /// Kategori jadwal (mis. "Pengajian"/"Sholat") — override kategori kelas
+    /// utk sesi yang lahir dari jadwal ini (lihat migrasi 10, gerbang rekam
+    /// suara di models::category_allows_recording).
+    pub category: Option<String>,
+    /// Poin custom saat TERLAMBAT di jadwal ini (migrasi 13). None = pakai
+    /// default global point_rule("late") = +2.
+    pub late_points: Option<i16>,
 }
 
 /// Jadwal-jadwal milik kelas.
@@ -552,7 +619,7 @@ pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>
     let rows = c
         .query(
             "SELECT id, COALESCE(title, ''), start_time, end_time, limit_entery_time, \
-                    recurrence_type, start_date, end_date \
+                    recurrence_type, start_date, end_date, category, late_points \
              FROM class_schedules WHERE class_id = $1 ORDER BY start_time",
             &[&class_id],
         )
@@ -569,6 +636,8 @@ pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>
             recurrence_type: r.get(5),
             start_date: r.get(6),
             end_date: r.get(7),
+            category: r.get(8),
+            late_points: r.get(9),
         })
         .collect())
 }
@@ -585,14 +654,20 @@ pub async fn create_schedule(
     recurrence_type: &str,
     start_date: chrono::NaiveDate,
     end_date: Option<chrono::NaiveDate>,
+    category: Option<&str>,
+    late_points: Option<i16>,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
             "INSERT INTO class_schedules \
-                (class_id, title, start_time, end_time, limit_entery_time, recurrence_type, start_date, end_date) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
-            &[&class_id, &title, &start_time, &end_time, &limit_time, &recurrence_type, &start_date, &end_date],
+                (class_id, title, start_time, end_time, limit_entery_time, recurrence_type, \
+                 start_date, end_date, category, late_points) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id",
+            &[
+                &class_id, &title, &start_time, &end_time, &limit_time, &recurrence_type,
+                &start_date, &end_date, &category, &late_points,
+            ],
         )
         .await
         .context("create_schedule")?;
@@ -667,12 +742,15 @@ pub async fn update_schedule(
     recurrence_type: &str,
     start_date: chrono::NaiveDate,
     end_date: Option<chrono::NaiveDate>,
+    category: Option<&str>,
+    late_points: Option<i16>,
 ) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
         .execute(
             "UPDATE class_schedules SET title = $2, start_time = $3, end_time = $4, \
-                limit_entery_time = $5, recurrence_type = $6, start_date = $7, end_date = $8 \
+                limit_entery_time = $5, recurrence_type = $6, start_date = $7, end_date = $8, \
+                category = $9, late_points = $10 \
              WHERE id = $1",
             &[
                 &schedule_id,
@@ -683,6 +761,8 @@ pub async fn update_schedule(
                 &recurrence_type,
                 &start_date,
                 &end_date,
+                &category,
+                &late_points,
             ],
         )
         .await

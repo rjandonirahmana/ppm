@@ -17,6 +17,9 @@ pub fn AudioDock(
     #[prop(into)] session_id: Signal<i64>,
     #[prop(into)] is_live: Signal<bool>,
     #[prop(into)] can_manage: Signal<bool>,
+    /// Kategori kelas mengizinkan rekam suara (HANYA "Pengajian") — kontrol
+    /// siaran/dengar disembunyikan total bila false (sholat & kategori lain).
+    #[prop(into)] can_record: Signal<bool>,
     #[prop(into)] recording_url: Signal<Option<String>>,
 ) -> impl IntoView {
     // Sinyal UI (primitif Send) — logika JS ada di mod wasm (thread_local).
@@ -91,10 +94,10 @@ pub fn AudioDock(
         <audio node_ref=audio_ref class="hidden"></audio>
         <div class="fixed bottom-[76px] inset-x-0 max-w-md mx-auto px-4 z-20 pointer-events-none">
             {move || {
-                if is_live.get() && can_manage.get() {
+                if is_live.get() && can_manage.get() && can_record.get() {
                     Some(
                         view! {
-                            <div class="pointer-events-auto bg-surface-container-lowest border border-outline-variant/60 rounded-2xl shadow-lg p-3 space-y-2 anim-in">
+                            <div class="pointer-events-auto ppm-card shadow-lg p-3 space-y-2 anim-in">
                                 {move || bc_err.get().map(|e| view! {
                                     <p class="text-[11px] text-error bg-error-container rounded-lg px-3 py-1.5">{e}</p>
                                 })}
@@ -140,10 +143,10 @@ pub fn AudioDock(
                         }
                             .into_any(),
                     )
-                } else if is_live.get() {
+                } else if is_live.get() && can_record.get() {
                     Some(
                         view! {
-                            <div class="pointer-events-auto bg-surface-container-lowest border border-outline-variant/60 rounded-2xl shadow-lg p-3 anim-in">
+                            <div class="pointer-events-auto ppm-card shadow-lg p-3 anim-in">
                                 {move || {
                                     if ls_on.get() {
                                         view! {
@@ -178,12 +181,16 @@ pub fn AudioDock(
                         }
                             .into_any(),
                     )
+                } else if is_live.get() {
+                    // Live tapi kategori kelas tak boleh rekam suara (sholat,
+                    // dll.) — dock tak ditampilkan sama sekali.
+                    None
                 } else {
                     recording_url.get().map(|url| {
                         view! {
                             <a
                                 href=url
-                                class="pointer-events-auto flex items-center gap-3 bg-surface-container-lowest border border-outline-variant/60 rounded-2xl shadow-lg p-3 press anim-in"
+                                class="pointer-events-auto flex items-center gap-3 ppm-card shadow-lg p-3 press anim-in"
                             >
                                 <span class="w-10 h-10 rounded-full bg-secondary-container text-primary flex items-center justify-center">
                                     <span class="material-symbols-outlined">"download"</span>

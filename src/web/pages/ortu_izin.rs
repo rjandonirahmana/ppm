@@ -78,7 +78,7 @@ pub fn OrtuIzinPage() -> impl IntoView {
     view! {
         <Title text="Daftar Izin Santri — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Daftar Izin Santri" subtitle="Kelola permohonan izin putra/putri Anda" />
 
                 <div class="px-5 pt-5 space-y-4 stagger">
@@ -98,7 +98,8 @@ pub fn OrtuIzinPage() -> impl IntoView {
                             .then(|| {
                                 view! {
                                     <form
-                                        class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-5 space-y-4 anim-in"
+                                        class="ppm-card p-5 space-y-4 anim-in"
+                                        method="post"
                                         on:submit=on_submit
                                     >
                                         {move || {
@@ -217,7 +218,7 @@ pub fn OrtuIzinPage() -> impl IntoView {
                     // ── Daftar izin ────────────────────────────────────────
                     <Suspense fallback=|| {
                         view! {
-                            <div class="space-y-3 animate-pulse">
+                            <div class="animate-pulse grid gap-3 md:grid-cols-2">
                                 <div class="h-28 bg-surface-container rounded-2xl"></div>
                                 <div class="h-28 bg-surface-container rounded-2xl"></div>
                             </div>
@@ -235,15 +236,20 @@ pub fn OrtuIzinPage() -> impl IntoView {
                                         .collect();
                                     if list.is_empty() {
                                         view! {
-                                            <div class="bg-surface-container rounded-2xl p-8 text-center text-body-sm text-on-surface-variant">
+                                            <div class="ppm-empty">
                                                 "Tidak ada izin pada filter ini."
                                             </div>
                                         }
                                             .into_any()
                                     } else {
-                                        list.into_iter()
-                                            .map(|p| view! { <PermitCard p=p /> })
-                                            .collect_view()
+                                        view! {
+                                            <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                                                {list
+                                                    .into_iter()
+                                                    .map(|p| view! { <PermitCard p=p /> })
+                                                    .collect_view()}
+                                            </div>
+                                        }
                                             .into_any()
                                     }
                                 })
@@ -312,7 +318,7 @@ fn PermitCard(p: ParentPermitItem) -> impl IntoView {
     };
     let quote = format!("\u{201C}{}\u{201D}", p.reason);
     view! {
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 card-hover anim-in">
+        <div class="ppm-card p-4 card-hover anim-in">
             <div class="flex items-start justify-between gap-2">
                 <p class="text-[11px] font-bold tracking-[0.15em] text-on-surface-variant uppercase">
                     {p.kind_label}

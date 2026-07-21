@@ -129,7 +129,23 @@ pub fn LoginPage() -> impl IntoView {
                             </p>
                         </header>
 
-                        <form class="space-y-6" on:submit=on_submit>
+                        // method="post" + action WAJIB eksplisit — pertahanan
+                        // berlapis: `on:submit` (prevent_default+fetch WASM)
+                        // hanya aktif SETELAH hydration selesai. Kalau form
+                        // ini ter-submit SEBELUM hydration (race saat load
+                        // lambat/WASM belum siap), browser jatuh ke perilaku
+                        // NATIF — TANPA method eksplisit itu defaultnya GET,
+                        // yang membocorkan password ke query string URL
+                        // (riwayat browser, log akses server). method="post"
+                        // membuat fallback nativenya aman (POST tanpa handler
+                        // nyata → cuma render ulang halaman, TAK ada kebocoran)
+                        // walau tetap tak login (itu wajar: harus tunggu JS).
+                        <form
+                            class="space-y-6"
+                            method="post"
+                            action="/login"
+                            on:submit=on_submit
+                        >
                             {move || {
                                 error
                                     .get()

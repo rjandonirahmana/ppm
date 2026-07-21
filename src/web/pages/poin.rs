@@ -62,7 +62,7 @@ fn PoinPageInner() -> impl IntoView {
     view! {
         <Title text="Pantauan Poin Santri — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Pantauan Poin Santri" subtitle="Papan peringkat & penyesuaian poin" />
                 <div class="px-5 pt-5 space-y-5 stagger">
                     {move || {
@@ -76,10 +76,17 @@ fn PoinPageInner() -> impl IntoView {
                     }}
                     <Suspense fallback=|| {
                         view! {
-                            <div class="space-y-3 animate-pulse">
-                                <div class="h-20 bg-surface-container rounded-2xl"></div>
-                                <div class="h-16 bg-surface-container rounded-2xl"></div>
-                                <div class="h-16 bg-surface-container rounded-2xl"></div>
+                            <div class="animate-pulse space-y-3">
+                                <div class="grid grid-cols-2 gap-3 md:max-w-lg">
+                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                </div>
+                                <div class="grid gap-2 md:grid-cols-2">
+                                    <div class="h-16 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-16 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-16 bg-surface-container rounded-2xl hidden md:block"></div>
+                                    <div class="h-16 bg-surface-container rounded-2xl hidden md:block"></div>
+                                </div>
                             </div>
                         }
                     }>
@@ -88,24 +95,24 @@ fn PoinPageInner() -> impl IntoView {
                                 .map(|res| match res {
                                     Ok(d) => {
                                         view! {
-                                            <div class="grid grid-cols-2 gap-3">
-                                                <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+                                            <div class="grid grid-cols-2 gap-3 md:max-w-lg">
+                                                <div class="ppm-card p-4">
                                                     <p class="text-body-sm text-on-surface-variant">"Total Santri"</p>
                                                     <p class="text-2xl font-bold text-on-background mt-1">
                                                         {d.total_santri}
                                                     </p>
                                                 </div>
-                                                <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+                                                <div class="ppm-card p-4">
                                                     <p class="text-body-sm text-on-surface-variant">"Rata-rata Poin"</p>
                                                     <p class="text-2xl font-bold text-primary mt-1">
                                                         {d.avg_points}
                                                     </p>
                                                 </div>
                                             </div>
-                                            <div class="space-y-2">
+                                            <div class="space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-2">
                                                 {if d.top.is_empty() {
                                                     view! {
-                                                        <p class="text-body-sm text-on-surface-variant text-center py-6">
+                                                        <p class="text-body-sm text-on-surface-variant text-center py-6 md:col-span-2">
                                                             "Belum ada santri di cakupan Anda."
                                                         </p>
                                                     }
@@ -162,7 +169,7 @@ fn PointCard(
     );
 
     view! {
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 space-y-3">
+        <div class="ppm-card p-4 space-y-3">
             <div class="flex items-center gap-3">
                 <span class="w-6 h-6 rounded-full bg-primary/10 text-primary text-[11px] font-bold flex items-center justify-center shrink-0">
                     {rank}

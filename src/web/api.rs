@@ -6,9 +6,10 @@
 use leptos::prelude::*;
 
 use crate::models::{
-    AnalisisData, ChildRiwayat, ConnRequest, IzinData, KelasData, KelasDetail, PamongData,
-    ParentHome, ParentPermitItem, PoinData, ProfilData, RiwayatData, SantriHome, SessionUser,
-    SessionsData, StafHome, StudentSearchItem, StudentsData,
+    AnalisisData, ChildRiwayat, ConnRequest, IzinData, KelasData, KelasDetail, LaporanAdminData,
+    LaporanGuruExtra, LaporanOrtuData, LaporanSantriData, OutsideRow, PamongData, ParentHome,
+    ParentPermitItem, PoinData, ProfilData, RiwayatData, SantriHome, SessionUser, SessionsData,
+    StafHome, StudentSearchItem, StudentsData,
 };
 
 // ── Helper server-only ─────────────────────────────────────────────────────────
@@ -482,12 +483,14 @@ pub async fn create_schedule_action(
     recurrence: String,
     start_date: String,
     end_date: String,
+    category: String,
+    late_points: String,
 ) -> Result<i64, ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
     crate::service::kelas::create_schedule(
         &state.pool, class_id, &title, &start_time, &end_time, &limit_time, &recurrence,
-        &start_date, &end_date,
+        &start_date, &end_date, &category, &late_points,
     )
     .await
     .map_err(err)
@@ -541,12 +544,14 @@ pub async fn update_schedule_action(
     recurrence: String,
     start_date: String,
     end_date: String,
+    category: String,
+    late_points: String,
 ) -> Result<(), ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
     crate::service::kelas::update_schedule(
         &state.pool, schedule_id, &title, &start_time, &end_time, &limit_time, &recurrence,
-        &start_date, &end_date,
+        &start_date, &end_date, &category, &late_points,
     )
     .await
     .map_err(err)
@@ -672,4 +677,93 @@ pub async fn adjust_points_action(student_id: i64, delta: i32, reason: String) -
     crate::repository::adjust_points(&state.pool, student_id, delta, &reason, sess.id)
         .await
         .map_err(err)
+}
+
+// ── Laporan (/laporan — menggantikan item Profil di navbar) ─────────────────────
+
+/// Laporan Institusi — admin & pamong.
+#[server(GetLaporanAdmin, "/api-fn")]
+pub async fn laporan_admin_data() -> Result<LaporanAdminData, ServerFnError> {
+    require_roles(&["admin", "supervisor"]).await?;
+    let state = app_state().await?;
+    crate::service::laporan::laporan_admin(&state.pool).await.map_err(err)
+}
+
+/// Ekstensi laporan guru/dewan guru: ranking hafalan "Santri Teladan" (dipanggil
+/// BERSAMA `analisis_data` yang sudah ada — kartu kehadiran/tren/ranking kelas
+/// dipakai apa adanya, di sini hanya tambahan hafalan).
+#[server(GetLaporanGuruExtra, "/api-fn")]
+pub async fn laporan_guru_extra_data() -> Result<LaporanGuruExtra, ServerFnError> {
+    require_roles(&["teacher", "dewan_guru", "admin"]).await?;
+    let state = app_state().await?;
+    crate::service::laporan::laporan_guru_extra(&state.pool).await.map_err(err)
+}
+
+/// Rapor Pribadi Santri.
+#[server(GetLaporanSantri, "/api-fn")]
+pub async fn laporan_santri_data() -> Result<LaporanSantriData, ServerFnError> {
+    let sess = require_roles(&["santri"]).await?;
+    let state = app_state().await?;
+    crate::service::laporan::laporan_santri(&state.pool, &sess).await.map_err(err)
+}
+
+/// Laporan Santri untuk Orang Tua (anak terhubung; `child` None = anak pertama).
+#[server(GetLaporanOrtu, "/api-fn")]
+pub async fn laporan_ortu_data(child: Option<i64>) -> Result<LaporanOrtuData, ServerFnError> {
+    let sess = require_roles(&["parent"]).await?;
+    let state = app_state().await?;
+    crate::service::laporan::laporan_ortu(&state.pool, sess.id, child).await.map_err(err)
+}
+
+/// Santri yang sedang berstatus "di luar pondok" (gerbang RFID) — laporan
+/// admin/pamong.
+#[server(GetOutside, "/api-fn")]
+pub async fn students_outside_action() -> Result<Vec<OutsideRow>, ServerFnError> {
+    require_roles(&["admin", "supervisor"]).await?;
+    let state = app_state().await?;
+    let rows = crate::repository::students_outside(&state.pool, 30).await.map_err(err)?;
+    Ok(rows
+        .into_iter()
+        .map(|r| OutsideRow {
+            user_id: r.user_id,
+            name: r.name,
+            nis: r.nis.unwrap_or_else(|| "-".into()),
+            class_name: r.class_name.unwrap_or_else(|| "-".into()),
+            since_label: r
+                .gate_at
+                .map(crate::service::fmt::fmt_dt_full)
+                .unwrap_or_else(|| "-".into()),
+        })
+        .collect())
+}
+
+/// Catat setoran hafalan santri (staf saja) — panel di detail sesi kategori
+/// "Mengaji"/"Pengajian".
+#[server(LogHafalan, "/api-fn")]
+pub async fn log_hafalan_action(
+    student_id: i64,
+    class_id: Option<i64>,
+    surah: String,
+    ayat_range: String,
+    juz: Option<i16>,
+    quality: String,
+    note: String,
+) -> Result<(), ServerFnError> {
+    let sess = require_roles(&["admin", "supervisor", "dewan_guru", "teacher"]).await?;
+    let state = app_state().await?;
+    crate::service::hafalan::log_hafalan(
+        &state.pool, &sess, student_id, class_id, &surah, &ayat_range, juz, &quality, &note,
+    )
+    .await
+    .map_err(err)
+}
+
+/// Setoran hafalan terbaru satu kelas (panel di detail sesi).
+#[server(HafalanOfClass, "/api-fn")]
+pub async fn hafalan_of_class_action(
+    class_id: i64,
+) -> Result<Vec<(String, crate::models::HafalanItem)>, ServerFnError> {
+    require_roles(&["admin", "supervisor", "dewan_guru", "teacher"]).await?;
+    let state = app_state().await?;
+    crate::service::hafalan::hafalan_of_class(&state.pool, class_id, 15).await.map_err(err)
 }

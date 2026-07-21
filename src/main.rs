@@ -43,12 +43,21 @@ async fn main() -> Result<()> {
     if args.get(1).map(String::as_str) == Some("verify") {
         let pw = args.get(2).expect("pemakaian: verify <password> <hash>");
         let hash = args.get(3).expect("pemakaian: verify <password> <hash>");
-        println!("{}", if bcrypt::verify(pw, hash)? { "COCOK" } else { "TIDAK COCOK" });
+        println!(
+            "{}",
+            if bcrypt::verify(pw, hash)? {
+                "COCOK"
+            } else {
+                "TIDAK COCOK"
+            }
+        );
         return Ok(());
     }
 
     tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "ppm=info,tower_http=info".into()))
+        .with(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| "ppm=info,tower_http=info".into()),
+        )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
@@ -81,20 +90,28 @@ async fn main() -> Result<()> {
     };
 
     // JwtService: key di-pre-compute sekali (pola e-ticketing).
-    let state = Arc::new(AppState::new(pool, ppm::auth::JwtService::new(&cfg.jwt_secret), storage));
+    let state = Arc::new(AppState::new(
+        pool,
+        ppm::auth::JwtService::new(&cfg.jwt_secret),
+        storage,
+    ));
 
-    // ── Job AUTO-ABSENT (task internal) ──────────────────────────────────────
-    // Tiap 10 menit: tandai 'absent' untuk santri yang tak hadir pada sesi hari
-    // ini yang jendelanya sudah tutup. Set-based & idempotent (aman dijalankan
-    // berulang). Bisa diganti cron eksternal via endpoint di kemudian hari.
+    // ── Job AUTO-ABSENT / "Alpa" (task internal) ─────────────────────────────
+    // Tiap 10 menit: tandai 'absent' utk santri tanpa kejelasan (bukan hadir/
+    // izin) pada sesi yang sudah TUNTAS (termasuk sesi ad-hoc tanpa jadwal —
+    // lihat repository::run_auto_absent). Set-based & idempotent (aman
+    // dijalankan berulang). Bisa diganti cron eksternal via endpoint di
+    // kemudian hari.
     {
         let pool = state.pool.clone();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(86400));
             loop {
                 tick.tick().await;
                 match ppm::repository::run_auto_absent(&pool).await {
-                    Ok(n) if n > 0 => tracing::info!("Auto-absent: {n} santri ditandai tidak hadir"),
+                    Ok(n) if n > 0 => {
+                        tracing::info!("Auto-absent: {n} santri ditandai tidak hadir")
+                    }
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Auto-absent gagal: {e}"),
                 }
@@ -119,6 +136,33 @@ async fn main() -> Result<()> {
 
     let ssr_routes = generate_route_list(App);
 
+    // ── Aset statis (/pkg wasm+js+css, /fonts) dgn Cache-Control ─────────────
+    // Filename TIDAK di-hash (cargo-leptos hash-files off) — jadi TIDAK aman
+    // di-cache dgn max-age (browser bisa pakai wasm/js LAMA dari cache sampai
+    // masa berlaku habis, padahal server sudah rebuild dgn bentuk komponen
+    // BEDA → hydration mismatch, gejalanya App "gagal" tak jelas mis. sesi
+    // seperti tak tersimpan. PERNAH KEJADIAN di dev (max-age=3600 sempat
+    // dipasang, menyebabkan browser nyangkut di WASM basi saat `cargo leptos
+    // watch` rebuild berkali-kali) — makanya `no-cache` (BUKAN no-store):
+    // browser tetap boleh simpan salinan tapi WAJIB revalidate ke server tiap
+    // kali (conditional GET → 304 kalau belum berubah, hemat transfer BYTE
+    // tanpa risiko stale). Baru aman pakai max-age/immutable kalau nanti
+    // cargo-leptos hash-files diaktifkan (filename berubah tiap build).
+    let site_root = leptos_options.site_root.to_string();
+    let static_routes: axum::Router = axum::Router::new()
+        .nest_service(
+            "/pkg",
+            tower_http::services::ServeDir::new(format!("{site_root}/pkg")),
+        )
+        .nest_service(
+            "/fonts",
+            tower_http::services::ServeDir::new(format!("{site_root}/fonts")),
+        )
+        .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-cache, must-revalidate"),
+        ));
+
     let leptos_router: axum::Router = axum::Router::new()
         .leptos_routes(&leptos_options, ssr_routes, {
             let opts = leptos_options.clone();
@@ -132,6 +176,7 @@ async fn main() -> Result<()> {
     // ── Endpoint perangkat RFID (gerbang) ────────────────────────────────────
     let device_routes: axum::Router = axum::Router::new()
         .route("/api/rfid/scan", post(ppm::device_api::rfid_scan))
+        .route("/api/rfid/gate", post(ppm::device_api::rfid_gate))
         .layer(axum::Extension(state.clone()));
 
     // ── Siaran suara sesi (chunked HTTP; file = rekaman) ─────────────────────
@@ -147,6 +192,7 @@ async fn main() -> Result<()> {
         .route("/healthz", get(|| async { "ok" }))
         .merge(device_routes)
         .merge(live_audio_routes)
+        .merge(static_routes)
         .merge(leptos_router)
         .layer(tower_http::compression::CompressionLayer::new());
 

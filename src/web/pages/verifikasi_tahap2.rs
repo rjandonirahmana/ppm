@@ -44,7 +44,7 @@ pub fn VerifikasiTahap2Page() -> impl IntoView {
     view! {
         <Title text="Verifikasi Tahap 2 — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <header class="sticky top-0 z-10 bg-surface/90 backdrop-blur border-b border-outline-variant/60 px-5 py-4 flex items-center justify-between">
                     <div>
                         <h1 class="text-headline-sm text-on-background">"Verifikasi Tahap 2"</h1>
@@ -58,10 +58,15 @@ pub fn VerifikasiTahap2Page() -> impl IntoView {
                 <div class="px-5 pt-5 space-y-5 stagger">
                     <Suspense fallback=|| {
                         view! {
-                            <div class="space-y-3 animate-pulse">
-                                <div class="h-20 bg-surface-container rounded-2xl"></div>
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
+                            <div class="animate-pulse space-y-3">
+                                <div class="grid grid-cols-2 gap-3 md:max-w-lg">
+                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                </div>
+                                <div class="grid gap-2 md:grid-cols-2">
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                </div>
                             </div>
                         }
                     }>
@@ -71,8 +76,8 @@ pub fn VerifikasiTahap2Page() -> impl IntoView {
                                     Ok(d) => {
                                         let pending_count = d.pending.len();
                                         view! {
-                                            <div class="grid grid-cols-2 gap-3">
-                                                <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+                                            <div class="grid grid-cols-2 gap-3 md:max-w-lg">
+                                                <div class="ppm-card p-4">
                                                     <div class="flex items-center gap-2 text-warning">
                                                         <span class="material-symbols-outlined pulse-dot">
                                                             "hourglass_top"
@@ -88,7 +93,7 @@ pub fn VerifikasiTahap2Page() -> impl IntoView {
                                                         "Menunggu Final"
                                                     </p>
                                                 </div>
-                                                <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+                                                <div class="ppm-card p-4">
                                                     <div class="flex items-center gap-2 text-success">
                                                         <span class="material-symbols-outlined">"verified"</span>
                                                         <span
@@ -117,12 +122,16 @@ pub fn VerifikasiTahap2Page() -> impl IntoView {
                                                 }
                                                     .into_any()
                                             } else {
-                                                d.pending
-                                                    .into_iter()
-                                                    .map(|p| {
-                                                        view! { <VerifyCard p=p busy_id=busy_id decide=decide /> }
-                                                    })
-                                                    .collect_view()
+                                                view! {
+                                                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                                                        {d.pending
+                                                            .into_iter()
+                                                            .map(|p| {
+                                                                view! { <VerifyCard p=p busy_id=busy_id decide=decide /> }
+                                                            })
+                                                            .collect_view()}
+                                                    </div>
+                                                }
                                                     .into_any()
                                             }}
                                         }
@@ -152,7 +161,7 @@ fn VerifyCard(
     let is_busy = move || busy_id.get() == Some(id);
 
     view! {
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 space-y-3 card-hover anim-in">
+        <div class="ppm-card p-4 space-y-3 card-hover anim-in">
             <div class="flex items-center gap-3">
                 <div class="w-11 h-11 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold shrink-0">
                     {initial}
@@ -165,7 +174,7 @@ fn VerifyCard(
                         {scan}
                     </p>
                 </div>
-                <span class="px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider bg-secondary-container text-primary shrink-0 self-start flex items-center gap-1">
+                <span class="ppm-chip bg-secondary-container text-primary shrink-0 self-start flex items-center gap-1">
                     <span class="material-symbols-outlined text-[13px]">"how_to_reg"</span>
                     "Pamong OK"
                 </span>

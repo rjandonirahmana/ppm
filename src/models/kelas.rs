@@ -174,6 +174,12 @@ pub struct ScheduleItem {
     pub end_date: String,
     /// Durasi menit (untuk statistik "Durasi Rata-rata").
     pub duration_min: i64,
+    /// Kategori jadwal (mis. "Pengajian"/"Sholat") — kosong bila belum diisi;
+    /// override kategori kelas utk sesi lahir dari jadwal ini (migrasi 10).
+    pub category: String,
+    /// Poin custom saat TERLAMBAT di jadwal ini (migrasi 13). "" di form edit
+    /// = pakai default global (+2); diisi (mis. "-5") = override.
+    pub late_points: String,
 }
 
 /// Opsi jadwal (dropdown tambah santri / buat sesi).

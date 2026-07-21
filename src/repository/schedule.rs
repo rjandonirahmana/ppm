@@ -94,10 +94,13 @@ pub struct SessionRow {
     pub status: String,
     pub teacher: Option<String>,
     pub teacher_id: Option<i64>,
+    /// Kategori kelas (mis. "Pengajian", "Sholat") — menentukan boleh/tidaknya
+    /// siaran suara direkam (lihat models::category_allows_recording).
+    pub category: Option<String>,
 }
 
 const SESSION_COLS: &str = "SELECT s.id, COALESCE(s.title, cs.title), c.name, s.session_date, \
-     cs.start_time, s.status, t.full_name, s.teacher_id \
+     cs.start_time, s.status, t.full_name, s.teacher_id, COALESCE(cs.category, c.category) \
      FROM class_sessions s \
      JOIN classes c ON c.id = s.class_id \
      LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
@@ -113,6 +116,7 @@ fn row_to_session(r: tokio_postgres::Row) -> SessionRow {
         status: r.get(5),
         teacher: r.get(6),
         teacher_id: r.get(7),
+        category: r.get(8),
     }
 }
 
@@ -186,11 +190,32 @@ pub struct SessionDetailRow {
     pub class_name: String,
     pub session_date: NaiveDate,
     pub start_time: Option<NaiveTime>,
+    /// Jam selesai jadwal (None bila sesi ad-hoc tanpa jadwal terpasang) —
+    /// dipakai memvalidasi jendela "Mulai Sesi" (mulai-10m s/d selesai+10m).
+    pub end_time: Option<NaiveTime>,
     pub status: String,
     pub teacher: Option<String>,
     pub recording_path: Option<String>,
     pub recording_size: Option<i64>,
     pub teacher_id: Option<i64>,
+    pub category: Option<String>,
+}
+
+/// Kategori kelas dari sebuah sesi — query ringan (dipakai guard server-side
+/// tiap potongan siaran suara di web/live_audio.rs, bukan seluruh detail).
+pub async fn session_category(pool: &Pool, session_id: i64) -> Result<Option<String>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(
+            "SELECT COALESCE(cs.category, c.category) \
+             FROM class_sessions s JOIN classes c ON c.id = s.class_id \
+             LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
+             WHERE s.id = $1",
+            &[&session_id],
+        )
+        .await
+        .context("session_category")?;
+    Ok(row.and_then(|r| r.get(0)))
 }
 
 pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetailRow>> {
@@ -198,8 +223,8 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
     let row = c
         .query_opt(
             "SELECT s.id, s.class_id, COALESCE(s.title, cs.title), c.name, s.session_date, \
-                    cs.start_time, s.status, t.full_name, s.recording_path, s.recording_size, \
-                    s.teacher_id \
+                    cs.start_time, cs.end_time, s.status, t.full_name, s.recording_path, \
+                    s.recording_size, s.teacher_id, COALESCE(cs.category, c.category) \
              FROM class_sessions s \
              JOIN classes c ON c.id = s.class_id \
              LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
@@ -216,11 +241,13 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
         class_name: r.get(3),
         session_date: r.get(4),
         start_time: r.get(5),
-        status: r.get(6),
-        teacher: r.get(7),
-        recording_path: r.get(8),
-        recording_size: r.get(9),
-        teacher_id: r.get(10),
+        end_time: r.get(6),
+        status: r.get(7),
+        teacher: r.get(8),
+        recording_path: r.get(9),
+        recording_size: r.get(10),
+        teacher_id: r.get(11),
+        category: r.get(12),
     }))
 }
 

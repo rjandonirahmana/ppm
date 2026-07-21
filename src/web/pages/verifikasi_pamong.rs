@@ -44,7 +44,7 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
     view! {
         <Title text="Verifikasi Pamong — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <header class="sticky top-0 z-10 bg-surface/90 backdrop-blur border-b border-outline-variant/60 px-5 py-4 flex items-center justify-between">
                     <div>
                         <h1 class="text-headline-sm text-on-background">"Verifikasi Pamong"</h1>
@@ -56,10 +56,16 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                 <div class="px-5 pt-5 space-y-5 stagger">
                     <Suspense fallback=|| {
                         view! {
-                            <div class="space-y-3 animate-pulse">
-                                <div class="h-20 bg-surface-container rounded-2xl"></div>
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
+                            <div class="animate-pulse space-y-3">
+                                <div class="h-28 bg-surface-container rounded-2xl"></div>
+                                <div class="grid grid-cols-2 gap-3 md:max-w-lg">
+                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                </div>
+                                <div class="grid gap-2 md:grid-cols-2">
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
+                                </div>
                             </div>
                         }
                     }>
@@ -89,8 +95,8 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                             </div>
 
                                             // ── Statistik ────────────────────────
-                                            <div class="grid grid-cols-2 gap-3">
-                                                <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+                                            <div class="grid grid-cols-2 gap-3 md:max-w-lg">
+                                                <div class="ppm-card p-4">
                                                     <div class="flex items-center gap-2 text-warning">
                                                         <span class="material-symbols-outlined pulse-dot">"pending_actions"</span>
                                                         <span
@@ -104,7 +110,7 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                         "Menunggu Tindakan"
                                                     </p>
                                                 </div>
-                                                <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+                                                <div class="ppm-card p-4">
                                                     <div class="flex items-center gap-2 text-success">
                                                         <span class="material-symbols-outlined">"done_all"</span>
                                                         <span
@@ -134,12 +140,17 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                 }
                                                     .into_any()
                                             } else {
-                                                d.pending
-                                                    .into_iter()
-                                                    .map(|p| {
-                                                        view! { <PendingCard p=p busy_id=busy_id decide=decide /> }
-                                                    })
-                                                    .collect_view()
+                                                // Desktop: antrean 2 kolom (mockup dashboard pamong).
+                                                view! {
+                                                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                                                        {d.pending
+                                                            .into_iter()
+                                                            .map(|p| {
+                                                                view! { <PendingCard p=p busy_id=busy_id decide=decide /> }
+                                                            })
+                                                            .collect_view()}
+                                                    </div>
+                                                }
                                                     .into_any()
                                             }}
 
@@ -151,14 +162,14 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                             <h3 class="text-body-lg font-bold text-on-background mb-2">
                                                                 "Sesi Hari Ini"
                                                             </h3>
-                                                            <div class="space-y-2">
+                                                            <div class="space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-2">
                                                                 {d.today
                                                                     .iter()
                                                                     .cloned()
                                                                     .map(|s| {
                                                                         let live = s.state == "live";
                                                                         view! {
-                                                                            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3.5 flex items-center gap-3 card-hover">
+                                                                            <div class="ppm-card p-3.5 flex items-center gap-3 card-hover">
                                                                                 <div class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center shrink-0">
                                                                                     <span class="material-symbols-outlined">"menu_book"</span>
                                                                                 </div>
@@ -189,7 +200,7 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                             <h3 class="text-body-lg font-bold text-on-background mb-2">
                                                                 "Kehadiran Terbaru"
                                                             </h3>
-                                                            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl px-4 py-1">
+                                                            <div class="ppm-card px-4 py-1">
                                                                 {d.latest
                                                                     .iter()
                                                                     .cloned()
@@ -245,7 +256,7 @@ fn PendingCard(
     let is_busy = move || busy_id.get() == Some(id);
 
     view! {
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 space-y-3 card-hover anim-in">
+        <div class="ppm-card p-4 space-y-3 card-hover anim-in">
             <div class="flex items-center gap-3">
                 <div class="w-11 h-11 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold shrink-0">
                     {initial}

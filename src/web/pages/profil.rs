@@ -28,65 +28,71 @@ pub fn ProfilPage() -> impl IntoView {
     view! {
         <Title text="Profil — PPM AFM" />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Profil Pengguna" />
 
-                <div class="px-5 pt-5 space-y-5 stagger">
-                    <Suspense fallback=|| {
-                        view! {
-                            <div class="space-y-3 animate-pulse">
-                                <div class="h-56 bg-surface-container rounded-2xl"></div>
-                                <div class="h-44 bg-surface-container rounded-2xl"></div>
-                            </div>
-                        }
-                    }>
-                        {move || {
-                            data.get()
-                                .and_then(|r| r.ok())
-                                .map(|p| view! { <ProfilContent p=p /> })
-                        }}
-                    </Suspense>
-
-                    // ── Pengaturan Akun ────────────────────────────────────
-                    <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-5">
-                        <div class="flex items-center gap-2 mb-4">
-                            <span class="material-symbols-outlined text-on-background">"settings"</span>
-                            <h2 class="text-body-lg font-bold text-on-background">"Pengaturan Akun"</h2>
-                        </div>
-                        <div class="space-y-1">
-                            <SettingRow icon="lock" label="Ganti Kata Sandi" />
-                            <SettingRow icon="language" label="Bahasa Aplikasi" />
-                            <SettingRow icon="shield" label="Privasi & Keamanan" />
-                            <SettingRow icon="info" label="Tentang Aplikasi" />
-                            <SettingRow icon="help" label="Bantuan & Dukungan" />
-
-                            // Logout ASLI: hapus cookie sesi → /login.
-                            <button
-                                class="w-full flex items-center gap-4 py-3.5 text-error font-semibold"
-                                on:click=move |_| {
-                                    leptos::task::spawn_local(async move {
-                                        let _ = logout_action().await;
-                                        #[cfg(target_arch = "wasm32")]
-                                        if let Some(w) = web_sys::window() {
-                                            let _ = w.location().replace("/login");
-                                        }
-                                    });
-                                }
-                            >
-                                <span class="w-11 h-11 rounded-full bg-error-container flex items-center justify-center">
-                                    <span class="material-symbols-outlined text-error">"logout"</span>
-                                </span>
-                                "Keluar"
-                            </button>
-                        </div>
+                // Desktop: kartu profil (hero+kontak+akademik) kolom kiri sempit,
+                // Pengaturan Akun + versi di kolom kanan lebar — pola halaman akun.
+                <div class="px-5 pt-5 space-y-5 md:space-y-0 md:grid md:grid-cols-3 md:gap-5 md:items-start stagger">
+                    <div class="space-y-5 md:col-span-1">
+                        <Suspense fallback=|| {
+                            view! {
+                                <div class="space-y-3 animate-pulse">
+                                    <div class="h-56 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-44 bg-surface-container rounded-2xl"></div>
+                                </div>
+                            }
+                        }>
+                            {move || {
+                                data.get()
+                                    .and_then(|r| r.ok())
+                                    .map(|p| view! { <ProfilContent p=p /> })
+                            }}
+                        </Suspense>
                     </div>
 
-                    // ── Versi aplikasi ─────────────────────────────────────
-                    <div class="bg-surface-container rounded-2xl p-5 text-center">
-                        <p class="text-body-md font-bold text-on-background">"Portal PPM AFM v0.1.0"</p>
-                        <p class="text-body-sm text-on-surface-variant mt-1">
-                            "Absensi & pembinaan santri — dibuat dengan ♥ untuk keluarga PPM AFM."
-                        </p>
+                    <div class="space-y-5 md:col-span-2">
+                        // ── Pengaturan Akun ────────────────────────────────
+                        <div class="ppm-card p-5">
+                            <div class="flex items-center gap-2 mb-4">
+                                <span class="material-symbols-outlined text-on-background">"settings"</span>
+                                <h2 class="text-body-lg font-bold text-on-background">"Pengaturan Akun"</h2>
+                            </div>
+                            <div class="space-y-1 md:grid md:grid-cols-2 md:gap-x-4 md:space-y-0">
+                                <SettingRow icon="lock" label="Ganti Kata Sandi" />
+                                <SettingRow icon="language" label="Bahasa Aplikasi" />
+                                <SettingRow icon="shield" label="Privasi & Keamanan" />
+                                <SettingRow icon="info" label="Tentang Aplikasi" />
+                                <SettingRow icon="help" label="Bantuan & Dukungan" />
+
+                                // Logout ASLI: hapus cookie sesi → /login.
+                                <button
+                                    class="w-full flex items-center gap-4 py-3.5 text-error font-semibold"
+                                    on:click=move |_| {
+                                        leptos::task::spawn_local(async move {
+                                            let _ = logout_action().await;
+                                            #[cfg(target_arch = "wasm32")]
+                                            if let Some(w) = web_sys::window() {
+                                                let _ = w.location().replace("/login");
+                                            }
+                                        });
+                                    }
+                                >
+                                    <span class="w-11 h-11 rounded-full bg-error-container flex items-center justify-center">
+                                        <span class="material-symbols-outlined text-error">"logout"</span>
+                                    </span>
+                                    "Keluar"
+                                </button>
+                            </div>
+                        </div>
+
+                        // ── Versi aplikasi ─────────────────────────────────
+                        <div class="bg-surface-container rounded-2xl p-5 text-center">
+                            <p class="text-body-md font-bold text-on-background">"Portal PPM AFM v0.1.0"</p>
+                            <p class="text-body-sm text-on-surface-variant mt-1">
+                                "Absensi & pembinaan santri — dibuat dengan ♥ untuk keluarga PPM AFM."
+                            </p>
+                        </div>
                     </div>
                 </div>
 
@@ -122,7 +128,7 @@ fn ProfilContent(p: ProfilData) -> impl IntoView {
         </div>
 
         // ── Informasi kontak ────────────────────────────────────────────────
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-5">
+        <div class="ppm-card p-5">
             <div class="flex items-center gap-2 mb-4">
                 <span class="material-symbols-outlined text-on-background">"contact_mail"</span>
                 <h2 class="text-body-lg font-bold text-on-background">"Informasi Kontak"</h2>

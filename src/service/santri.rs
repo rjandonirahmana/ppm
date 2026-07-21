@@ -12,7 +12,7 @@ use crate::repository as repo;
 
 /// Awal semester akademik (WIB): Juli–Des = Ganjil (mulai 1 Jul),
 /// Jan–Jun = Genap (mulai 1 Jan). Return (awal_utc, label).
-fn semester_start() -> (chrono::DateTime<Utc>, String) {
+pub(crate) fn semester_start() -> (chrono::DateTime<Utc>, String) {
     let now = Utc::now().with_timezone(&wib());
     let (start, label) = if now.month() >= 7 {
         let y = now.year();

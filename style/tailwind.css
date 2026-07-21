@@ -10,9 +10,31 @@
 
 /* ── Token & kelas kustom (dulu CUSTOM_STYLE inline di <head>) ──────────────── */
 body{font-family:'Work Sans',sans-serif;background-color:#f9f9ff;}
-.spiritual-gradient{background:linear-gradient(135deg,#003527 0%,#064e3b 100%);}
+/* Hero emerald ala ppm-design-new: emerald pekat + glow sage lembut di sudut
+   kanan-atas (pengganti watermark ikon mockup). Dipakai SEMUA hero halaman. */
+.spiritual-gradient{
+  background:
+    radial-gradient(120% 120% at 100% 0%,rgba(149,211,186,.16) 0%,transparent 45%),
+    linear-gradient(135deg,#003527 0%,#064e3b 100%);
+}
 .pattern-bg{background-image:url('https://www.transparenttextures.com/patterns/cubes.png');opacity:.03;}
 .input-focus-ring:focus{box-shadow:0 0 0 4px rgba(0,53,39,.1);}
+
+/* ── Kelas komponen ppm — SATU sumber gaya elemen berulang (ubah di sini =
+   berlaku seluruh app; markup halaman cukup pakai token pendek). ─────────── */
+@layer components{
+  /* Kartu permukaan standar (dulu: bg-surface-container-lowest border
+     border-outline-variant/60 rounded-2xl — terduplikasi ±50×). */
+  /* Level-1 elevation DESIGN.md: border tipis + ambient shadow sangat lembut. */
+  .ppm-card{@apply bg-surface-container-lowest border border-outline-variant/60 rounded-2xl shadow-[0_2px_4px_rgba(0,0,0,0.04)];}
+  /* Chip status / badge kecil. */
+  .ppm-chip{@apply px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wider;}
+  .ppm-chip-sm{@apply px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider;}
+  /* Tile ikon lembut (kotak sage berisi ikon) ala mockup. */
+  .ppm-tile{@apply rounded-xl bg-secondary-container text-primary flex items-center justify-center shrink-0;}
+  /* Kartu kosong / placeholder. */
+  .ppm-empty{@apply bg-surface-container rounded-2xl p-8 text-center text-body-sm text-on-surface-variant;}
+}
 /* Ikon Material Symbols — SELF-HOST subset 86 ikon (public/fonts/, ~28KB).
    Tak lagi dari Google CDN → cepat, offline, tanpa flash teks. @font-face di
    luar layer; kelasnya di @layer base agar utility ukuran (text-2xl, dll) tetap
@@ -103,4 +125,41 @@ button:active{transform:scale(.96)}
   /* FAB: di mobile right-5 (tepi layar); di desktop rapat ke tepi KOLOM
      (kolom max-w-md = 28rem → tepi kanan kolom = 50% - 14rem). */
   .ppm-fab{right:calc(50% - 14rem + 1.25rem) !important;}
+
+  /* ── MODE DESKTOP ppm-design-new: sidebar emerald kiri (w-64 = 16rem) ──
+     Saat .ppm-sidebar tampil (data-open=1, hanya utk user login pada halaman
+     ber-nav), konten bergeser & bingkai "kolom ponsel" dilepas → kanvas lembut
+     ala Admin Portal. Elemen fixed dlm halaman (chat bar, AudioDock) di-offset
+     agar tetap sejajar kolom konten; FAB dihitung ulang dari pusat area baru
+     (pusat = 50vw + 8rem → tepi kanan kolom dari kanan = 50vw − 22rem). */
+  .ppm-sidebar[data-open="0"]{display:none !important;}
+  body:has(.ppm-sidebar[data-open="1"]) .ppm-stage{
+    margin-left:16rem;
+    background:#f9f9ff;
+  }
+  body:has(.ppm-sidebar[data-open="1"]) .ppm-stage>div{
+    border-inline:0;
+    box-shadow:none;
+    background:transparent;
+  }
+  /* REAL desktop (DESIGN.md: konten maks ±1200px) — OPT-IN via marker
+     `ppm-wide` di akar halaman: hanya halaman yang SUDAH punya komposisi md:
+     (grid/tabel) yang dilebarkan; halaman lain tetap kolom 28rem terpusat
+     sampai di-rework (kartu mobile melar tanpa grid = jelek). */
+  body:has(.ppm-sidebar[data-open="1"]) .ppm-stage>div.ppm-wide{
+    max-width:72rem;
+    padding-inline:1.5rem;
+  }
+  /* Bilah fixed dlm halaman (chat sesi, AudioDock): di kanvas lebar dibatasi
+     36rem terpusat → jadi bilah kontrol melayang, bukan membentang penuh. */
+  body:has(.ppm-sidebar[data-open="1"]) .ppm-stage .fixed:not(.ppm-fab){
+    left:16rem;
+    max-width:36rem;
+    border-radius:1rem 1rem 0 0;
+  }
+  /* FAB nempel tepi kanan kanvas 72rem (pusat konten = 50vw+8rem);
+     max() menjaga tetap ≥2rem dari tepi saat viewport < kanvas penuh. */
+  body:has(.ppm-sidebar[data-open="1"]) .ppm-fab{
+    right:max(2rem, calc(50% - 44rem + 1.5rem)) !important;
+  }
 }

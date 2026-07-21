@@ -43,13 +43,17 @@ fn AnalisisPage(title: &'static str) -> impl IntoView {
     view! {
         <Title text=format!("{title} — PPM AFM") />
         <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto">
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title=title subtitle="Portal Administrasi" />
                 <div class="px-5 pt-5 space-y-5 stagger">
                     <Suspense fallback=|| {
                         view! {
-                            <div class="space-y-3 animate-pulse">
-                                <div class="h-24 bg-surface-container rounded-2xl"></div>
+                            <div class="animate-pulse space-y-3">
+                                <div class="h-28 bg-surface-container rounded-2xl"></div>
+                                <div class="grid grid-cols-2 gap-3 md:max-w-lg">
+                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                </div>
                                 <div class="h-40 bg-surface-container rounded-2xl"></div>
                             </div>
                         }
@@ -116,7 +120,7 @@ fn AnalisisBody(d: AnalisisData) -> impl IntoView {
             })}
 
         // ── Progres + statistik ─────────────────────────────────────────────
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4 flex items-center justify-between">
+        <div class="ppm-card p-4 flex items-center justify-between">
             <div>
                 <p class="text-body-sm text-on-surface-variant">"Kehadiran 30 Hari"</p>
                 <p class="text-headline-sm font-bold text-on-background">{format!("{attendance_pct}%")}</p>
@@ -129,8 +133,8 @@ fn AnalisisBody(d: AnalisisData) -> impl IntoView {
                     stroke-dasharray=format!("{attendance_pct} 100")></circle>
             </svg>
         </div>
-        <div class="grid grid-cols-2 gap-3">
-            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+        <div class="grid grid-cols-2 gap-3 md:max-w-lg">
+            <div class="ppm-card p-4">
                 <span class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center">
                     <span class="material-symbols-outlined">"task_alt"</span>
                 </span>
@@ -139,7 +143,7 @@ fn AnalisisBody(d: AnalisisData) -> impl IntoView {
                 </p>
                 <p class="text-body-sm text-on-surface-variant">"Absensi Terverifikasi"</p>
             </div>
-            <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+            <div class="ppm-card p-4">
                 <span class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center">
                     <span class="material-symbols-outlined">"stars"</span>
                 </span>
@@ -166,7 +170,7 @@ fn AnalisisBody(d: AnalisisData) -> impl IntoView {
                                 .map(|s| {
                                     let live = s.state == "live";
                                     view! {
-                                        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3.5 flex items-center gap-3 card-hover">
+                                        <div class="ppm-card p-3.5 flex items-center gap-3 card-hover">
                                             <div class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center shrink-0">
                                                 <span class="material-symbols-outlined">"menu_book"</span>
                                             </div>
@@ -243,7 +247,7 @@ fn AnalisisBody(d: AnalisisData) -> impl IntoView {
 #[component]
 fn TrendChart(trend: Vec<TrendPoint>) -> impl IntoView {
     view! {
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-4">
+        <div class="ppm-card p-4">
             <div class="flex items-end justify-between gap-2 h-32">
                 {trend
                     .into_iter()
@@ -270,7 +274,7 @@ fn TrendChart(trend: Vec<TrendPoint>) -> impl IntoView {
 #[component]
 fn ClassRankRow(rank: usize, r: ClassRank) -> impl IntoView {
     view! {
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3 flex items-center justify-between">
+        <div class="ppm-card p-3 flex items-center justify-between">
             <div class="flex items-center gap-3">
                 <span class="w-6 h-6 rounded-full bg-primary/10 text-primary text-[11px] font-bold flex items-center justify-center shrink-0">
                     {rank}
@@ -288,7 +292,7 @@ fn ClassRankRow(rank: usize, r: ClassRank) -> impl IntoView {
 #[component]
 fn TeacherRow(t: TeacherInsight) -> impl IntoView {
     view! {
-        <div class="bg-surface-container-lowest border border-outline-variant/60 rounded-2xl p-3 flex items-center justify-between">
+        <div class="ppm-card p-3 flex items-center justify-between">
             <div>
                 <p class="font-semibold text-on-background text-body-sm">{t.name}</p>
                 <p class="text-[11px] text-on-surface-variant">{format!("{} sesi (30 hari)", t.sessions_count)}</p>

@@ -13,7 +13,7 @@ use leptos_router::{
 };
 
 use crate::web::api::get_session;
-use crate::web::components::BottomNav;
+use crate::web::components::{BottomNav, DesktopSidebar};
 use crate::web::pages::*;
 
 
@@ -150,6 +150,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/sesi/:id") view=SesiDetailPage />
                 <Route path=path!("/sesi/:id/live") view=SesiLivePage />
                 <Route path=path!("/profil") view=ProfilPage />
+                <Route path=path!("/laporan") view=LaporanPage />
 
                 // Staf / Guru / Dewan Guru
                 <Route path=path!("/staf") view=StafDashboardPage />
@@ -178,6 +179,7 @@ pub fn App() -> impl IntoView {
             // Navbar bawah PERSISTEN — di luar <FlatRoutes> agar tak ikut
             // ter-swap/shimmer saat pindah halaman (hanya konten yang shimmer).
             <BottomNav />
+            <DesktopSidebar />
         </Router>
     }
 }
