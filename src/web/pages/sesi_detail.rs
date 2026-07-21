@@ -1,8 +1,11 @@
 //! web/pages/sesi_detail.rs — Detail satu sesi (/sesi/:id, STAF).
 //!
-//! Empat bagian: KELOLA (mulai/akhiri sesi + ganti pengajar — dewan guru/admin/
-//! pamong), ABSENSI (anggota kelas + status + "Tandai Hadir" manual → antrean
-//! verifikasi normal), CHAT (transkrip), REKAMAN (unduh bila tersedia).
+//! Hero (ringkasan persisten) + TAB: Absensi, Kelola (mulai/akhiri + ganti
+//! pengajar), Chat, Hafalan (kondisional — kategori mengaji), Rekaman. Dulu
+//! semua bagian ditumpuk dalam satu scroll panjang (+ grid desktop 2/3-1/3) —
+//! dipecah jadi tab krn terlalu padat dalam satu layar (audit UI: "cognitive
+//! load tinggi, tak ada hierarchy"). Tab dipakai SERAGAM mobile+desktop (bukan
+//! grid sidebar lagi) — lebih simpel & konsisten drpd layout ganda per-breakpoint.
 
 use leptos::prelude::*;
 use leptos_meta::Title;
@@ -34,13 +37,8 @@ pub fn SesiDetailPage() -> impl IntoView {
                         view! {
                             <div class="animate-pulse space-y-3">
                                 <div class="h-28 bg-surface-container rounded-2xl"></div>
-                                <div class="grid gap-3 md:grid-cols-3 md:items-start">
-                                    <div class="h-56 bg-surface-container rounded-2xl md:col-span-2"></div>
-                                    <div class="space-y-3">
-                                        <div class="h-40 bg-surface-container rounded-2xl"></div>
-                                        <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                    </div>
-                                </div>
+                                <div class="h-12 bg-surface-container rounded-xl"></div>
+                                <div class="h-64 bg-surface-container rounded-2xl md:max-w-2xl"></div>
                             </div>
                         }
                     }>
@@ -69,6 +67,8 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
     let hadir_label = format!("{}/{} hadir", d.hadir, d.total);
     let is_cancelled = d.status_kind == "cancelled";
     let busy_id = RwSignal::new(Option::<i64>::None);
+    // Tab aktif: "absensi" (default) | "kelola" | "hafalan" | "lainnya" (chat+rekaman).
+    let tab = RwSignal::new("absensi".to_string());
 
     // ── Setoran Hafalan: hanya kelas kategori "Mengaji"/"Pengajian" ─────────
     let class_id = d.class_id;
@@ -144,172 +144,248 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
             </div>
         </div>
 
-        // ── Desktop (mockup verifikasi_kehadiran_per_kelas_desktop): Absensi
-        // = kolom utama lebar (2/3); Kelola+Chat+Rekaman = sidebar kanan. ─────
-        <div class="space-y-5 md:space-y-0 md:grid md:grid-cols-3 md:gap-5 md:items-start">
-            // ── Absensi ─────────────────────────────────────────────────────
-            <div class="ppm-card p-4 anim-in md:col-span-2">
-                <div class="flex items-center gap-2 mb-3">
-                    <span class="material-symbols-outlined text-on-background">"fact_check"</span>
-                    <h2 class="text-body-lg font-bold text-on-background">"Absensi"</h2>
-                </div>
-                {if d.attendance.is_empty() {
-                    view! {
-                        <p class="text-body-sm text-on-surface-variant py-3">
-                            "Belum ada anggota di kelas ini."
-                        </p>
-                    }
-                        .into_any()
-                } else {
-                    d.attendance
-                        .iter()
-                        .cloned()
-                        .map(|row| {
-                            view! {
-                                <AttRowView
-                                    row=row
-                                    session_id=session_id
-                                    can_mark=!is_cancelled
-                                    busy_id=busy_id
-                                    refetch=refetch
-                                />
-                            }
-                        })
-                        .collect_view()
-                        .into_any()
-                }}
-            </div>
+        // ── Tab bar ──────────────────────────────────────────────────────────
+        <div
+            class="grid gap-1 bg-surface-container rounded-xl p-1 anim-in"
+            style=format!(
+                "grid-template-columns:repeat({},minmax(0,1fr))",
+                if show_hafalan { 4 } else { 3 },
+            )
+        >
+            <TabBtn tab=tab value="absensi" icon="fact_check" label="Absensi" />
+            <TabBtn tab=tab value="kelola" icon="tune" label="Kelola" />
+            {show_hafalan
+                .then(|| view! { <TabBtn tab=tab value="hafalan" icon="auto_stories" label="Hafalan" /> })}
+            <TabBtn tab=tab value="lainnya" icon="more_horiz" label="Lainnya" />
+        </div>
 
-            <div class="space-y-5">
-                // ── Kelola sesi: mulai/akhiri + pengajar ──────────────────
-                <div class="ppm-card p-4 anim-in">
-                    <div class="flex items-center gap-2 mb-3">
-                        <span class="material-symbols-outlined text-on-background">"tune"</span>
-                        <h2 class="text-body-lg font-bold text-on-background">"Kelola Sesi"</h2>
-                    </div>
-                    <label class="text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
-                        "Pengajar"
-                    </label>
-                    <select
-                        class="mt-1 w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-60"
-                        disabled=move || busy_ctl.get()
-                        on:change=move |ev| set_teacher(event_target_value(&ev).parse().unwrap_or(0))
-                    >
-                        <option value="0" selected=cur_teacher == 0>
-                            "— Belum ditentukan —"
-                        </option>
-                        {teacher_options
-                            .get_value()
-                            .into_iter()
-                            .map(|o| {
-                                let val = o.id.to_string();
-                                let sel = o.id == cur_teacher;
-                                view! {
-                                    <option value=val selected=sel>
-                                        {o.name}
-                                    </option>
-                                }
-                            })
-                            .collect_view()}
-                    </select>
-                    {(!is_cancelled)
-                        .then(|| {
-                            let (label, icon, cls) = if is_live {
-                                (
-                                    "Akhiri Sesi",
-                                    "call_end",
-                                    "mt-3 w-full py-3 rounded-xl bg-error text-on-error font-bold text-body-sm flex items-center justify-center gap-2 press disabled:opacity-50",
-                                )
-                            } else if is_finished {
-                                (
-                                    "Mulai Ulang Sesi",
-                                    "restart_alt",
-                                    "mt-3 w-full py-3 rounded-xl bg-surface-container-highest text-on-background font-bold text-body-sm flex items-center justify-center gap-2 press disabled:opacity-50",
-                                )
-                            } else {
-                                (
-                                    "Mulai Sesi",
-                                    "play_circle",
-                                    "mt-3 w-full py-3 rounded-xl bg-primary text-on-primary font-bold text-body-sm flex items-center justify-center gap-2 press disabled:opacity-50",
-                                )
-                            };
-                            view! {
-                                <button
-                                    class=cls
-                                    disabled=move || busy_ctl.get() || start_disabled
-                                    on:click=toggle_live
+        <div class="md:max-w-2xl">
+            {move || {
+                match tab.get().as_str() {
+                    "kelola" => {
+                        view! {
+                            // ── Kelola sesi: mulai/akhiri + pengajar ──────
+                            <div class="ppm-card p-4 anim-in">
+                                <label class="text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
+                                    "Pengajar"
+                                </label>
+                                <select
+                                    class="mt-1 w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-60"
+                                    disabled=move || busy_ctl.get()
+                                    on:change=move |ev| {
+                                        set_teacher(event_target_value(&ev).parse().unwrap_or(0))
+                                    }
                                 >
-                                    <span class="material-symbols-outlined text-[18px]">{icon}</span>
-                                    {label}
-                                </button>
-                            }
-                        })}
-                    {move || {
-                        ctl_err
-                            .get()
-                            .or_else(|| start_disabled.then(|| blocked_reason.clone()).flatten())
-                            .map(|msg| {
-                                view! {
-                                    <p class="mt-2 text-[11px] text-error bg-error-container/60 rounded-lg px-3 py-1.5">
-                                        {msg}
-                                    </p>
+                                    <option value="0" selected=cur_teacher == 0>
+                                        "— Belum ditentukan —"
+                                    </option>
+                                    {teacher_options
+                                        .get_value()
+                                        .into_iter()
+                                        .map(|o| {
+                                            let val = o.id.to_string();
+                                            let sel = o.id == cur_teacher;
+                                            view! {
+                                                <option value=val selected=sel>
+                                                    {o.name}
+                                                </option>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </select>
+                                {(!is_cancelled)
+                                    .then(|| {
+                                        let (label, icon, cls) = if is_live {
+                                            (
+                                                "Akhiri Sesi",
+                                                "call_end",
+                                                "mt-3 w-full py-3 rounded-xl bg-error text-on-error font-bold text-body-sm flex items-center justify-center gap-2 press disabled:opacity-50",
+                                            )
+                                        } else if is_finished {
+                                            (
+                                                "Mulai Ulang Sesi",
+                                                "restart_alt",
+                                                "mt-3 w-full py-3 rounded-xl bg-surface-container-highest text-on-background font-bold text-body-sm flex items-center justify-center gap-2 press disabled:opacity-50",
+                                            )
+                                        } else {
+                                            (
+                                                "Mulai Sesi",
+                                                "play_circle",
+                                                "mt-3 w-full py-3 rounded-xl bg-primary text-on-primary font-bold text-body-sm flex items-center justify-center gap-2 press disabled:opacity-50",
+                                            )
+                                        };
+                                        view! {
+                                            <button
+                                                class=cls
+                                                disabled=move || busy_ctl.get() || start_disabled
+                                                on:click=toggle_live
+                                            >
+                                                <span class="material-symbols-outlined text-[18px]">{icon}</span>
+                                                {label}
+                                            </button>
+                                        }
+                                    })}
+                                {
+                                    // Dihitung SEKALI per render tab "kelola" (bukan di dalam
+                                    // closure reaktif bersarang) — `blocked_reason` (String,
+                                    // bukan Copy) tak bisa di-`move` dari closure luar yang
+                                    // cuma pegang `&self` (Fn) ke closure dalam yang butuh
+                                    // ownership sendiri; nilai lokal segar ini aman di-`move`.
+                                    let reason_if_blocked =
+                                        if start_disabled { blocked_reason.clone() } else { None };
+                                    view! {
+                                        {move || {
+                                            ctl_err
+                                                .get()
+                                                .or_else(|| reason_if_blocked.clone())
+                                                .map(|msg| {
+                                                    view! {
+                                                        <p class="mt-2 text-[11px] text-error bg-error-container/60 rounded-lg px-3 py-1.5">
+                                                            {msg}
+                                                        </p>
+                                                    }
+                                                })
+                                        }}
+                                    }
                                 }
-                            })
-                    }}
-                </div>
-
-                {show_hafalan
-                    .then(|| {
-                        view! { <HafalanPanel class_id=class_id students=hafalan_students /> }
-                    })}
-
-                // ── Chat sesi ──────────────────────────────────────────────
-                <div class="ppm-card p-4 anim-in">
-                    <div class="flex items-center gap-2 mb-3">
-                        <span class="material-symbols-outlined text-on-background">"forum"</span>
-                        <h2 class="text-body-lg font-bold text-on-background">"Chat Sesi"</h2>
-                    </div>
-                    {if d.chats.is_empty() {
-                        view! {
-                            <p class="text-body-sm text-on-surface-variant py-3">"Tidak ada chat di sesi ini."</p>
-                        }
-                            .into_any()
-                    } else {
-                        view! {
-                            <div class="space-y-2.5 max-h-80 overflow-y-auto">
-                                {d.chats.iter().cloned().map(|c| view! { <ChatRow c=c /> }).collect_view()}
                             </div>
                         }
                             .into_any()
-                    }}
-                </div>
+                    }
+                    "hafalan" if show_hafalan => {
+                        view! {
+                            <HafalanPanel class_id=class_id students=hafalan_students.clone() />
+                        }
+                            .into_any()
+                    }
+                    "lainnya" => {
+                        view! {
+                            <div class="space-y-5">
+                                // ── Chat sesi ──────────────────────────────
+                                <div class="ppm-card p-4 anim-in">
+                                    <div class="flex items-center gap-2 mb-3">
+                                        <span class="material-symbols-outlined text-on-background">
+                                            "forum"
+                                        </span>
+                                        <h2 class="text-body-lg font-bold text-on-background">
+                                            "Chat Sesi"
+                                        </h2>
+                                    </div>
+                                    {if d.chats.is_empty() {
+                                        view! {
+                                            <p class="text-body-sm text-on-surface-variant py-3">
+                                                "Tidak ada chat di sesi ini."
+                                            </p>
+                                        }
+                                            .into_any()
+                                    } else {
+                                        view! {
+                                            <div class="space-y-2.5 max-h-80 overflow-y-auto">
+                                                {d.chats
+                                                    .iter()
+                                                    .cloned()
+                                                    .map(|c| view! { <ChatRow c=c /> })
+                                                    .collect_view()}
+                                            </div>
+                                        }
+                                            .into_any()
+                                    }}
+                                </div>
 
-                // ── Rekaman ────────────────────────────────────────────────
-                <div class="ppm-card p-4 anim-in">
-                    <div class="flex items-center gap-2 mb-2">
-                        <span class="material-symbols-outlined text-on-background">"play_circle"</span>
-                        <h2 class="text-body-lg font-bold text-on-background">"Rekaman"</h2>
-                    </div>
-                    <p class="text-body-sm text-on-surface-variant">{d.recording_label.clone()}</p>
-                    {d.recording_url
-                        .clone()
-                        .map(|url| {
-                            view! {
-                                <a
-                                    href=url
-                                    download=""
-                                    target="_blank"
-                                    rel="noopener"
-                                    class="mt-3 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-body-sm press"
-                                >
-                                    <span class="material-symbols-outlined text-[18px]">"download"</span>
-                                    "Unduh Rekaman"
-                                </a>
-                            }
-                        })}
-                </div>
-            </div>
+                                // ── Rekaman ────────────────────────────────
+                                <div class="ppm-card p-4 anim-in">
+                                    <div class="flex items-center gap-2 mb-2">
+                                        <span class="material-symbols-outlined text-on-background">
+                                            "play_circle"
+                                        </span>
+                                        <h2 class="text-body-lg font-bold text-on-background">
+                                            "Rekaman"
+                                        </h2>
+                                    </div>
+                                    <p class="text-body-sm text-on-surface-variant">
+                                        {d.recording_label.clone()}
+                                    </p>
+                                    {d.recording_url
+                                        .clone()
+                                        .map(|url| {
+                                            view! {
+                                                <a
+                                                    href=url
+                                                    download=""
+                                                    target="_blank"
+                                                    rel="noopener"
+                                                    class="mt-3 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-body-sm press"
+                                                >
+                                                    <span class="material-symbols-outlined text-[18px]">
+                                                        "download"
+                                                    </span>
+                                                    "Unduh Rekaman"
+                                                </a>
+                                            }
+                                        })}
+                                </div>
+                            </div>
+                        }
+                            .into_any()
+                    }
+                    _ => {
+                        // "absensi" (default)
+                        view! {
+                            <div class="ppm-card p-4 anim-in">
+                                {if d.attendance.is_empty() {
+                                    view! {
+                                        <p class="text-body-sm text-on-surface-variant py-3">
+                                            "Belum ada anggota di kelas ini."
+                                        </p>
+                                    }
+                                        .into_any()
+                                } else {
+                                    d.attendance
+                                        .iter()
+                                        .cloned()
+                                        .map(|row| {
+                                            view! {
+                                                <AttRowView
+                                                    row=row
+                                                    session_id=session_id
+                                                    can_mark=!is_cancelled
+                                                    busy_id=busy_id
+                                                    refetch=refetch
+                                                />
+                                            }
+                                        })
+                                        .collect_view()
+                                        .into_any()
+                                }}
+                            </div>
+                        }
+                            .into_any()
+                    }
+                }
+            }}
         </div>
+    }
+}
+
+#[component]
+fn TabBtn(
+    tab: RwSignal<String>,
+    value: &'static str,
+    icon: &'static str,
+    label: &'static str,
+) -> impl IntoView {
+    let cls = move || {
+        if tab.get() == value {
+            "py-2.5 rounded-lg bg-surface-container-lowest text-primary font-bold text-[11px] shadow-sm press flex flex-col items-center gap-0.5"
+        } else {
+            "py-2.5 rounded-lg text-on-surface-variant font-semibold text-[11px] press flex flex-col items-center gap-0.5"
+        }
+    };
+    view! {
+        <button class=cls on:click=move |_| tab.set(value.to_string())>
+            <span class="material-symbols-outlined text-[18px]">{icon}</span>
+            {label}
+        </button>
     }
 }
 
