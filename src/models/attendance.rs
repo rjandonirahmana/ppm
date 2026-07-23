@@ -2,10 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Aturan poin kehadiran — SATU sumber untuk tampilan & pemberian poin saat
-/// verifikasi disetujui: (delta, label tampilan, kategori point_logs).
+/// Aturan poin kehadiran GLOBAL — SATU sumber untuk tampilan & pemberian poin
+/// saat verifikasi disetujui: (delta, label tampilan, kategori point_logs).
 /// present +10 Kedisiplinan · late +2 Kedisiplinan · permit/sick 0 Keterangan ·
-/// absent -15 Pelanggaran.
+/// absent -15 Pelanggaran. Bisa di-override PER JADWAL (class_schedules) di
+/// repository: `late_points` (migrasi 13, delta bertanda langsung) untuk
+/// 'late', `absent_points` (migrasi 15, magnitude positif, `points - absent_points`)
+/// untuk 'absent' — lihat repository::run_auto_absent & run_auto_verify_pamong.
 pub fn point_rule(status: &str) -> (i32, &'static str, &'static str) {
     match status {
         "present" => (10, "Kedisiplinan", "attendance"),

@@ -143,7 +143,8 @@ fn nav_visible(path: &str) -> bool {
     const PREFIXES: &[&str] = &[
         "/santri", "/izin", "/riwayat", "/sesi", "/profil", "/laporan", "/staf", "/guru",
         "/dewan-guru", "/poin", "/poin-dewan", "/verifikasi-pamong",
-        "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua",
+        "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua", "/kontrol-pengguna",
+        "/akademik",
     ];
     PREFIXES
         .iter()
@@ -380,27 +381,32 @@ pub fn MobileNav(items: &'static [NavDef], active: &'static str) -> impl IntoVie
     }
 }
 
-/// Nav peran: santri.
+/// Nav peran: santri. Item "Laporan" DIGANTI "Akademik" (self-report progres
+/// buku/hafalan sendiri, /akademik) — rapor pribadi pindah jadi bagian dari
+/// /riwayat (lihat pages/riwayat.rs).
 pub const NAV_SANTRI: &[NavDef] = &[
     NavDef { icon: "space_dashboard", label: "Beranda", href: "/santri" },
     NavDef { icon: "history", label: "Riwayat", href: "/riwayat" },
     NavDef { icon: "groups", label: "Sesi", href: "/sesi" },
     NavDef { icon: "event_available", label: "Izin", href: "/izin" },
-    NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
+    NavDef { icon: "auto_stories", label: "Akademik", href: "/akademik" },
 ];
 
 // ── Navbar STAF SERAGAM ──────────────────────────────────────────────────────
 // admin / pamong / guru / dewan-guru memakai item YANG SAMA (Beranda · Students ·
-// Kelas · Sesi · Laporan) supaya navbar tak "berubah-ubah" antar halaman. Yang
-// beda HANYA tujuan "Beranda" (dashboard tiap peran, dari models::role_home).
+// Kelas · Laporan · User Control) supaya navbar tak "berubah-ubah" antar
+// halaman. Yang beda HANYA tujuan "Beranda" (dashboard tiap peran, dari
+// models::role_home). Kelas & Sesi DIGABUNG jadi satu halaman/nav (/kelas
+// dgn tab Kelas/Sesi) — dulu 2 item terpisah; santri/ortu tetap via /sesi
+// standalone (nav mereka tak berubah).
 
 /// Nav peran: pamong (supervisor). Beranda → /verifikasi-pamong.
 pub const NAV_PAMONG: &[NavDef] = &[
     NavDef { icon: "dashboard", label: "Beranda", href: "/verifikasi-pamong" },
     NavDef { icon: "groups", label: "Students", href: "/students" },
     NavDef { icon: "school", label: "Kelas", href: "/kelas" },
-    NavDef { icon: "cast_for_education", label: "Sesi", href: "/sesi" },
     NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
+    NavDef { icon: "group_add", label: "User Control", href: "/kontrol-pengguna" },
 ];
 
 /// Tampilan error fetch yang JUJUR: error autentikasi → ajak login; error lain
@@ -448,13 +454,31 @@ pub fn FetchError(err: String) -> impl IntoView {
     }
 }
 
+/// Kartu "belum ada data" — ikon + judul ramah + ajakan opsional. Pengganti
+/// `.ppm-empty` teks polos; dipakai utk state kosong yg WAJAR (bukan loading,
+/// bukan error) spy tak terasa seperti halaman rusak.
+#[component]
+pub fn EmptyState(
+    icon: &'static str,
+    title: &'static str,
+    #[prop(optional)] subtitle: Option<&'static str>,
+) -> impl IntoView {
+    view! {
+        <div class="ppm-empty space-y-1.5 anim-in">
+            <span class="material-symbols-outlined text-4xl text-on-surface-variant/60">{icon}</span>
+            <p class="text-body-md font-semibold text-on-background">{title}</p>
+            {subtitle.map(|s| view! { <p class="text-body-sm text-on-surface-variant">{s}</p> })}
+        </div>
+    }
+}
+
 /// Nav peran: admin. Beranda → /staf.
 pub const NAV_STAF: &[NavDef] = &[
     NavDef { icon: "dashboard", label: "Beranda", href: "/staf" },
     NavDef { icon: "groups", label: "Students", href: "/students" },
     NavDef { icon: "school", label: "Kelas", href: "/kelas" },
-    NavDef { icon: "cast_for_education", label: "Sesi", href: "/sesi" },
     NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
+    NavDef { icon: "group_add", label: "User Control", href: "/kontrol-pengguna" },
 ];
 
 /// Nav peran: guru (teacher). Beranda → /guru.
@@ -462,8 +486,8 @@ pub const NAV_GURU: &[NavDef] = &[
     NavDef { icon: "dashboard", label: "Beranda", href: "/guru" },
     NavDef { icon: "groups", label: "Students", href: "/students" },
     NavDef { icon: "school", label: "Kelas", href: "/kelas" },
-    NavDef { icon: "cast_for_education", label: "Sesi", href: "/sesi" },
     NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
+    NavDef { icon: "group_add", label: "User Control", href: "/kontrol-pengguna" },
 ];
 
 /// Nav peran: dewan guru. Beranda → /dewan-guru.
@@ -471,8 +495,8 @@ pub const NAV_DEWAN: &[NavDef] = &[
     NavDef { icon: "dashboard", label: "Beranda", href: "/dewan-guru" },
     NavDef { icon: "groups", label: "Students", href: "/students" },
     NavDef { icon: "school", label: "Kelas", href: "/kelas" },
-    NavDef { icon: "cast_for_education", label: "Sesi", href: "/sesi" },
     NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
+    NavDef { icon: "group_add", label: "User Control", href: "/kontrol-pengguna" },
 ];
 
 /// Nav peran: orang tua.

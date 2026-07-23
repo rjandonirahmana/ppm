@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 use ppm::auth::JwtService;
+use ppm::config::WahaConfig;
 use ppm::state::AppState;
 use ppm::web::live_audio;
 
@@ -52,7 +53,29 @@ async fn alur_siaran_chunk_data_download() {
     let jwt = JwtService::new("secret-uji");
     let guru = jwt.sign(1, "Ustadz Fulan", "0811", "teacher").unwrap();
     let santri = jwt.sign(2, "Santri Fulan", "0822", "santri").unwrap();
-    let app = router(Arc::new(AppState::new(pool, jwt, None)));
+
+    // Redis: sama pola dgn pool Postgres di atas — klien valid struktur tapi
+    // menunjuk port mati; live_audio TIDAK menyentuh redis sama sekali, jadi
+    // ConnectionManager cukup ADA (bukan tersambung sungguhan) utk mengisi
+    // AppState. Timeout pendek + nol retry agar setup uji tak menggantung.
+    let redis_client = redis::Client::open("redis://127.0.0.1:1/").unwrap();
+    let redis = redis::aio::ConnectionManager::new_with_config(
+        redis_client,
+        redis::aio::ConnectionManagerConfig::new()
+            .set_connection_timeout(Some(std::time::Duration::from_millis(200)))
+            .set_response_timeout(Some(std::time::Duration::from_millis(200)))
+            .set_number_of_retries(0),
+    )
+    .await
+    .expect("redis ConnectionManager dibentuk (tak perlu benar-benar tersambung)");
+
+    let http = reqwest::Client::new();
+    let waha = Arc::new(WahaConfig {
+        base_url: "http://127.0.0.1:1".into(),
+        session: "default".into(),
+        api_key: String::new(),
+    });
+    let app = router(Arc::new(AppState::new(pool, jwt, None, redis, http, waha)));
 
     // Tanpa login → 401; santri kirim chunk → 403.
     let r = app.clone().oneshot(req("GET", "/api/live-audio/9/data", None, b"")).await.unwrap();

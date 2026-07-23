@@ -19,8 +19,10 @@ pub async fn search_students(pool: &Pool, q: &str, limit: i64) -> Result<Vec<Stu
         .query(
             "SELECT u.id, u.full_name, u.nis, c.name \
              FROM users u \
-             LEFT JOIN class_participants cp ON cp.user_id = u.id AND cp.is_primary \
-             LEFT JOIN classes c ON c.id = cp.class_id \
+             LEFT JOIN classes c ON c.id = ( \
+                 SELECT cp.class_id FROM class_participants cp \
+                 WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
+             ) \
              WHERE u.role = 'santri' AND u.is_active = TRUE \
                AND (u.full_name ILIKE $1 OR u.nis = $2) \
              ORDER BY u.full_name LIMIT $3",
@@ -157,8 +159,10 @@ pub async fn child_info(pool: &Pool, student_id: i64) -> Result<Option<StudentRo
         .query_opt(
             "SELECT u.id, u.full_name, u.nis, c.name \
              FROM users u \
-             LEFT JOIN class_participants cp ON cp.user_id = u.id AND cp.is_primary \
-             LEFT JOIN classes c ON c.id = cp.class_id \
+             LEFT JOIN classes c ON c.id = ( \
+                 SELECT cp.class_id FROM class_participants cp \
+                 WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
+             ) \
              WHERE u.id = $1 AND u.role = 'santri'",
             &[&student_id],
         )
@@ -177,7 +181,8 @@ pub struct ParentPermitRow {
     pub start_date: chrono::NaiveDate,
     pub end_date: Option<chrono::NaiveDate>,
     pub reason: String,
-    pub status: String,
+    pub parent_status: String,
+    pub pamong_status: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -186,7 +191,8 @@ pub async fn permits_of_children(pool: &Pool, parent_id: i64, limit: i64) -> Res
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT u.full_name, p.type, p.start_date, p.end_date, p.reason, p.status, p.created_at \
+            "SELECT u.full_name, p.type, p.start_date, p.end_date, p.reason, \
+                    p.parent_status, p.pamong_status, p.created_at \
              FROM permit_requests p \
              JOIN parent_connections pc ON pc.student_id = p.user_id \
                   AND pc.parent_id = $1 AND pc.status = 'connected' \
@@ -204,8 +210,9 @@ pub async fn permits_of_children(pool: &Pool, parent_id: i64, limit: i64) -> Res
             start_date: r.get(2),
             end_date: r.get(3),
             reason: r.get(4),
-            status: r.get(5),
-            created_at: r.get(6),
+            parent_status: r.get(5),
+            pamong_status: r.get(6),
+            created_at: r.get(7),
         })
         .collect())
 }

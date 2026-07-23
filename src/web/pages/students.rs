@@ -3,13 +3,20 @@
 //! Dua tab: "Daftar Santri" (semua santri + poin/angkatan) dan "Verifikasi"
 //! (antrean sesuai peran: pamong → tahap 1, dewan guru/admin → tahap 2). Guru
 //! biasa (teacher) hanya melihat daftar. Menggabungkan halaman students &
-//! verifikasi lama menjadi satu.
+//! verifikasi lama menjadi satu. Tab "Akademik"/"Buku" PINDAH ke /kelas
+//! (bagian pengelolaan kurikulum) — halaman ini hanya menyisakan panel
+//! "Progres Buku" per-santri (expand baris) yang datang dari sana via
+//! `?student=<id>`.
 
 use leptos::prelude::*;
 use leptos_meta::Title;
+use leptos_router::hooks::use_query_map;
 
-use crate::models::{PendingAtt, StudentRowItem};
-use crate::web::api::{decide_pamong, decide_verify, students_data};
+use crate::models::{BookProgressItem, PendingAtt, StudentRowItem};
+use crate::web::api::{
+    decide_pamong, decide_verify, set_student_book_progress_action, student_book_progress_data,
+    students_data,
+};
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 
 #[component]
@@ -31,6 +38,15 @@ pub fn StudentsPage() -> impl IntoView {
     let tab = RwSignal::new("list".to_string());
     let query = RwSignal::new(String::new());
     let busy_id = RwSignal::new(Option::<i64>::None);
+    // Santri yang panel "Progres Buku"-nya terbuka di tab Daftar Santri.
+    // Dibuka otomatis bila datang dari tab Akademik /kelas (?student=id).
+    let expanded = RwSignal::new(Option::<i64>::None);
+    let query_map = use_query_map();
+    Effect::new(move |_| {
+        if let Some(id) = query_map.read().get("student").and_then(|s| s.parse::<i64>().ok()) {
+            expanded.set(Some(id));
+        }
+    });
 
     view! {
         <Title text="Santri — PPM AFM" />
@@ -43,7 +59,7 @@ pub fn StudentsPage() -> impl IntoView {
                 // memuat; filter jalan begitu resource selesai. Prominent di
                 // mobile (dulu cuma muncul di desktop lewat kondisi md:).
                 // Disembunyikan saat tab Verifikasi aktif (tak relevan di sana).
-                <div class="px-5 pt-5" class:hidden=move || tab.get() == "verify">
+                <div class="px-5 pt-5 md:max-w-md" class:hidden=move || tab.get() == "verify">
                     <div class="relative">
                         <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">
                             "search"
@@ -84,6 +100,9 @@ pub fn StudentsPage() -> impl IntoView {
                                         let total = d.students.len();
                                         let pending = StoredValue::new(d.pending.clone());
                                         let verified_today = d.verified_today;
+                                        // Kelola buku + isi progres: admin/pamong saja.
+                                        let can_manage_books =
+                                            matches!(d.role.as_str(), "admin" | "supervisor");
 
                                         // Aksi verifikasi: cabang sesuai tahap peran.
                                         // `is_t1` bool (Copy) agar closure tetap Copy.
@@ -106,20 +125,20 @@ pub fn StudentsPage() -> impl IntoView {
 
                                         view! {
                                             // ── Tab bar ────────────────────────
-                                            {has_verify
-                                                .then(|| {
-                                                    view! {
-                                                        <div class="flex gap-1 bg-surface-container rounded-xl p-1">
-                                                            <TabBtn tab=tab value="list" label="Daftar Santri" badge=0 />
+                                            <div class="flex gap-1 bg-surface-container rounded-xl p-1 overflow-x-auto">
+                                                <TabBtn tab=tab value="list" label="Daftar Santri" badge=0 />
+                                                {has_verify
+                                                    .then(|| {
+                                                        view! {
                                                             <TabBtn
                                                                 tab=tab
                                                                 value="verify"
                                                                 label="Verifikasi"
                                                                 badge=pending_n
                                                             />
-                                                        </div>
-                                                    }
-                                                })}
+                                                        }
+                                                    })}
+                                            </div>
 
                                             {move || {
                                                 if has_verify && tab.get() == "verify" {
@@ -136,7 +155,13 @@ pub fn StudentsPage() -> impl IntoView {
                                                         .into_any()
                                                 } else {
                                                     view! {
-                                                        <StudentList students=students.get_value() total=total query=query />
+                                                        <StudentList
+                                                            students=students.get_value()
+                                                            total=total
+                                                            query=query
+                                                            can_manage_books=can_manage_books
+                                                            expanded=expanded
+                                                        />
                                                     }
                                                         .into_any()
                                                 }
@@ -180,7 +205,13 @@ fn TabBtn(tab: RwSignal<String>, value: &'static str, label: &'static str, badge
 }
 
 #[component]
-fn StudentList(students: Vec<StudentRowItem>, total: usize, query: RwSignal<String>) -> impl IntoView {
+fn StudentList(
+    students: Vec<StudentRowItem>,
+    total: usize,
+    query: RwSignal<String>,
+    can_manage_books: bool,
+    expanded: RwSignal<Option<i64>>,
+) -> impl IntoView {
     let students = StoredValue::new(students);
     let shown = Memo::new(move |_| {
         let q = query.get().to_lowercase();
@@ -220,16 +251,47 @@ fn StudentList(students: Vec<StudentRowItem>, total: usize, query: RwSignal<Stri
                 }
                 list.into_iter()
                     .map(|s| {
-                        let meta = format!("NIS: {} • {}", s.nis, s.class_name);
+                        let nis_label = format!("NIS: {}", s.nis);
                         let ang = s.angkatan.clone();
+                        let classes = s.classes.clone();
+                        let sid = s.id;
+                        let sname = s.name.clone();
                         view! {
-                            <div class="p-3 md:px-4 flex items-center gap-3 hover:bg-surface-container-low transition-colors anim-in">
+                            <div
+                                class="p-3 md:px-4 flex items-center gap-3 hover:bg-surface-container-low transition-colors anim-in cursor-pointer"
+                                on:click=move |_| {
+                                    expanded
+                                        .update(|e| {
+                                            *e = if *e == Some(sid) { None } else { Some(sid) };
+                                        })
+                                }
+                            >
                                 <div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold shrink-0">
                                     {s.initial}
                                 </div>
                                 <div class="flex-1 min-w-0">
                                     <p class="text-body-md font-semibold text-on-background truncate">{s.name}</p>
-                                    <p class="text-body-sm text-on-surface-variant truncate">{meta}</p>
+                                    <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5">
+                                        <span class="text-body-sm text-on-surface-variant">{nis_label}</span>
+                                        // Satu chip PER kelas (biasanya dua: satu golongan Bacaan
+                                        // + satu Makna, migrasi 16) — dulu cuma satu class_name
+                                        // ditampilkan (LIMIT 1), sekarang tampil semua.
+                                        {classes
+                                            .into_iter()
+                                            .map(|c| {
+                                                let label = if c.golongan.is_empty() {
+                                                    c.name
+                                                } else {
+                                                    format!("{} • {}", c.golongan, c.name)
+                                                };
+                                                view! {
+                                                    <span class="ppm-chip-sm bg-secondary-container/60 text-primary">
+                                                        {label}
+                                                    </span>
+                                                }
+                                            })
+                                            .collect_view()}
+                                    </div>
                                 </div>
                                 {(!ang.is_empty())
                                     .then(|| {
@@ -243,11 +305,221 @@ fn StudentList(students: Vec<StudentRowItem>, total: usize, query: RwSignal<Stri
                                     <p class="text-body-lg font-bold text-primary">{s.points}</p>
                                     <p class="text-[10px] text-on-surface-variant">"Poin"</p>
                                 </div>
+                                <span class="material-symbols-outlined text-on-surface-variant shrink-0 text-[20px]">
+                                    {move || {
+                                        if expanded.get() == Some(sid) { "expand_less" } else { "expand_more" }
+                                    }}
+                                </span>
                             </div>
+                            {move || {
+                                (expanded.get() == Some(sid))
+                                    .then(|| {
+                                        view! {
+                                            <div class="px-3 md:px-4 pb-4 bg-surface-container-low/60">
+                                                <StudentBookPanel
+                                                    student_id=sid
+                                                    student_name=sname.clone()
+                                                    can_manage=can_manage_books
+                                                />
+                                            </div>
+                                        }
+                                    })
+                            }}
                         }
                     })
                     .collect_view()
                     .into_any()
+            }}
+        </div>
+    }
+}
+
+// ── Progres Buku (migrasi 18) ────────────────────────────────────────────────
+
+#[component]
+fn StudentBookPanel(student_id: i64, student_name: String, can_manage: bool) -> impl IntoView {
+    let data = Resource::new(
+        move || student_id,
+        |id| async move { student_book_progress_data(id).await },
+    );
+
+    view! {
+        <div class="ppm-card p-3.5 space-y-2">
+            <p class="text-body-sm font-bold text-on-background flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-primary text-[18px]">"menu_book"</span>
+                {format!("Progres Buku — {student_name}")}
+            </p>
+            <Suspense fallback=|| {
+                view! { <div class="h-12 bg-surface-container rounded-xl animate-pulse"></div> }
+            }>
+                {move || {
+                    data.get()
+                        .map(|res| match res {
+                            Ok(items) => {
+                                if items.is_empty() {
+                                    view! {
+                                        <p class="text-body-sm text-on-surface-variant">
+                                            "Belum ada buku terdaftar."
+                                        </p>
+                                    }
+                                        .into_any()
+                                } else {
+                                    view! {
+                                        <div class="space-y-2">
+                                            {items
+                                                .into_iter()
+                                                .map(|b| {
+                                                    view! {
+                                                        <BookProgressRow
+                                                            student_id=student_id
+                                                            b=b
+                                                            can_manage=can_manage
+                                                            refetch=move || data.refetch()
+                                                        />
+                                                    }
+                                                })
+                                                .collect_view()}
+                                        </div>
+                                    }
+                                        .into_any()
+                                }
+                            }
+                            Err(e) => view! { <FetchError err=e.to_string() /> }.into_any(),
+                        })
+                }}
+            </Suspense>
+        </div>
+    }
+}
+
+#[component]
+fn BookProgressRow(
+    student_id: i64,
+    b: BookProgressItem,
+    can_manage: bool,
+    refetch: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
+    let book_id = b.book_id;
+    let editing = RwSignal::new(false);
+    let pct_v = RwSignal::new(b.percentage.to_string());
+    let missing_v = RwSignal::new(b.missing_pages_label.clone());
+    let busy = RwSignal::new(false);
+    let msg = RwSignal::new(Option::<String>::None);
+
+    let save = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        msg.set(None);
+        let (pct, missing) = (pct_v.get_untracked(), missing_v.get_untracked());
+        leptos::task::spawn_local(async move {
+            match set_student_book_progress_action(student_id, book_id, pct, missing).await {
+                Ok(_) => {
+                    editing.set(false);
+                    refetch();
+                }
+                Err(e) => {
+                    let m = e.to_string();
+                    msg.set(Some(m.rsplit(": ").next().unwrap_or(&m).to_string()));
+                }
+            }
+            busy.set(false);
+        });
+    };
+
+    let title = b.book_title.clone();
+    let pct = b.percentage;
+    let missing_label = b.missing_pages_label.clone();
+    let field =
+        "w-full bg-surface-container border-0 rounded-lg px-3 py-2 text-body-sm text-on-surface";
+
+    view! {
+        <div class="bg-surface-container-lowest rounded-xl p-3 border border-outline-variant/30">
+            <div class="flex items-center justify-between gap-2">
+                <p class="text-body-sm font-semibold text-on-background truncate">{title}</p>
+                {can_manage
+                    .then(|| {
+                        view! {
+                            <button
+                                class="w-7 h-7 rounded-lg bg-surface-container text-primary flex items-center justify-center shrink-0"
+                                on:click=move |_| editing.update(|e| *e = !*e)
+                                aria-label="Edit progres"
+                            >
+                                <span class="material-symbols-outlined text-[16px]">"edit"</span>
+                            </button>
+                        }
+                    })}
+            </div>
+            <div class="h-1.5 bg-surface-container rounded-full overflow-hidden mt-2">
+                <div class="h-full bg-primary" style=format!("width: {pct}%")></div>
+            </div>
+            <div class="flex items-center justify-between mt-1 text-[11px] text-on-surface-variant">
+                <span>{format!("{pct}% selesai")}</span>
+                {(!missing_label.is_empty())
+                    .then(|| view! { <span>{format!("Kosong: {missing_label}")}</span> })}
+            </div>
+
+            {move || {
+                msg.get()
+                    .map(|t| {
+                        view! {
+                            <div class="mt-2 p-2 bg-error-container text-on-error-container rounded-lg text-[11px]">
+                                {t}
+                            </div>
+                        }
+                    })
+            }}
+
+            {move || {
+                editing
+                    .get()
+                    .then(|| {
+                        view! {
+                            <form class="mt-2 space-y-2 anim-in" method="post" on:submit=save>
+                                <label class="space-y-1 block">
+                                    <span class="text-[11px] text-on-surface-variant">"Persentase (0-100)"</span>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        max="100"
+                                        class=field
+                                        prop:value=move || pct_v.get()
+                                        on:input=move |ev| pct_v.set(event_target_value(&ev))
+                                    />
+                                </label>
+                                <label class="space-y-1 block">
+                                    <span class="text-[11px] text-on-surface-variant">
+                                        "Halaman kosong (mis. 11-20, 45-50) — kosongkan bila tak ada"
+                                    </span>
+                                    <input
+                                        type="text"
+                                        class=field
+                                        placeholder="11-20, 45-50"
+                                        prop:value=move || missing_v.get()
+                                        on:input=move |ev| missing_v.set(event_target_value(&ev))
+                                    />
+                                </label>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        class="py-2 rounded-lg border border-outline-variant text-on-surface font-semibold text-[11px]"
+                                        on:click=move |_| editing.set(false)
+                                    >
+                                        "Batal"
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        class="py-2 rounded-lg bg-primary text-on-primary font-semibold text-[11px] disabled:opacity-60"
+                                        disabled=move || busy.get()
+                                    >
+                                        {move || if busy.get() { "Menyimpan…" } else { "Simpan" }}
+                                    </button>
+                                </div>
+                            </form>
+                        }
+                    })
             }}
         </div>
     }

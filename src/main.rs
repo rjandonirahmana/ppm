@@ -89,11 +89,35 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Redis: link undangan registrasi + pending registration/OTP (WAJIB,
+    // fail-fast — lihat config.rs). Retry beberapa kali krn Redis kadang
+    // start belakangan dari app saat deploy bareng docker-compose.
+    let redis_client = redis::Client::open(cfg.redis_url.as_str())?;
+    let redis = redis::aio::ConnectionManager::new_with_config(
+        redis_client,
+        redis::aio::ConnectionManagerConfig::new()
+            .set_response_timeout(Some(std::time::Duration::from_secs(10)))
+            .set_connection_timeout(Some(std::time::Duration::from_secs(10)))
+            .set_number_of_retries(3),
+    )
+    .await?;
+    tracing::info!("Redis ready");
+
+    // HTTP client dipakai ulang (pool koneksi) utk panggil WAHA.
+    let http = reqwest::Client::builder()
+        .pool_idle_timeout(Some(std::time::Duration::from_secs(30)))
+        .timeout(std::time::Duration::from_secs(15))
+        .build()?;
+    let waha = Arc::new(cfg.waha);
+
     // JwtService: key di-pre-compute sekali (pola e-ticketing).
     let state = Arc::new(AppState::new(
         pool,
         ppm::auth::JwtService::new(&cfg.jwt_secret),
         storage,
+        redis,
+        http,
+        waha,
     ));
 
     // ── Job AUTO-ABSENT / "Alpa" (task internal) ─────────────────────────────
@@ -122,6 +146,21 @@ async fn main() -> Result<()> {
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Materialisasi sesi gagal: {e}"),
                 }
+                // Auto-verify: antrean pamong/dewan guru yang >1 hari tak disentuh
+                // manusia disetujui otomatis oleh sistem (lihat
+                // repository::run_auto_verify_pamong/_final) — poin tetap diberikan
+                // sesuai aturan (termasuk override late_points per jadwal), sama
+                // seperti approve manual, agar antrean tak menumpuk selamanya.
+                match ppm::repository::run_auto_verify_pamong(&pool).await {
+                    Ok(n) if n > 0 => tracing::info!("Auto-verify pamong: {n} absensi disetujui"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Auto-verify pamong gagal: {e}"),
+                }
+                match ppm::repository::run_auto_verify_final(&pool).await {
+                    Ok(n) if n > 0 => tracing::info!("Auto-verify dewan guru: {n} absensi diverifikasi final"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Auto-verify dewan guru gagal: {e}"),
+                }
             }
         });
     }
@@ -137,31 +176,36 @@ async fn main() -> Result<()> {
     let ssr_routes = generate_route_list(App);
 
     // ── Aset statis (/pkg wasm+js+css, /fonts) dgn Cache-Control ─────────────
-    // Filename TIDAK di-hash (cargo-leptos hash-files off) — jadi TIDAK aman
-    // di-cache dgn max-age (browser bisa pakai wasm/js LAMA dari cache sampai
-    // masa berlaku habis, padahal server sudah rebuild dgn bentuk komponen
-    // BEDA → hydration mismatch, gejalanya App "gagal" tak jelas mis. sesi
-    // seperti tak tersimpan. PERNAH KEJADIAN di dev (max-age=3600 sempat
-    // dipasang, menyebabkan browser nyangkut di WASM basi saat `cargo leptos
-    // watch` rebuild berkali-kali) — makanya `no-cache` (BUKAN no-store):
-    // browser tetap boleh simpan salinan tapi WAJIB revalidate ke server tiap
-    // kali (conditional GET → 304 kalau belum berubah, hemat transfer BYTE
-    // tanpa risiko stale). Baru aman pakai max-age/immutable kalau nanti
-    // cargo-leptos hash-files diaktifkan (filename berubah tiap build).
+    // /pkg: cargo-leptos hash-files=true (Cargo.toml) → nama file wasm/js/css
+    // ber-hash konten (mis. ppm.abcd1234.wasm), beda tiap build. Nama BEDA =
+    // URL BEDA → aman `max-age` panjang + `immutable` (browser tak pernah
+    // perlu revalidate; build baru otomatis dapat URL baru, tak mungkin
+    // collide dgn cache lama). Ini yg bikin navigasi ulang/refresh nol-network
+    // utk aset yg tak berubah.
+    // /fonts: dari `public/` (assets-dir), BUKAN dihash — nama tetap sama
+    // walau isi berubah, jadi TETAP `no-cache, must-revalidate` (aman, hemat
+    // byte lewat 304, tanpa risiko stale — lihat insiden lama di git blame).
     let site_root = leptos_options.site_root.to_string();
     let static_routes: axum::Router = axum::Router::new()
         .nest_service(
             "/pkg",
             tower_http::services::ServeDir::new(format!("{site_root}/pkg")),
         )
-        .nest_service(
-            "/fonts",
-            tower_http::services::ServeDir::new(format!("{site_root}/fonts")),
-        )
         .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
             axum::http::header::CACHE_CONTROL,
-            axum::http::HeaderValue::from_static("no-cache, must-revalidate"),
-        ));
+            axum::http::HeaderValue::from_static("public, max-age=31536000, immutable"),
+        ))
+        .merge(
+            axum::Router::new()
+                .nest_service(
+                    "/fonts",
+                    tower_http::services::ServeDir::new(format!("{site_root}/fonts")),
+                )
+                .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+                    axum::http::header::CACHE_CONTROL,
+                    axum::http::HeaderValue::from_static("no-cache, must-revalidate"),
+                )),
+        );
 
     let leptos_router: axum::Router = axum::Router::new()
         .leptos_routes(&leptos_options, ssr_routes, {
@@ -188,10 +232,22 @@ async fn main() -> Result<()> {
         .route("/api/live-events/{id}", get(ppm::web::live_events::events))
         .layer(axum::Extension(state.clone()));
 
+    // ── Upload file Materials Library (multipart, di luar server-fn) ─────────
+    let materials_routes: axum::Router = axum::Router::new()
+        .route("/api/materials/upload", post(ppm::web::materials::upload))
+        .layer(axum::Extension(state.clone()));
+
+    // ── Unduh laporan PDF/Excel (biner, di luar server-fn) ───────────────────
+    let export_routes: axum::Router = axum::Router::new()
+        .route("/api/export/laporan", get(ppm::web::export::download))
+        .layer(axum::Extension(state.clone()));
+
     let app: axum::Router = axum::Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .merge(device_routes)
         .merge(live_audio_routes)
+        .merge(materials_routes)
+        .merge(export_routes)
         .merge(static_routes)
         .merge(leptos_router)
         .layer(tower_http::compression::CompressionLayer::new());

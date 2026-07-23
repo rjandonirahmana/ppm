@@ -9,8 +9,9 @@ use deadpool_postgres::Pool;
 
 use super::fmt::{fmt_date, fmt_when, wib};
 use crate::models::{
-    KelasData, KelasDetail, KelasItem, MemberItem, PendingAtt, ScheduleItem, ScheduleOption,
-    SessionItem, SessionUser, StudentRowItem, StudentSearchItem, StudentsData, TeacherOption,
+    CurriculumItem, KelasData, KelasDetail, KelasItem, MemberItem, PendingAtt, ScheduleItem,
+    ScheduleOption, SessionItem, SessionUser, StudentClassTag, StudentRowItem, StudentSearchItem,
+    StudentsData, TeacherOption,
 };
 use crate::repository as repo;
 
@@ -110,6 +111,23 @@ fn parse_late_points(s: &str) -> Result<Option<i16>> {
     Ok(Some(n))
 }
 
+/// Parse input form "Poin jika alpa" (kosong = None → pakai default global 15).
+/// SELALU magnitude POSITIF (dihitung sebagai `points - absent_points` —
+/// beda dgn late_points yang delta bertanda langsung, lihat migrasi 15).
+fn parse_absent_points(s: &str) -> Result<Option<i16>> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+    let n: i16 = s
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Poin alpa harus berupa angka positif (mis. 15 atau 20)."))?;
+    if !(0..=100).contains(&n) {
+        bail!("Poin alpa harus di antara 0 sampai 100 (magnitude, jangan minus).");
+    }
+    Ok(Some(n))
+}
+
 fn recurrence_label(t: &str) -> &'static str {
     match t {
         "daily" => "Harian",
@@ -117,6 +135,14 @@ fn recurrence_label(t: &str) -> &'static str {
         "monthly" => "Bulanan",
         "custom" => "Kustom",
         _ => "Sekali",
+    }
+}
+
+fn curriculum_status_label(status: &str) -> &'static str {
+    match status {
+        "completed" => "Selesai",
+        "upcoming" => "Akan Datang",
+        _ => "Berjalan",
     }
 }
 
@@ -166,22 +192,19 @@ pub async fn kelas_list(pool: &Pool, role: &str) -> Result<KelasData> {
             name: c.name,
             description: c.description,
             category: c.category.unwrap_or_default(),
+            golongan: c.golongan.unwrap_or_default(),
             teacher: c.teacher,
             member_count: c.member_count,
             schedule_count: c.schedule_count,
         })
         .collect();
-    Ok(KelasData {
-        role: role.to_string(),
-        total_kelas,
-        total_santri,
-        items,
-    })
+    Ok(KelasData { role: role.to_string(), total_kelas, total_santri, items })
 }
 
 /// Detail satu kelas (anggota, jadwal, sesi, kategori, opsi form, statistik).
 pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<KelasDetail> {
-    let Some((name, description, category)) = repo::class_info(pool, class_id).await? else {
+    let Some((name, description, category, golongan)) = repo::class_info(pool, class_id).await?
+    else {
         bail!("Kelas tidak ditemukan.");
     };
 
@@ -191,12 +214,14 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
     // kelas) di main.rs. Halaman detail = murni baca (5 query paralel).
     // Sesi yang DITAMPILKAN hanya MULAI hari ini ke depan (yang lewat dibuang).
     let today = Utc::now().with_timezone(&wib()).date_naive();
-    let (members, scheds, sessions, teachers, cats) = tokio::join!(
+    let (members, scheds, sessions, teachers, cats, golongans, curriculum) = tokio::join!(
         repo::class_members(pool, class_id),
         repo::class_schedules(pool, class_id),
         repo::sessions_of_class(pool, class_id, today, 50),
         repo::teacher_options(pool),
         repo::distinct_categories(pool),
+        repo::distinct_golongan(pool),
+        repo::class_curriculum(pool, class_id),
     );
 
     let members = members?
@@ -264,6 +289,8 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
             id: s.id,
             category: s.category.clone().unwrap_or_default(),
             late_points: s.late_points.map(|n| n.to_string()).unwrap_or_default(),
+            absent_points: s.absent_points.map(|n| n.to_string()).unwrap_or_default(),
+            room: s.room.clone().unwrap_or_default(),
         })
         .collect();
 
@@ -297,6 +324,21 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
         .map(|(id, name)| TeacherOption { id, name })
         .collect();
 
+    let curriculum = curriculum?
+        .into_iter()
+        .map(|c| CurriculumItem {
+            id: c.id,
+            title: c.title,
+            description: c.description.unwrap_or_default(),
+            scope_start: c.scope_start.unwrap_or_default(),
+            scope_end: c.scope_end.unwrap_or_default(),
+            progress_pct: c.progress_pct,
+            order_index: c.order_index,
+            status_label: curriculum_status_label(&c.status).into(),
+            status: c.status,
+        })
+        .collect();
+
     Ok(KelasDetail {
         role: role.to_string(),
         id: class_id,
@@ -304,6 +346,8 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
         description,
         category: category.unwrap_or_default(),
         category_options: cats?,
+        golongan: golongan.unwrap_or_default(),
+        golongan_options: golongans?,
         members,
         schedules,
         schedule_options,
@@ -311,6 +355,7 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
         sessions,
         weekly_sessions,
         avg_duration_min,
+        curriculum,
     })
 }
 
@@ -323,20 +368,47 @@ fn norm_category(category: &str) -> Option<String> {
     }
 }
 
-pub async fn create_class(pool: &Pool, name: &str, category: &str, description: &str) -> Result<i64> {
+pub async fn create_class(
+    pool: &Pool,
+    name: &str,
+    category: &str,
+    golongan: &str,
+    description: &str,
+) -> Result<i64> {
     let name = name.trim();
     if name.is_empty() {
         bail!("Nama kelas wajib diisi.");
     }
-    repo::create_class(pool, name, norm_category(category).as_deref(), description.trim()).await
+    repo::create_class(
+        pool,
+        name,
+        norm_category(category).as_deref(),
+        norm_category(golongan).as_deref(),
+        description.trim(),
+    )
+    .await
 }
 
-pub async fn update_class(pool: &Pool, class_id: i64, name: &str, category: &str) -> Result<()> {
+pub async fn update_class(
+    pool: &Pool,
+    class_id: i64,
+    name: &str,
+    category: &str,
+    golongan: &str,
+) -> Result<()> {
     let name = name.trim();
     if name.is_empty() {
         bail!("Nama kelas wajib diisi.");
     }
-    if !repo::update_class(pool, class_id, name, norm_category(category).as_deref()).await? {
+    if !repo::update_class(
+        pool,
+        class_id,
+        name,
+        norm_category(category).as_deref(),
+        norm_category(golongan).as_deref(),
+    )
+    .await?
+    {
         bail!("Kelas tidak ditemukan.");
     }
     Ok(())
@@ -404,6 +476,8 @@ pub async fn create_schedule(
     end_date: &str,
     category: &str,
     late_points: &str,
+    absent_points: &str,
+    room: &str,
 ) -> Result<i64> {
     let (st, et, lt, rec, sd, ed) =
         parse_schedule_fields(start_time, end_time, limit_time, recurrence, start_date, end_date)?;
@@ -411,8 +485,13 @@ pub async fn create_schedule(
     let cat = category.trim();
     let cat = (!cat.is_empty()).then_some(cat);
     let lp = parse_late_points(late_points)?;
-    let id =
-        repo::create_schedule(pool, class_id, title.trim(), st, et, lt, rec, sd, ed, cat, lp).await?;
+    let ap = parse_absent_points(absent_points)?;
+    let room = room.trim();
+    let room = (!room.is_empty()).then_some(room);
+    let id = repo::create_schedule(
+        pool, class_id, title.trim(), st, et, lt, rec, sd, ed, cat, lp, ap, room,
+    )
+    .await?;
     // Jadwal baru → langsung materialisasi sesi mendatang (sekali, di jalur
     // WRITE), agar sesi siap tanpa memperlambat GET detail kelas.
     let _ = ensure_upcoming_sessions(pool, class_id).await;
@@ -432,6 +511,8 @@ pub async fn update_schedule(
     end_date: &str,
     category: &str,
     late_points: &str,
+    absent_points: &str,
+    room: &str,
 ) -> Result<()> {
     let (st, et, lt, rec, sd, ed) =
         parse_schedule_fields(start_time, end_time, limit_time, recurrence, start_date, end_date)?;
@@ -440,8 +521,13 @@ pub async fn update_schedule(
     let cat = category.trim();
     let cat = (!cat.is_empty()).then_some(cat);
     let lp = parse_late_points(late_points)?;
-    if !repo::update_schedule(pool, schedule_id, title.trim(), st, et, lt, rec, sd, ed, cat, lp)
-        .await?
+    let ap = parse_absent_points(absent_points)?;
+    let room = room.trim();
+    let room = (!room.is_empty()).then_some(room);
+    if !repo::update_schedule(
+        pool, schedule_id, title.trim(), st, et, lt, rec, sd, ed, cat, lp, ap, room,
+    )
+    .await?
     {
         bail!("Jadwal tidak ditemukan.");
     }
@@ -574,7 +660,7 @@ pub async fn set_session_libur(pool: &Pool, session_id: i64, libur: bool) -> Res
 /// Payload halaman Students: daftar santri + antrean verifikasi sesuai peran
 /// (pamong → tahap 1, dewan guru → tahap 2, admin → tahap 2, guru → tanpa antrean).
 pub async fn students_data(pool: &Pool, user: &SessionUser) -> Result<StudentsData> {
-    let board = repo::points_board(pool, None, 300, true).await?;
+    let board = repo::students_with_classes(pool, 300).await?;
     let students = board
         .into_iter()
         .map(|r| {
@@ -583,7 +669,11 @@ pub async fn students_data(pool: &Pool, user: &SessionUser) -> Result<StudentsDa
                 initial: initial_of(&r.name),
                 angkatan: angkatan_from_nis(&nis),
                 nis: if nis.is_empty() { "-".into() } else { nis },
-                class_name: r.class_name.unwrap_or_else(|| "-".into()),
+                classes: r
+                    .classes
+                    .into_iter()
+                    .map(|c| StudentClassTag { golongan: c.golongan, name: c.name })
+                    .collect(),
                 points: r.points,
                 id: r.user_id,
                 name: r.name,
@@ -624,4 +714,95 @@ pub async fn students_data(pool: &Pool, user: &SessionUser) -> Result<StudentsDa
         pending,
         verified_today,
     })
+}
+
+// ── Kurikulum (migrasi 17) ───────────────────────────────────────────────────
+
+fn norm_status(status: &str) -> &'static str {
+    match status {
+        "completed" => "completed",
+        "upcoming" => "upcoming",
+        _ => "active",
+    }
+}
+
+fn parse_progress(s: &str) -> Result<i16> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Ok(0);
+    }
+    let n: i16 = s.parse().map_err(|_| anyhow::anyhow!("Progres harus berupa angka 0-100."))?;
+    if !(0..=100).contains(&n) {
+        bail!("Progres harus di antara 0 sampai 100.");
+    }
+    Ok(n)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_curriculum(
+    pool: &Pool,
+    class_id: i64,
+    title: &str,
+    description: &str,
+    scope_start: &str,
+    scope_end: &str,
+    progress_pct: &str,
+    status: &str,
+) -> Result<i64> {
+    let title = title.trim();
+    if title.is_empty() {
+        bail!("Judul materi/kitab wajib diisi.");
+    }
+    let pct = parse_progress(progress_pct)?;
+    repo::create_curriculum(
+        pool,
+        class_id,
+        title,
+        description.trim(),
+        scope_start.trim(),
+        scope_end.trim(),
+        pct,
+        norm_status(status),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn update_curriculum(
+    pool: &Pool,
+    id: i64,
+    title: &str,
+    description: &str,
+    scope_start: &str,
+    scope_end: &str,
+    progress_pct: &str,
+    status: &str,
+) -> Result<()> {
+    let title = title.trim();
+    if title.is_empty() {
+        bail!("Judul materi/kitab wajib diisi.");
+    }
+    let pct = parse_progress(progress_pct)?;
+    if !repo::update_curriculum(
+        pool,
+        id,
+        title,
+        description.trim(),
+        scope_start.trim(),
+        scope_end.trim(),
+        pct,
+        norm_status(status),
+    )
+    .await?
+    {
+        bail!("Materi kurikulum tidak ditemukan.");
+    }
+    Ok(())
+}
+
+pub async fn delete_curriculum(pool: &Pool, id: i64) -> Result<()> {
+    if !repo::delete_curriculum(pool, id).await? {
+        bail!("Materi kurikulum tidak ditemukan.");
+    }
+    Ok(())
 }

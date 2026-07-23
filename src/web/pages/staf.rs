@@ -10,6 +10,7 @@ use leptos_meta::Title;
 use crate::models::{LatestAtt, LiveSesi, StafHome};
 use crate::web::api::staf_home_data;
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
+use crate::web::pages::MaterialsWidget;
 
 fn status_badge(kind: &str) -> &'static str {
     match kind {
@@ -124,7 +125,7 @@ fn StafBody(d: StafHome) -> impl IntoView {
                         <p class="text-body-sm text-on-surface-variant">"Sesi Hari Ini"</p>
                     </div>
                     <a
-                        href="/verifikasi-pamong"
+                        href="/izin-staf"
                         class="col-span-2 md:col-span-1 block bg-error-container/40 border border-error/30 rounded-2xl p-4 hover:bg-error-container/60 transition-colors"
                     >
                         <div class="flex items-center justify-between h-full">
@@ -182,6 +183,8 @@ fn StafBody(d: StafHome) -> impl IntoView {
                     .collect_view()}
             </div>
         </div>
+
+        <MaterialsWidget manage=true />
 
         // ── Area 2 KOLOM di desktop (mockup: antrean kiri, panel "Selesai
         // Hari Ini" lavender kanan); mobile tetap bertumpuk. ──────────────

@@ -128,6 +128,7 @@ pub fn IzinPage() -> impl IntoView {
                                                     let badge = match p.status_kind.as_str() {
                                                         "approved" => "px-3 py-1.5 rounded-full text-label-md bg-success/10 text-success",
                                                         "rejected" => "px-3 py-1.5 rounded-full text-label-md bg-error-container text-error",
+                                                        "pending_parent" => "px-3 py-1.5 rounded-full text-label-md bg-info/10 text-info",
                                                         _ => "px-3 py-1.5 rounded-full text-label-md bg-warning/10 text-warning",
                                                     };
                                                     view! {
@@ -186,7 +187,7 @@ pub fn IzinPage() -> impl IntoView {
                                     view! {
                                         <div class="flex items-center gap-2 p-3 bg-secondary-container text-on-secondary-container rounded-xl text-body-sm anim-in" role="status">
                                             <span class="material-symbols-outlined text-xl">"task_alt"</span>
-                                            <span>"Izin terkirim — menunggu persetujuan pengurus."</span>
+                                            <span>"Izin terkirim — menunggu konfirmasi orang tua, lalu persetujuan pengurus."</span>
                                         </div>
                                     }
                                 })
@@ -195,9 +196,10 @@ pub fn IzinPage() -> impl IntoView {
                         // Jenis izin
                         <div class="space-y-2">
                             <label class="text-label-md text-on-surface-variant">"Jenis Izin"</label>
-                            <div class="grid grid-cols-2 gap-3">
+                            <div class="grid grid-cols-3 gap-3">
                                 <KindButton kind=kind value="sick" icon="medical_services" label="Sakit" />
                                 <KindButton kind=kind value="leave" icon="home" label="Pulang" />
+                                <KindButton kind=kind value="keperluan" icon="event_note" label="Keperluan" />
                             </div>
                         </div>
 

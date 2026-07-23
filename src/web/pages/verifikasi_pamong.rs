@@ -7,12 +7,13 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 
 use crate::models::PendingAtt;
-use crate::web::api::{decide_pamong, pamong_data};
+use crate::web::api::{decide_pamong, pamong_data, permit_queue_data};
 use crate::web::components::{FetchError, DeviceFrame};
 
 #[component]
 pub fn VerifikasiPamongPage() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { pamong_data().await });
+    let permits = Resource::new(|| (), |_| async move { permit_queue_data().await });
 
     // Guard: belum login / bukan pamong → login.
     Effect::new(move |_| {
@@ -125,6 +126,38 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                     </p>
                                                 </div>
                                             </div>
+
+                                            // ── Tautan Tinjau Izin (migrasi 17) ──
+                                            <Suspense fallback=|| ()>
+                                                {move || {
+                                                    permits
+                                                        .get()
+                                                        .and_then(|r| r.ok())
+                                                        .map(|p| {
+                                                            view! {
+                                                                <a
+                                                                    href="/izin-staf"
+                                                                    class="ppm-card p-4 flex items-center justify-between card-hover md:max-w-lg"
+                                                                >
+                                                                    <div class="flex items-center gap-3">
+                                                                        <span class="w-10 h-10 ppm-tile">
+                                                                            <span class="material-symbols-outlined">"event_available"</span>
+                                                                        </span>
+                                                                        <div>
+                                                                            <p class="text-body-md font-semibold text-on-background">
+                                                                                "Tinjau Izin"
+                                                                            </p>
+                                                                            <p class="text-body-sm text-on-surface-variant">
+                                                                                {format!("{} menunggu keputusan", p.pending_count)}
+                                                                            </p>
+                                                                        </div>
+                                                                    </div>
+                                                                    <span class="material-symbols-outlined text-on-surface-variant">"chevron_right"</span>
+                                                                </a>
+                                                            }
+                                                        })
+                                                }}
+                                            </Suspense>
 
                                             // ── Antrean ──────────────────────────
                                             {if d.pending.is_empty() {

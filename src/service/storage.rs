@@ -85,4 +85,20 @@ impl StorageService {
             .map_err(|e| anyhow!("RustFS upload gagal: {e}"))?;
         Ok(format!("{}/{}/{}", self.public_url, self.bucket, key))
     }
+
+    /// Upload dari memori (mis. body multipart satu-kali, materials library) —
+    /// beda dari `upload_file` yang streaming dari disk (dipakai rekaman yang
+    /// ditulis bertahap per chunk).
+    pub async fn upload_bytes(&self, bytes: Vec<u8>, key: &str, content_type: &str) -> Result<String> {
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .content_type(content_type)
+            .body(ByteStream::from(bytes))
+            .send()
+            .await
+            .map_err(|e| anyhow!("RustFS upload gagal: {e}"))?;
+        Ok(format!("{}/{}/{}", self.public_url, self.bucket, key))
+    }
 }

@@ -126,6 +126,10 @@ pub struct KelasItem {
     pub description: String,
     /// Kategori kelas (teks bebas: Cepatan/Lambatan/…). Kosong = belum diisi.
     pub category: String,
+    /// Golongan (migrasi 16): sumbu klasifikasi TERPISAH dari category —
+    /// "Bacaan" (Lambatan/Cepatan) atau "Makna" (Hadist Besar/…). Kosong =
+    /// kelas di luar sistem dua-sumbu ini.
+    pub golongan: String,
     /// Pengajar sesi terakhir kelas ini (kolom teacher tak ada di classes).
     pub teacher: String,
     pub member_count: i64,
@@ -180,6 +184,14 @@ pub struct ScheduleItem {
     /// Poin custom saat TERLAMBAT di jadwal ini (migrasi 13). "" di form edit
     /// = pakai default global (+2); diisi (mis. "-5") = override.
     pub late_points: String,
+    /// Poin custom saat ALPA (absent) di jadwal ini (migrasi 15). "" di form
+    /// edit = pakai default global (15); diisi (mis. "20") = override. SELALU
+    /// magnitude positif (dihitung sebagai `points - absent_points`), beda
+    /// dgn late_points yang delta bertanda langsung.
+    pub absent_points: String,
+    /// Ruang/lokasi pertemuan (migrasi 17), mis. "Room 302 (Al-Azhar)". Teks
+    /// bebas, kosong = belum diisi.
+    pub room: String,
 }
 
 /// Opsi jadwal (dropdown tambah santri / buat sesi).
@@ -206,6 +218,10 @@ pub struct KelasDetail {
     pub category: String,
     /// Kategori yang sudah pernah dipakai (untuk dropdown + boleh ketik baru).
     pub category_options: Vec<String>,
+    /// Golongan kelas ini (migrasi 16: "Bacaan"/"Makna"/…, kosong = tak diisi).
+    pub golongan: String,
+    /// Golongan yang sudah pernah dipakai (untuk dropdown + boleh ketik baru).
+    pub golongan_options: Vec<String>,
     pub members: Vec<MemberItem>,
     pub schedules: Vec<ScheduleItem>,
     pub schedule_options: Vec<ScheduleOption>,
@@ -214,6 +230,35 @@ pub struct KelasDetail {
     /// Statistik jadwal (untuk kartu "Jadwal Kelas").
     pub weekly_sessions: i64,
     pub avg_duration_min: i64,
+    /// Cakupan materi/kitab kelas ini (migrasi 17, tab "Kurikulum").
+    pub curriculum: Vec<CurriculumItem>,
+}
+
+/// Satu materi/kitab dalam cakupan kurikulum kelas (migrasi 17). Progres
+/// keseluruhan KELAS pada materi ini — beda dari hafalan_logs (progres
+/// HAFALAN per-santri).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CurriculumItem {
+    pub id: i64,
+    pub title: String,
+    pub description: String,
+    pub scope_start: String,
+    pub scope_end: String,
+    pub progress_pct: i16,
+    pub order_index: i16,
+    /// "active" | "completed" | "upcoming" mentah (untuk form edit).
+    pub status: String,
+    /// "Berjalan" / "Selesai" / "Akan Datang".
+    pub status_label: String,
+}
+
+/// Satu kelas yang diikuti santri, berlabel golongan (migrasi 16) — santri
+/// biasanya punya satu tag per golongan (satu Bacaan + satu Makna).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StudentClassTag {
+    /// "Bacaan" / "Makna" / kosong (kelas di luar sistem golongan).
+    pub golongan: String,
+    pub name: String,
 }
 
 /// Satu baris santri di halaman Students (daftar + verifikasi).
@@ -223,7 +268,8 @@ pub struct StudentRowItem {
     pub name: String,
     pub nis: String,
     pub angkatan: String,
-    pub class_name: String,
+    /// SEMUA kelas yang diikuti santri (biasanya satu Bacaan + satu Makna).
+    pub classes: Vec<StudentClassTag>,
     pub points: i32,
     pub initial: String,
 }
@@ -240,13 +286,25 @@ pub struct StudentsData {
     pub verified_today: i64,
 }
 
-/// Izin menunggu peninjauan (halaman Tinjau Izin staf).
+/// Izin menunggu peninjauan pamong/dewan guru (halaman /izin-staf, migrasi 17
+/// dua-tahap Orang Tua → Pamong). Hanya muncul di sini setelah
+/// `parent_status = 'approved'` (lihat repository/permits.rs).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PermitReviewItem {
     pub id: i64,
     pub student_name: String,
+    pub nis: String,
+    pub class_name: String,
     pub kind_label: String,
     pub range_label: String,
     pub reason: String,
     pub when_label: String,
+}
+
+/// Payload halaman /izin-staf (pamong/dewan guru/admin).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PermitQueueData {
+    pub pending_count: i64,
+    pub approved_today: i64,
+    pub items: Vec<PermitReviewItem>,
 }

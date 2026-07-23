@@ -6,7 +6,8 @@ use deadpool_postgres::Pool;
 
 use super::fmt::{fmt_dt_full, fmt_month, fmt_range, wib};
 use crate::models::{
-    point_rule, IzinData, PermitItem, ProfilData, RiwayatData, RiwayatItem,
+    permit_kind_label, permit_stage, point_rule, IzinData, PermitItem, ProfilData, RiwayatData,
+    RiwayatItem,
 };
 use crate::repository as repo;
 
@@ -35,6 +36,12 @@ pub(crate) fn semester_start() -> (chrono::DateTime<Utc>, String) {
     (start_utc, label)
 }
 
+/// Awal "semester berjalan" — dipakai async caller lain (signature tetap
+/// `async fn` walau kini pass-through ke `semester_start()`).
+pub(crate) async fn current_semester(_pool: &Pool) -> Result<(chrono::DateTime<Utc>, String)> {
+    Ok(semester_start())
+}
+
 pub(crate) fn status_display(status: &str) -> (&'static str, &'static str) {
     match status {
         "present" => ("HADIR", "present"),
@@ -48,7 +55,7 @@ pub(crate) fn status_display(status: &str) -> (&'static str, &'static str) {
 
 /// Riwayat kehadiran lengkap + statistik semester.
 pub async fn riwayat(pool: &Pool, user_id: i64) -> Result<RiwayatData> {
-    let (since, semester_label) = semester_start();
+    let (since, semester_label) = current_semester(pool).await?;
     let (stats, rows) = tokio::join!(
         repo::semester_stats(pool, user_id, since),
         repo::riwayat_all(pool, user_id, 200),
@@ -87,7 +94,7 @@ pub async fn riwayat(pool: &Pool, user_id: i64) -> Result<RiwayatData> {
 
 /// Data halaman Ajukan Perizinan.
 pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
-    let (since, _) = semester_start();
+    let (since, _) = current_semester(pool).await?;
     let today = Utc::now().with_timezone(&wib()).date_naive();
 
     let (stats, home, detected, permits) = tokio::join!(
@@ -113,18 +120,9 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
     let permits = permits?
         .into_iter()
         .map(|p| {
-            let kind_label = match p.kind.as_str() {
-                "sick" => "Izin Sakit",
-                "leave" => "Izin Pulang",
-                _ => "Izin Lainnya",
-            };
-            let (status_label, status_kind) = match p.status.as_str() {
-                "approved" => ("Disetujui", "approved"),
-                "rejected" => ("Ditolak", "rejected"),
-                _ => ("Menunggu", "pending"),
-            };
+            let (status_label, status_kind) = permit_stage(&p.parent_status, &p.pamong_status);
             PermitItem {
-                kind_label: kind_label.into(),
+                kind_label: permit_kind_label(&p.kind).into(),
                 range_label: fmt_range(p.start_date, p.end_date),
                 status_label: status_label.into(),
                 status_kind: status_kind.into(),
@@ -142,16 +140,23 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
     })
 }
 
-/// Ajukan izin baru (validasi di sini — jangan percaya klien).
+/// Ajukan izin baru (validasi di sini — jangan percaya klien). `requested_by`
+/// = santri sendiri ATAU orang tua yang mengajukan atas nama anak (lihat
+/// `service::parent::submit_child_permit`) — menentukan `parent_status` awal
+/// (migrasi 17): diajukan santri sendiri → 'pending' (perlu konfirmasi orang
+/// tua); diajukan orang tua → 'approved' (parent adalah pengaju, konsen
+/// tersirat).
+#[allow(clippy::too_many_arguments)]
 pub async fn submit_permit(
     pool: &Pool,
     user_id: i64,
+    requested_by: i64,
     kind: &str,
     start: &str,
     end: &str,
     reason: &str,
 ) -> Result<()> {
-    if !matches!(kind, "sick" | "leave") {
+    if !matches!(kind, "sick" | "leave" | "keperluan") {
         bail!("Jenis izin tidak valid.");
     }
     let Ok(start_date) = NaiveDate::parse_from_str(start.trim(), "%Y-%m-%d") else {
@@ -171,7 +176,11 @@ pub async fn submit_permit(
     }
     let reason: String = reason.chars().take(500).collect();
 
-    repo::insert_permit(pool, user_id, kind, start_date, end_date, &reason).await?;
+    let parent_status = if requested_by == user_id { "pending" } else { "approved" };
+    repo::insert_permit(
+        pool, user_id, requested_by, kind, start_date, end_date, &reason, parent_status,
+    )
+    .await?;
     Ok(())
 }
 

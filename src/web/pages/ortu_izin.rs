@@ -5,9 +5,11 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::ParentPermitItem;
-use crate::web::api::{children_permits, parent_home, submit_child_permit_action};
-use crate::web::components::{DeviceFrame, MobileHeader};
+use crate::models::{ParentPermitItem, PendingParentConfirm};
+use crate::web::api::{
+    children_permits, confirm_child_permit_action, parent_home, submit_child_permit_action,
+};
+use crate::web::components::{DeviceFrame, EmptyState, MobileHeader};
 
 #[component]
 pub fn OrtuIzinPage() -> impl IntoView {
@@ -82,6 +84,45 @@ pub fn OrtuIzinPage() -> impl IntoView {
                 <MobileHeader title="Daftar Izin Santri" subtitle="Kelola permohonan izin putra/putri Anda" />
 
                 <div class="px-5 pt-5 space-y-4 stagger">
+                    // Tombol + form ajukan izin dibatasi lebar di desktop (md:max-w-md,
+                    // sama dgn kolom mobile) — form pendek jangan melebar penuh kanvas
+                    // 72rem, itu yg bikin "kartu mobile melar" (lihat tailwind.css).
+                    // ── Perlu Konfirmasi (izin diajukan santri sendiri) ────
+                    <Suspense fallback=|| ()>
+                        {move || {
+                            home.get()
+                                .and_then(|r| r.ok())
+                                .filter(|h| !h.pending_permits.is_empty())
+                                .map(|h| {
+                                    view! {
+                                        <div class="space-y-2">
+                                            <h2 class="text-headline-sm text-on-background flex items-center gap-2">
+                                                <span class="material-symbols-outlined text-warning">"pending_actions"</span>
+                                                "Perlu Konfirmasi Anda"
+                                            </h2>
+                                            <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                                                {h.pending_permits
+                                                    .into_iter()
+                                                    .map(|p| {
+                                                        view! {
+                                                            <ConfirmPermitCard
+                                                                p=p
+                                                                on_done=move || {
+                                                                    home.refetch();
+                                                                    permits.refetch();
+                                                                }
+                                                            />
+                                                        }
+                                                    })
+                                                    .collect_view()}
+                                            </div>
+                                        </div>
+                                    }
+                                })
+                        }}
+                    </Suspense>
+
+                    <div class="md:max-w-md">
                     // ── Tombol buka form ───────────────────────────────────
                     <button
                         class="w-full py-4 bg-primary text-on-primary font-bold rounded-2xl shadow-lg shadow-primary/20 flex items-center justify-center gap-2 tracking-wider"
@@ -155,9 +196,10 @@ pub fn OrtuIzinPage() -> impl IntoView {
 
                                         <div class="space-y-2">
                                             <label class="text-label-md text-on-surface-variant">"Jenis Izin"</label>
-                                            <div class="grid grid-cols-2 gap-3">
+                                            <div class="grid grid-cols-3 gap-3">
                                                 <KindBtn kind=kind value="sick" icon="medical_services" label="Sakit" />
                                                 <KindBtn kind=kind value="leave" icon="home" label="Pulang" />
+                                                <KindBtn kind=kind value="keperluan" icon="event_note" label="Keperluan" />
                                             </div>
                                         </div>
 
@@ -206,6 +248,7 @@ pub fn OrtuIzinPage() -> impl IntoView {
                                 }
                             })
                     }}
+                    </div>
 
                     // ── Filter status ──────────────────────────────────────
                     <div class="flex gap-2 overflow-x-auto pb-1">
@@ -232,13 +275,20 @@ pub fn OrtuIzinPage() -> impl IntoView {
                                     let f = filter.get();
                                     let list: Vec<ParentPermitItem> = list
                                         .into_iter()
-                                        .filter(|p| f == "all" || p.status_kind == f)
+                                        .filter(|p| {
+                                            f == "all"
+                                                || p.status_kind == f
+                                                || (f == "pending"
+                                                    && (p.status_kind == "pending_parent"
+                                                        || p.status_kind == "pending_pamong"))
+                                        })
                                         .collect();
                                     if list.is_empty() {
                                         view! {
-                                            <div class="ppm-empty">
-                                                "Tidak ada izin pada filter ini."
-                                            </div>
+                                            <EmptyState
+                                                icon="event_available"
+                                                title="Tidak ada izin pada filter ini"
+                                            />
                                         }
                                             .into_any()
                                     } else {
@@ -300,6 +350,59 @@ fn KindBtn(
     }
 }
 
+/// Kartu izin anak (diajukan santri sendiri) menunggu konfirmasi orang tua.
+#[component]
+fn ConfirmPermitCard(
+    p: PendingParentConfirm,
+    on_done: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
+    let id = p.id;
+    let busy = RwSignal::new(false);
+    let quote = format!("\u{201C}{}\u{201D}", p.reason);
+
+    let decide = move |approve: bool| {
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        leptos::task::spawn_local(async move {
+            let _ = confirm_child_permit_action(id, approve).await;
+            busy.set(false);
+            on_done();
+        });
+    };
+
+    view! {
+        <div class="ppm-card p-4 card-hover anim-in border border-warning/30">
+            <p class="text-[11px] font-bold tracking-[0.15em] text-on-surface-variant uppercase">
+                {p.kind_label}
+            </p>
+            <p class="text-body-lg font-bold text-on-background mt-1">{p.child_name}</p>
+            <p class="text-body-sm text-on-surface-variant flex items-center gap-1.5 mt-1">
+                <span class="material-symbols-outlined text-[15px]">"calendar_month"</span>
+                {p.range_label}
+            </p>
+            <p class="text-body-sm italic text-on-surface-variant mt-2 pb-3">{quote}</p>
+            <div class="grid grid-cols-2 gap-2 pt-2 border-t border-outline-variant/40">
+                <button
+                    class="py-2.5 rounded-xl border border-error/40 text-error font-semibold text-body-sm disabled:opacity-50"
+                    disabled=move || busy.get()
+                    on:click=move |_| decide(false)
+                >
+                    "Tolak"
+                </button>
+                <button
+                    class="py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-body-sm disabled:opacity-50"
+                    disabled=move || busy.get()
+                    on:click=move |_| decide(true)
+                >
+                    "Konfirmasi"
+                </button>
+            </div>
+        </div>
+    }
+}
+
 #[component]
 fn PermitCard(p: ParentPermitItem) -> impl IntoView {
     let (badge, icon_badge) = match p.status_kind.as_str() {
@@ -310,6 +413,10 @@ fn PermitCard(p: ParentPermitItem) -> impl IntoView {
         "rejected" => (
             "px-2.5 py-1 rounded-lg text-body-sm font-semibold bg-error-container text-error flex items-center gap-1",
             "cancel",
+        ),
+        "pending_parent" => (
+            "px-2.5 py-1 rounded-lg text-body-sm font-semibold bg-info/10 text-info flex items-center gap-1",
+            "family_restroom",
         ),
         _ => (
             "px-2.5 py-1 rounded-lg text-body-sm font-semibold bg-warning/10 text-warning flex items-center gap-1",

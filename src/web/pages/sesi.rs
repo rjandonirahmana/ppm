@@ -10,7 +10,7 @@ use leptos_meta::Title;
 
 use crate::models::SessionItem;
 use crate::web::api::sessions_list;
-use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
+use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
 
 fn status_badge(kind: &str) -> &'static str {
     match kind {
@@ -31,6 +31,24 @@ fn tab_cls(active: bool) -> &'static str {
 
 #[component]
 pub fn SesiPage() -> impl IntoView {
+    view! {
+        <Title text="Sesi Kelas — PPM AFM" />
+        <DeviceFrame>
+            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
+                <MobileHeader title="Sesi Kelas" />
+                <div class="px-5 pt-5 space-y-3 stagger">
+                    <SesiContent />
+                </div>
+            </div>
+        </DeviceFrame>
+    }
+}
+
+/// Konten daftar sesi TANPA bingkai halaman (DeviceFrame/MobileHeader) — dipakai
+/// oleh `SesiPage` (/sesi, standalone) DAN sebagai tab "Sesi" di `/kelas`
+/// (Kelas+Sesi digabung satu nav utk staf; santri/ortu tetap via /sesi).
+#[component]
+pub fn SesiContent() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { sessions_list().await });
     // Tab aktif: false = Terjadwal (default), true = Sudah Lewat. Hidup di level
     // komponen supaya pilihan tak reset saat resource refetch.
@@ -49,107 +67,95 @@ pub fn SesiPage() -> impl IntoView {
     });
 
     view! {
-        <Title text="Sesi Kelas — PPM AFM" />
-        <DeviceFrame>
-            <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
-                <MobileHeader title="Sesi Kelas" />
-
-                <div class="px-5 pt-5 space-y-3 stagger">
-                    <Suspense fallback=|| {
-                        view! {
-                            <div class="animate-pulse space-y-3">
-                                <div class="h-10 bg-surface-container rounded-xl"></div>
-                                <div class="grid gap-3 md:grid-cols-2">
-                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                    <div class="h-24 bg-surface-container rounded-2xl"></div>
-                                    <div class="h-24 bg-surface-container rounded-2xl hidden md:block"></div>
-                                </div>
-                            </div>
-                        }
-                    }>
-                        {move || {
-                            data.get()
-                                .map(|res| match res {
-                                    Ok(d) => {
-                                        // Staf (admin/pamong/guru=dewan guru) → detail sesi
-                                        // (kelola); santri → RUANG LIVE (ikut & bertanya).
-                                        let is_santri = d.role == "santri";
-                                        let n_up = d.upcoming.len();
-                                        let n_past = d.past.len();
-                                        let lists = StoredValue::new((d.upcoming, d.past));
-                                        view! {
-                                            <p class="text-body-sm text-on-surface-variant">
-                                                {if d.all_scope {
-                                                    "Semua sesi kelas (kelola & pantau)."
-                                                } else {
-                                                    "Sesi kelas yang kamu ikuti."
-                                                }}
-                                            </p>
-                                            // Tab klik: Terjadwal (7 hari ke depan) vs
-                                            // Sudah Lewat (7 hari ke belakang), DESC.
-                                            <div class="grid grid-cols-2 gap-1 bg-surface-container rounded-xl p-1">
-                                                <button
-                                                    class=move || tab_cls(!show_past.get())
-                                                    on:click=move |_| show_past.set(false)
-                                                >
-                                                    {format!("Terjadwal ({n_up})")}
-                                                </button>
-                                                <button
-                                                    class=move || tab_cls(show_past.get())
-                                                    on:click=move |_| show_past.set(true)
-                                                >
-                                                    {format!("Sudah Lewat ({n_past})")}
-                                                </button>
-                                            </div>
-                                            // Desktop: kartu sesi 2 kolom.
-                                            <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
-                                                {move || {
-                                                    let (up, past) = lists.get_value();
-                                                    let (items, empty) = if show_past.get() {
-                                                        (past, "Tidak ada sesi 7 hari terakhir.")
-                                                    } else {
-                                                        (up, "Belum ada sesi 7 hari ke depan.")
-                                                    };
-                                                    if items.is_empty() {
-                                                        view! {
-                                                            <div class="ppm-empty">
-                                                                {empty}
-                                                            </div>
-                                                        }
-                                                            .into_any()
-                                                    } else {
-                                                        items
-                                                            .into_iter()
-                                                            .map(|it| {
-                                                                let id = it.id;
-                                                                let href = if is_santri {
-                                                                    format!("/sesi/{id}/live")
-                                                                } else {
-                                                                    format!("/sesi/{id}")
-                                                                };
-                                                                view! {
-                                                                    <a href=href class="block">
-                                                                        <SessionCard it=it />
-                                                                    </a>
-                                                                }
-                                                            })
-                                                            .collect_view()
-                                                            .into_any()
-                                                    }
-                                                }}
-                                            </div>
-                                        }
-                                            .into_any()
-                                    }
-                                    Err(e) => view! { <FetchError err=e.to_string() /> }.into_any(),
-                                })
-                        }}
-                    </Suspense>
+        <Suspense fallback=|| {
+            view! {
+                <div class="animate-pulse space-y-3">
+                    <div class="h-10 bg-surface-container rounded-xl"></div>
+                    <div class="grid gap-3 md:grid-cols-2">
+                        <div class="h-24 bg-surface-container rounded-2xl"></div>
+                        <div class="h-24 bg-surface-container rounded-2xl"></div>
+                        <div class="h-24 bg-surface-container rounded-2xl"></div>
+                        <div class="h-24 bg-surface-container rounded-2xl hidden md:block"></div>
+                    </div>
                 </div>
-
-            </div>
-        </DeviceFrame>
+            }
+        }>
+            {move || {
+                data.get()
+                    .map(|res| match res {
+                        Ok(d) => {
+                            // Staf (admin/pamong/guru=dewan guru) → detail sesi
+                            // (kelola); santri → RUANG LIVE (ikut & bertanya).
+                            let is_santri = d.role == "santri";
+                            let n_up = d.upcoming.len();
+                            let n_past = d.past.len();
+                            let lists = StoredValue::new((d.upcoming, d.past));
+                            view! {
+                                <p class="text-body-sm text-on-surface-variant">
+                                    {if d.all_scope {
+                                        "Semua sesi kelas (kelola & pantau)."
+                                    } else {
+                                        "Sesi kelas yang kamu ikuti."
+                                    }}
+                                </p>
+                                // Tab klik: Terjadwal (7 hari ke depan) vs
+                                // Sudah Lewat (7 hari ke belakang), DESC.
+                                <div class="grid grid-cols-2 gap-1 bg-surface-container rounded-xl p-1">
+                                    <button
+                                        class=move || tab_cls(!show_past.get())
+                                        on:click=move |_| show_past.set(false)
+                                    >
+                                        {format!("Terjadwal ({n_up})")}
+                                    </button>
+                                    <button
+                                        class=move || tab_cls(show_past.get())
+                                        on:click=move |_| show_past.set(true)
+                                    >
+                                        {format!("Sudah Lewat ({n_past})")}
+                                    </button>
+                                </div>
+                                // Desktop: kartu sesi 2 kolom.
+                                <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                                    {move || {
+                                        let (up, past) = lists.get_value();
+                                        let (items, empty) = if show_past.get() {
+                                            (past, "Tidak ada sesi 7 hari terakhir.")
+                                        } else {
+                                            (up, "Belum ada sesi 7 hari ke depan.")
+                                        };
+                                        if items.is_empty() {
+                                            view! {
+                                                <EmptyState icon="cast_for_education" title=empty />
+                                            }
+                                                .into_any()
+                                        } else {
+                                            items
+                                                .into_iter()
+                                                .map(|it| {
+                                                    let id = it.id;
+                                                    let href = if is_santri {
+                                                        format!("/sesi/{id}/live")
+                                                    } else {
+                                                        format!("/sesi/{id}")
+                                                    };
+                                                    view! {
+                                                        <a href=href class="block">
+                                                            <SessionCard it=it />
+                                                        </a>
+                                                    }
+                                                })
+                                                .collect_view()
+                                                .into_any()
+                                        }
+                                    }}
+                                </div>
+                            }
+                                .into_any()
+                        }
+                        Err(e) => view! { <FetchError err=e.to_string() /> }.into_any(),
+                    })
+            }}
+        </Suspense>
     }
 }
 

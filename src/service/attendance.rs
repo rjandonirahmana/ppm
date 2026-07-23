@@ -24,7 +24,10 @@ impl From<anyhow::Error> for ScanError {
 /// Proses satu scan kartu dari perangkat gerbang:
 /// device → santri → jadwal aktif → present/late → simpan (dedup per hari).
 /// Scan di luar jadwal tetap dicatat sebagai log gerbang (schedule NULL).
-pub async fn record_scan(pool: &Pool, req: &RfidScanRequest) -> Result<RfidScanResponse, ScanError> {
+pub async fn record_scan(
+    pool: &Pool,
+    req: &RfidScanRequest,
+) -> Result<RfidScanResponse, ScanError> {
     let Some(device) = repo::find_device_by_key(pool, &req.api_key).await? else {
         return Err(ScanError::BadApiKey);
     };
@@ -42,7 +45,11 @@ pub async fn record_scan(pool: &Pool, req: &RfidScanRequest) -> Result<RfidScanR
     let schedule = repo::active_schedule_now(pool, user_id, today, now_time).await?;
     let (schedule_id, status, note) = match &schedule {
         Some(s) => {
-            let st = if now_time <= s.limit_entry { "present" } else { "late" };
+            let st = if now_time <= s.limit_entry {
+                "present"
+            } else {
+                "late"
+            };
             (Some(s.id), st, None)
         }
         None => (None, "outside_schedule", Some("scan di luar jadwal")),
@@ -60,12 +67,23 @@ pub async fn record_scan(pool: &Pool, req: &RfidScanRequest) -> Result<RfidScanR
 
     // Tautkan ke sesi kelas hari ini bila guru sudah memulai sesi.
     let session_id = match schedule_id {
-        Some(sid) => repo::session_for_schedule_today(pool, sid, today).await.unwrap_or(None),
+        Some(sid) => repo::session_for_schedule_today(pool, sid, today)
+            .await
+            .unwrap_or(None),
         None => None,
     };
 
-    repo::insert_attendance(pool, user_id, session_id, schedule_id, device.id, &gate, status, note)
-        .await?;
+    repo::insert_attendance(
+        pool,
+        user_id,
+        session_id,
+        schedule_id,
+        device.id,
+        &gate,
+        status,
+        note,
+    )
+    .await?;
 
     tracing::info!(user_id, card = req.card, gate = %gate, status, "RFID scan tercatat");
     Ok(RfidScanResponse {
@@ -100,7 +118,11 @@ pub async fn pamong_data(pool: &Pool) -> Result<PamongData> {
         .collect();
 
     let (total_santri, _growth, hadir_today, _izin) = stats?;
-    let pct = if total_santri > 0 { ((hadir_today * 100) / total_santri) as i32 } else { 0 };
+    let pct = if total_santri > 0 {
+        ((hadir_today * 100) / total_santri) as i32
+    } else {
+        0
+    };
 
     Ok(PamongData {
         pending,
@@ -140,7 +162,11 @@ pub async fn verify_data(pool: &Pool) -> Result<PamongData> {
         })
         .collect();
     let (total_santri, _g, hadir_today, _i) = stats?;
-    let pct = if total_santri > 0 { ((hadir_today * 100) / total_santri) as i32 } else { 0 };
+    let pct = if total_santri > 0 {
+        ((hadir_today * 100) / total_santri) as i32
+    } else {
+        0
+    };
     Ok(PamongData {
         pending,
         approved_today: verified_today?,

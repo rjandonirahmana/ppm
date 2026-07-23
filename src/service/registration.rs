@@ -1,0 +1,287 @@
+//! service/registration.rs — Registrasi via link undangan (admin/pamong/dewan
+//! guru) + OTP WhatsApp (WAHA), pola sama e-ticketing service/auth.rs
+//! (initiate_register/verify_register/generate_random_password/normalize_phone)
+//! disederhanakan: JSON (bukan protobuf) utk payload Redis, tanpa proto build
+//! pipeline.
+//!
+//! Alur:
+//!   1) Staf buat link (`create_invite`) → Redis `reg-invite:{token}` = peran,
+//!      TTL 24 jam.
+//!   2) Publik buka link, isi nama+HP (`initiate_register`) → validasi link →
+//!      generate password+OTP → Redis `reg:ppm:{phone}` = JSON PendingRegistration,
+//!      TTL 10 menit → kirim WA (OTP + password, SATU pesan).
+//!   3) Publik masukkan OTP (`verify_register`) → cocok → hapus KEDUA key Redis
+//!      (link + pending) → INSERT user (baru di sini Postgres tersentuh) → JWT.
+//!
+//! TIDAK ADA baris `users` sampai OTP berhasil — selama jendela 10 menit,
+//! seluruh data pendaftar cuma hidup di Redis.
+
+use anyhow::{bail, Result};
+use deadpool_postgres::Pool;
+use rand::RngExt;
+use redis::{aio::ConnectionManager, AsyncCommands};
+use serde::{Deserialize, Serialize};
+
+use crate::config::WahaConfig;
+use crate::repository as repo;
+
+/// Peran yang boleh diundang mendaftar sendiri — TIDAK termasuk admin (sama
+/// aturan e-ticketing: "Admin accounts cannot self-register").
+pub const INVITABLE_ROLES: &[&str] = &["teacher", "dewan_guru", "supervisor", "santri", "parent"];
+
+fn invite_key(token: &str) -> String {
+    format!("reg-invite:{token}")
+}
+
+fn pending_key(phone: &str) -> String {
+    format!("reg:ppm:{phone}")
+}
+
+#[derive(Serialize, Deserialize)]
+struct PendingRegistration {
+    name: String,
+    phone: String,
+    role: String,
+    password: String,
+    otp: String,
+}
+
+/// Buat link undangan baru (admin/pamong/dewan guru) — token acak (16 byte,
+/// hex) → Redis `reg-invite:{token}` = peran, TTL 24 jam. Return token mentah
+/// (pemanggil merangkai URL `/register?key={token}`).
+pub async fn create_invite(redis: &mut ConnectionManager, role: &str) -> Result<String> {
+    if !INVITABLE_ROLES.contains(&role) {
+        bail!("Peran tidak valid untuk registrasi mandiri.");
+    }
+    let mut bytes = [0u8; 16];
+    rand::rng().fill(&mut bytes);
+    let token = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+
+    let _: () = redis
+        .set_ex(invite_key(&token), role, 24 * 3600)
+        .await
+        .map_err(|e| anyhow::anyhow!("Redis SET gagal: {e}"))?;
+    Ok(token)
+}
+
+/// Cek link masih hidup + ambil perannya (read-only — tak menghapus apa pun).
+pub async fn invite_role(redis: &mut ConnectionManager, token: &str) -> Result<Option<String>> {
+    let role: Option<String> = redis
+        .get(invite_key(token))
+        .await
+        .map_err(|e| anyhow::anyhow!("Redis GET gagal: {e}"))?;
+    Ok(role)
+}
+
+fn role_label(role: &str) -> &'static str {
+    match role {
+        "teacher" => "Guru",
+        "dewan_guru" => "Dewan Guru",
+        "supervisor" => "Pamong",
+        "santri" => "Santri",
+        "parent" => "Orang Tua",
+        _ => "Pengguna",
+    }
+}
+
+/// Ajukan registrasi: validasi link, cek duplikat HP, rate-limit resend,
+/// generate password+OTP, simpan pending 10 menit, kirim WA.
+pub async fn initiate_register(
+    pool: &Pool,
+    redis: &mut ConnectionManager,
+    http: &reqwest::Client,
+    waha: &WahaConfig,
+    token: &str,
+    name: &str,
+    phone: &str,
+) -> Result<()> {
+    let Some(role) = invite_role(redis, token).await? else {
+        bail!("Link registrasi tidak valid atau sudah kedaluwarsa.");
+    };
+
+    let name = name.trim();
+    if name.chars().count() < 2 {
+        bail!("Nama wajib diisi (minimal 2 karakter).");
+    }
+    let phone = normalize_local(phone)?;
+
+    if repo::find_by_phone(pool, &phone).await?.is_some() {
+        bail!("Nomor HP ini sudah terdaftar. Silakan masuk lewat halaman Login.");
+    }
+
+    let key = pending_key(&phone);
+    if let Ok(Some(_)) = redis.get::<_, Option<String>>(&key).await {
+        let ttl: i64 = redis.ttl(&key).await.unwrap_or(0);
+        if ttl > 540 {
+            bail!("OTP sudah dikirim. Tunggu {} detik lagi.", ttl - 540);
+        }
+    }
+
+    let password = generate_random_password();
+    let otp = format!("{:06}", rand::rng().random_range(100_000..=999_999));
+
+    let pending = PendingRegistration {
+        name: name.to_string(),
+        phone: phone.clone(),
+        role,
+        password: password.clone(),
+        otp: otp.clone(),
+    };
+    let json = serde_json::to_string(&pending)?;
+    let _: () = redis
+        .set_ex(&key, json, 600u64)
+        .await
+        .map_err(|e| anyhow::anyhow!("Redis SET gagal: {e}"))?;
+
+    send_wa_otp(http, waha, &phone, &otp, &password).await?;
+    tracing::info!(phone = %phone, "OTP registrasi terkirim");
+    Ok(())
+}
+
+/// Kirim ulang OTP — sama persis `initiate_register` (rate-limit di atas
+/// otomatis berlaku), dipanggil dengan token+nama+HP yang sama.
+pub async fn resend_otp(
+    pool: &Pool,
+    redis: &mut ConnectionManager,
+    http: &reqwest::Client,
+    waha: &WahaConfig,
+    token: &str,
+    name: &str,
+    phone: &str,
+) -> Result<()> {
+    initiate_register(pool, redis, http, waha, token, name, phone).await
+}
+
+/// Cocokkan OTP → buat user (baru di sini Postgres tersentuh) → hapus kedua
+/// key Redis (pending + link, sekali pakai) → JWT.
+pub async fn verify_register(
+    pool: &Pool,
+    redis: &mut ConnectionManager,
+    jwt: &crate::auth::JwtService,
+    token: &str,
+    phone: &str,
+    otp_input: &str,
+) -> Result<crate::service::auth::LoginOk> {
+    let phone = normalize_local(phone)?;
+    let key = pending_key(&phone);
+
+    let json: Option<String> = redis
+        .get(&key)
+        .await
+        .map_err(|e| anyhow::anyhow!("Redis GET gagal: {e}"))?;
+    let Some(json) = json else {
+        bail!("Sesi registrasi tidak ditemukan atau sudah kedaluwarsa.");
+    };
+    let pending: PendingRegistration =
+        serde_json::from_str(&json).map_err(|e| anyhow::anyhow!("Data registrasi rusak: {e}"))?;
+
+    if !constant_time_eq(&pending.otp, otp_input) {
+        bail!("Kode OTP salah.");
+    }
+
+    // Sekali pakai: hapus SEBELUM insert (kegagalan insert di bawah tak boleh
+    // membuat OTP bisa dipakai berulang).
+    let _: () = redis.del(&key).await.unwrap_or(());
+    let _: () = redis.del(invite_key(token)).await.unwrap_or(());
+
+    let password = pending.password.clone();
+    let hashed = tokio::task::spawn_blocking(move || bcrypt::hash(&password, 10)).await??;
+
+    let user_id =
+        repo::insert_registered_user(pool, &pending.name, &pending.phone, &pending.role, &hashed)
+            .await?;
+
+    let token = jwt.sign(user_id, &pending.name, &pending.phone, &pending.role)?;
+    Ok(crate::service::auth::LoginOk {
+        redirect: crate::models::role_home(&pending.role).to_string(),
+        user: crate::models::SessionUser { id: user_id, name: pending.name, role: pending.role },
+        token,
+    })
+}
+
+/// Label peran (utk tampilan "Anda akan didaftarkan sebagai: …" di halaman
+/// registrasi) — dipisah dari `invite_role` agar server fn bisa balas String
+/// siap-tampil tanpa membuka logic peran mentah ke klien.
+pub fn describe_role(role: &str) -> String {
+    role_label(role).to_string()
+}
+
+// ── Internal ─────────────────────────────────────────────────────────────────
+
+async fn send_wa_otp(
+    http: &reqwest::Client,
+    waha: &WahaConfig,
+    phone: &str,
+    otp: &str,
+    password: &str,
+) -> Result<()> {
+    let chat_id = format!("{phone}@c.us");
+    let body = serde_json::json!({
+        "chatId": chat_id,
+        "text": format!(
+            "Halo! Selamat datang di PPM AFM 🎉\n\n\
+             Kode OTP kamu: *{}*\n\
+             Password akun kamu: *{}*\n\n\
+             ⚠️ Simpan password ini baik-baik.\n\
+             OTP berlaku 10 menit. Jangan bagikan ke siapapun.",
+            otp, password
+        ),
+        "session": waha.session,
+    });
+
+    let url = format!("{}/api/sendText", waha.base_url);
+    let mut req = http.post(&url).json(&body);
+    if !waha.api_key.is_empty() {
+        req = req.header("X-Api-Key", &waha.api_key);
+    }
+    let res = req.send().await.map_err(|e| anyhow::anyhow!("Gagal menghubungi WAHA: {e}"))?;
+    if !res.status().is_success() {
+        let status = res.status();
+        let text = res.text().await.unwrap_or_default();
+        bail!("WAHA error {status}: {text}");
+    }
+    Ok(())
+}
+
+/// "08xxx"/"+62xxx"/"62xxx" → "62xxx" (dipakai sbg identitas HP tersimpan DAN
+/// basis chat-ID WAHA, konsisten — beda dari e-ticketing yg normalisasi
+/// terpisah utk simpan vs kirim WA).
+fn normalize_local(phone: &str) -> Result<String> {
+    let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.starts_with("08") {
+        Ok(format!("62{}", &digits[1..]))
+    } else if digits.starts_with("62") {
+        Ok(digits)
+    } else {
+        bail!("Nomor HP harus diawali '08' atau '+62'.");
+    }
+}
+
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Password acak mudah dibaca dari WA — persis pola e-ticketing: 9 karakter,
+/// Upper·Lower×3·Digit·Special·Lower×3, tanpa karakter ambigu (I/O/i/l/o/0/1).
+fn generate_random_password() -> String {
+    const UPPER: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const LOWER: &[u8] = b"abcdefghjkmnpqrstuvwxyz";
+    const DIGITS: &[u8] = b"23456789";
+    const SPECIAL: &[u8] = b"@#$%&";
+
+    let mut rng = rand::rng();
+    let mut pass = Vec::with_capacity(9);
+    pass.push(UPPER[rng.random_range(0..UPPER.len())] as char);
+    for _ in 0..3 {
+        pass.push(LOWER[rng.random_range(0..LOWER.len())] as char);
+    }
+    pass.push(DIGITS[rng.random_range(0..DIGITS.len())] as char);
+    pass.push(SPECIAL[rng.random_range(0..SPECIAL.len())] as char);
+    for _ in 0..3 {
+        pass.push(LOWER[rng.random_range(0..LOWER.len())] as char);
+    }
+    pass.into_iter().collect()
+}

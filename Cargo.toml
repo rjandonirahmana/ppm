@@ -28,6 +28,10 @@ assets-dir = "public"
 site-addr = "0.0.0.0:3000"
 reload-port = 3001
 browserquery = "defaults"
+# Nama file /pkg (wasm/js/css) ber-hash per build → aman di-cache browser
+# selamanya (immutable): build baru = nama baru, tak pernah collide dgn cache
+# lama. Lihat main.rs (Cache-Control) & app.rs (HashedStylesheet/HydrationScripts).
+hash-files = true
 bin-features = ["ssr"]
 lib-features = ["hydrate"]
 lib-profile-release = "wasm-release"
@@ -87,6 +91,13 @@ web-sys = { version = "0.3", features = [
     # SSE ruang live (pengganti polling).
     "EventSource",
     "MessageEvent",
+    "FormData",
+    "Request",
+    "RequestInit",
+    "Response",
+    "HtmlInputElement",
+    "FileList",
+    "File",
 ] }
 
 # ── Server-only deps (bukan wasm32) ────────────────────────────────────────────
@@ -112,13 +123,25 @@ jsonwebtoken = "9"
 
 # Export laporan: PDF (font base-14 bawaan PDF, TANPA file font eksternal —
 # lihat service/export.rs) + Excel (.xlsx, tanpa dependensi sistem).
-printpdf = "0.11"
+# default-features=false: matikan fitur "html" (default!) — itu menarik masuk
+# seluruh azul-layout + rust-fontconfig (engine layout HTML) yg TAK dipakai
+# sama sekali di sini (laporan = teks+tabel manual via Op::WriteText, bukan
+# render HTML→PDF). Build jauh lebih ringan tanpa fitur ini.
+printpdf = { version = "0.11", default-features = false }
 rust_xlsxwriter = "0.96"
 
 # Storage rekaman → RustFS (S3-compatible), pola e-ticketing/wedding-web.
 aws-sdk-s3 = "1"
 # aws-sdk-s3 memakai rustls; sediakan crypto provider (ring) agar tak panik.
 rustls = { version = "0.23", features = ["ring"], default-features = false }
+
+# Registrasi via link undangan + OTP WhatsApp (pola e-ticketing service/auth.rs):
+# Redis = penyimpanan sementara link undangan (24 jam) & pending registration
+# (10 menit), reqwest = panggil WAHA (WhatsApp HTTP API), rand = generate
+# OTP 6-digit & password acak. Server-only — tak pernah dipakai di wasm.
+redis = { version = "1.2.1", features = ["tokio-comp", "connection-manager"] }
+reqwest = { version = "0.13", features = ["json"] }
+rand = "0.10.2"
 
 # Config / Logging
 dotenvy = "0.15"

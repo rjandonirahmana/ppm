@@ -27,6 +27,7 @@ pub fn LaporanPage() -> impl IntoView {
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Laporan" subtitle="Ringkasan performa & kehadiran" />
                 <div class="px-5 pt-5 space-y-5 stagger">
+                    <ExportBar />
                     <Transition fallback=|| {
                         view! {
                             <div class="animate-pulse space-y-3">
@@ -65,6 +66,30 @@ pub fn LaporanPage() -> impl IntoView {
                 </div>
             </div>
         </DeviceFrame>
+    }
+}
+
+/// Tombol ekspor laporan (biner via `/api/export/laporan`, di luar server-fn —
+/// browser cukup diarahkan langsung, cookie sesi ikut terkirim otomatis).
+#[component]
+fn ExportBar() -> impl IntoView {
+    view! {
+        <div class="flex gap-2 md:max-w-md">
+            <a
+                href="/api/export/laporan?format=pdf"
+                class="flex-1 py-2.5 rounded-xl border border-outline-variant text-on-surface font-semibold text-body-sm flex items-center justify-center gap-2 press"
+            >
+                <span class="material-symbols-outlined text-[18px] text-error">"picture_as_pdf"</span>
+                "Ekspor PDF"
+            </a>
+            <a
+                href="/api/export/laporan?format=xlsx"
+                class="flex-1 py-2.5 rounded-xl border border-outline-variant text-on-surface font-semibold text-body-sm flex items-center justify-center gap-2 press"
+            >
+                <span class="material-symbols-outlined text-[18px] text-success">"grid_on"</span>
+                "Ekspor Excel"
+            </a>
+        </div>
     }
 }
 
@@ -452,7 +477,7 @@ fn GuruReport(
 // ORANG TUA & SANTRI — kartu hasil bersama (poin, hafalan, prestasi)
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn attendance_card(hadir: i64, izin: i64, alpa: i64, pct: i64) -> impl IntoView {
+pub(crate) fn attendance_card(hadir: i64, izin: i64, alpa: i64, pct: i64) -> impl IntoView {
     view! {
         <div class="ppm-card p-4">
             <h3 class="text-body-lg font-bold text-on-background mb-3">"Kartu Hasil — Absensi"</h3>
@@ -481,7 +506,7 @@ fn attendance_card(hadir: i64, izin: i64, alpa: i64, pct: i64) -> impl IntoView 
     }
 }
 
-fn hafalan_card(hafalan: Vec<HafalanItem>, juz_count: i64) -> impl IntoView {
+pub(crate) fn hafalan_card(hafalan: Vec<HafalanItem>, juz_count: i64) -> impl IntoView {
     view! {
         <div class="ppm-card p-4">
             <div class="flex items-center justify-between mb-3">
@@ -535,7 +560,7 @@ fn hafalan_card(hafalan: Vec<HafalanItem>, juz_count: i64) -> impl IntoView {
     }
 }
 
-fn points_lists(prestasi: Vec<LaporanPointItem>, pelanggaran: Vec<LaporanPointItem>) -> impl IntoView {
+pub(crate) fn points_lists(prestasi: Vec<LaporanPointItem>, pelanggaran: Vec<LaporanPointItem>) -> impl IntoView {
     view! {
         <div class="ppm-card p-4">
             <h3 class="text-body-lg font-bold text-on-background mb-3 flex items-center gap-2">
@@ -611,7 +636,7 @@ fn points_lists(prestasi: Vec<LaporanPointItem>, pelanggaran: Vec<LaporanPointIt
     }
 }
 
-fn gate_status_card(gate_status: &str, gate_at_label: &str) -> impl IntoView {
+pub(crate) fn gate_status_card(gate_status: &str, gate_at_label: &str) -> impl IntoView {
     let (label, icon, cls) = if gate_status == "out" {
         ("Sedang di Luar Pondok", "door_open", "bg-error-container text-error")
     } else {

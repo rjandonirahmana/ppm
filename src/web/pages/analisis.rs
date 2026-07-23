@@ -8,11 +8,12 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{AnalisisData, ClassRank, TeacherInsight, TrendPoint};
-use crate::web::api::analisis_data;
+use crate::models::{AnalisisData, ClassRank, PermitQueueData, TeacherInsight, TrendPoint};
+use crate::web::api::{analisis_data, permit_queue_data};
 use crate::web::components::{
     DeviceFrame, FetchError, MobileHeader,
 };
+use crate::web::pages::MaterialsWidget;
 
 #[component]
 pub fn GuruDashboardPage() -> impl IntoView {
@@ -27,6 +28,9 @@ pub fn DewanGuruDashboardPage() -> impl IntoView {
 #[component]
 fn AnalisisPage(title: &'static str) -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { analisis_data().await });
+    // Hanya dewan_guru/admin punya akses (guru biasa → forbidden diam-diam,
+    // kartu tak dirender — lihat KELAS_ROLES vs izin_staf role guard).
+    let permits = Resource::new(|| (), |_| async move { permit_queue_data().await });
 
     Effect::new(move |_| {
         if let Some(Err(e)) = data.get() {
@@ -50,18 +54,20 @@ fn AnalisisPage(title: &'static str) -> impl IntoView {
                         view! {
                             <div class="animate-pulse space-y-3">
                                 <div class="h-28 bg-surface-container rounded-2xl"></div>
-                                <div class="grid grid-cols-2 gap-3 md:max-w-lg">
-                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
-                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                <div class="grid gap-3 md:grid-cols-3 md:items-start">
+                                    <div class="md:col-span-2 grid grid-cols-2 gap-3">
+                                        <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                        <div class="h-20 bg-surface-container rounded-2xl"></div>
+                                    </div>
+                                    <div class="h-40 bg-surface-container rounded-2xl"></div>
                                 </div>
-                                <div class="h-40 bg-surface-container rounded-2xl"></div>
                             </div>
                         }
                     }>
                         {move || {
                             data.get()
                                 .map(|res| match res {
-                                    Ok(d) => view! { <AnalisisBody d=d /> }.into_any(),
+                                    Ok(d) => view! { <AnalisisBody d=d permits=permits /> }.into_any(),
                                     Err(e) => view! { <FetchError err=e.to_string() /> }.into_any(),
                                 })
                         }}
@@ -73,7 +79,10 @@ fn AnalisisPage(title: &'static str) -> impl IntoView {
 }
 
 #[component]
-fn AnalisisBody(d: AnalisisData) -> impl IntoView {
+fn AnalisisBody(
+    d: AnalisisData,
+    permits: Resource<Result<PermitQueueData, ServerFnError>>,
+) -> impl IntoView {
     let AnalisisData {
         name,
         is_dewan,
@@ -94,6 +103,12 @@ fn AnalisisBody(d: AnalisisData) -> impl IntoView {
             <p class="text-body-sm text-on-surface-variant">{format!("Assalamu'alaikum, {name}")}</p>
             <p class="text-[11px] text-on-surface-variant/70 mt-0.5">{scope_note}" • 30 hari terakhir"</p>
         </div>
+
+        // Desktop: ringkasan harian (hero+progres+sesi hari ini) kolom utama
+        // kiri, analitik (tren+ranking+kinerja pengajar) jadi sidebar kanan —
+        // konten sama, disusun 2 kolom di layar lebar (pola dashboard_santri).
+        <div class="space-y-6 md:space-y-0 md:grid md:grid-cols-3 md:gap-6 md:items-start">
+        <div class="md:col-span-2 space-y-5">
 
         // ── Hero: jadwal berikutnya (mockup dewan guru) ─────────────────────
         {next
@@ -133,7 +148,7 @@ fn AnalisisBody(d: AnalisisData) -> impl IntoView {
                     stroke-dasharray=format!("{attendance_pct} 100")></circle>
             </svg>
         </div>
-        <div class="grid grid-cols-2 gap-3 md:max-w-lg">
+        <div class="grid grid-cols-2 gap-3">
             <div class="ppm-card p-4">
                 <span class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center">
                     <span class="material-symbols-outlined">"task_alt"</span>
@@ -154,6 +169,36 @@ fn AnalisisBody(d: AnalisisData) -> impl IntoView {
             </div>
         </div>
 
+        // ── Tautan Tinjau Izin (migrasi 17; admin/dewan_guru saja) ──────────
+        <Suspense fallback=|| ()>
+            {move || {
+                permits
+                    .get()
+                    .and_then(|r| r.ok())
+                    .map(|p| {
+                        view! {
+                            <a
+                                href="/izin-staf"
+                                class="ppm-card p-4 flex items-center justify-between card-hover md:max-w-lg"
+                            >
+                                <div class="flex items-center gap-3">
+                                    <span class="w-10 h-10 ppm-tile">
+                                        <span class="material-symbols-outlined">"event_available"</span>
+                                    </span>
+                                    <div>
+                                        <p class="text-body-md font-semibold text-on-background">"Tinjau Izin"</p>
+                                        <p class="text-body-sm text-on-surface-variant">
+                                            {format!("{} menunggu keputusan", p.pending_count)}
+                                        </p>
+                                    </div>
+                                </div>
+                                <span class="material-symbols-outlined text-on-surface-variant">"chevron_right"</span>
+                            </a>
+                        }
+                    })
+            }}
+        </Suspense>
+
         // ── Sesi hari ini ───────────────────────────────────────────────────
         {(!today.is_empty())
             .then(|| {
@@ -163,7 +208,7 @@ fn AnalisisBody(d: AnalisisData) -> impl IntoView {
                             <h3 class="text-title-md text-on-background font-semibold">"Sesi Hari Ini"</h3>
                             <a href="/sesi" class="text-body-sm font-semibold text-primary">"Lihat Semua"</a>
                         </div>
-                        <div class="space-y-2">
+                        <div class="space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0">
                             {today
                                 .iter()
                                 .cloned()
@@ -192,7 +237,9 @@ fn AnalisisBody(d: AnalisisData) -> impl IntoView {
                     </div>
                 }
             })}
+        </div>
 
+        <div class="space-y-5">
         <div>
             <h3 class="text-title-md text-on-background font-semibold mb-3">"Tren Kehadiran (7 hari)"</h3>
             <TrendChart trend=trend />
@@ -241,6 +288,10 @@ fn AnalisisBody(d: AnalisisData) -> impl IntoView {
                     </div>
                 }
             })}
+
+        {is_dewan.then(|| view! { <MaterialsWidget manage=true /> })}
+        </div>
+        </div>
     }
 }
 

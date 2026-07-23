@@ -1,13 +1,19 @@
-//! web/pages/riwayat.rs — Riwayat Kehadiran santri (mockup stitch):
-//! stat HADIR/IZIN/ALPA, chip semester, daftar dikelompokkan per bulan dengan
-//! poin (+10 Kedisiplinan / -15 Pelanggaran). Data ASLI via `riwayat_data`.
+//! web/pages/riwayat.rs — Riwayat & Rapor santri (mockup stitch + gabungan
+//! rapor pribadi): kartu rapor (poin/kehadiran/gerbang/hafalan/prestasi —
+//! REUSE komponen dari pages/laporan.rs) + daftar riwayat dikelompokkan per
+//! bulan (+10 Kedisiplinan / -15 Pelanggaran). Item navbar "Laporan" sisi
+//! santri sudah diganti "Akademik" (self-report progres buku, lihat
+//! pages/akademik.rs) — rapor pribadi yang tadinya di /laporan kini digabung
+//! ke sini agar santri tak perlu 2 halaman terpisah. Data via `riwayat_data`
+//! + `laporan_santri_data`.
 
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{RiwayatData, RiwayatItem};
-use crate::web::api::riwayat_data;
-use crate::web::components::{FetchError, DeviceFrame, MobileHeader};
+use crate::models::{LaporanSantriData, RiwayatData, RiwayatItem};
+use crate::web::api::{laporan_santri_data, riwayat_data};
+use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
+use crate::web::pages::laporan::{attendance_card, gate_status_card, hafalan_card, points_lists};
 
 fn kind_border(kind: &str) -> &'static str {
     match kind {
@@ -30,15 +36,15 @@ fn kind_badge(kind: &str) -> &'static str {
 #[component]
 pub fn RiwayatPage() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { riwayat_data().await });
+    let laporan_res = Resource::new(|| (), |_| async move { laporan_santri_data().await });
 
     Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            let msg = e.to_string();
-            if msg.contains("unauth") || msg.contains("forbidden") {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
+        let unauth = matches!(&data.get(), Some(Err(e)) if e.to_string().contains("unauth"))
+            || matches!(&laporan_res.get(), Some(Err(e)) if e.to_string().contains("unauth"));
+        if unauth {
+            #[cfg(target_arch = "wasm32")]
+            if let Some(w) = web_sys::window() {
+                let _ = w.location().replace("/login");
             }
         }
     });
@@ -47,15 +53,16 @@ pub fn RiwayatPage() -> impl IntoView {
     let month_filter = RwSignal::new(String::new());
 
     view! {
-        <Title text="Riwayat Kehadiran — PPM AFM" />
+        <Title text="Riwayat & Rapor — PPM AFM" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
-                <MobileHeader title="Riwayat Kehadiran" />
+                <MobileHeader title="Riwayat & Rapor" subtitle="Kehadiran, poin, & capaian hafalan" />
 
                 <div class="px-5 pt-5 space-y-4 stagger">
                     <Suspense fallback=|| {
                         view! {
                             <div class="animate-pulse space-y-3">
+                                <div class="h-24 bg-surface-container rounded-2xl"></div>
                                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
                                     <div class="h-24 bg-surface-container rounded-2xl"></div>
                                     <div class="h-24 bg-surface-container rounded-2xl"></div>
@@ -70,14 +77,18 @@ pub fn RiwayatPage() -> impl IntoView {
                         }
                     }>
                         {move || {
-                            data.get()
-                                .map(|res| match res {
-                                    Ok(d) => {
-                                        view! { <RiwayatContent d=d month_filter=month_filter /> }
-                                            .into_any()
+                            match (data.get(), laporan_res.get()) {
+                                (Some(Ok(d)), Some(Ok(l))) => {
+                                    view! {
+                                        <RiwayatContent d=d l=l month_filter=month_filter />
                                     }
-                                    Err(e) => view! { <FetchError err=e.to_string() /> }.into_any()
-                                })
+                                        .into_any()
+                                }
+                                (Some(Err(e)), _) | (_, Some(Err(e))) => {
+                                    view! { <FetchError err=e.to_string() /> }.into_any()
+                                }
+                                _ => ().into_any(),
+                            }
                         }}
                     </Suspense>
                 </div>
@@ -88,7 +99,7 @@ pub fn RiwayatPage() -> impl IntoView {
 }
 
 #[component]
-fn RiwayatContent(d: RiwayatData, month_filter: RwSignal<String>) -> impl IntoView {
+fn RiwayatContent(d: RiwayatData, l: LaporanSantriData, month_filter: RwSignal<String>) -> impl IntoView {
     // Daftar bulan unik (urutan data = terbaru dulu).
     let months: Vec<String> = {
         let mut seen = Vec::new();
@@ -102,21 +113,25 @@ fn RiwayatContent(d: RiwayatData, month_filter: RwSignal<String>) -> impl IntoVi
     let items = StoredValue::new(d.items);
 
     view! {
-        // ── Statistik semester ──────────────────────────────────────────────
-        <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-3 md:gap-3">
-            <StatCard
-                icon="check_circle" tone="text-success" num=d.hadir
-                label="HADIR" sub="Sesi Semester Ini"
-            />
-            <StatCard
-                icon="info" tone="text-info" num=d.izin
-                label="IZIN" sub="Sesi Disetujui"
-            />
-            <StatCard
-                icon="cancel" tone="text-error" num=d.alpa
-                label="ALPA" sub="Sesi Tanpa Keterangan"
-            />
+        // ── Rapor pribadi (pindah dari /laporan — gabungan dgn riwayat) ──────
+        <div class="spiritual-gradient rounded-2xl p-5 text-on-primary shadow-lg shadow-primary/20">
+            <p class="text-[11px] font-bold tracking-[0.2em] opacity-80">"RAPOR PRIBADI"</p>
+            <div class="flex items-center justify-between mt-1">
+                <span class="text-body-sm opacity-85">"Total Poin"</span>
+                <span class="text-display-md">{l.points}</span>
+            </div>
         </div>
+        <div class="md:grid md:grid-cols-2 md:gap-5 md:items-start space-y-5 md:space-y-0">
+            <div class="space-y-5">
+                {attendance_card(l.hadir, l.izin, l.alpa, l.attendance_pct)}
+                {gate_status_card(&l.gate_status, &l.gate_at_label)}
+                {hafalan_card(l.hafalan, l.juz_count)}
+            </div>
+            <div class="space-y-5">{points_lists(l.prestasi, l.pelanggaran)}</div>
+        </div>
+
+        // ── Riwayat kehadiran detail per sesi ─────────────────────────────────
+        <h3 class="text-body-lg font-bold text-on-background pt-2">"Riwayat Kehadiran"</h3>
 
         // ── Chip semester + filter bulan ────────────────────────────────────
         <div class="flex gap-3 overflow-x-auto pb-1">
@@ -124,7 +139,7 @@ fn RiwayatContent(d: RiwayatData, month_filter: RwSignal<String>) -> impl IntoVi
                 {d.semester_label}
             </span>
         </div>
-        <div class="relative">
+        <div class="relative md:max-w-xs">
             <select
                 class="w-full appearance-none bg-surface-container border-0 rounded-xl px-4 py-3 text-body-md text-on-surface pr-10"
                 on:change=move |ev| month_filter.set(event_target_value(&ev))
@@ -154,9 +169,7 @@ fn RiwayatContent(d: RiwayatData, month_filter: RwSignal<String>) -> impl IntoVi
                 .collect();
             if list.is_empty() {
                 return view! {
-                    <div class="ppm-empty">
-                        "Belum ada catatan kehadiran."
-                    </div>
+                    <EmptyState icon="history" title="Belum ada catatan kehadiran" />
                 }
                     .into_any();
             }
@@ -189,28 +202,6 @@ fn RiwayatContent(d: RiwayatData, month_filter: RwSignal<String>) -> impl IntoVi
                 .collect_view()
                 .into_any()
         }}
-    }
-}
-
-#[component]
-fn StatCard(
-    icon: &'static str,
-    tone: &'static str,
-    num: i64,
-    label: &'static str,
-    sub: &'static str,
-) -> impl IntoView {
-    let head_cls = format!("flex items-center gap-1.5 {tone}");
-    let num_cls = format!("text-3xl font-bold {tone} mt-1");
-    view! {
-        <div class="ppm-card p-4 card-hover">
-            <div class=head_cls>
-                <span class="material-symbols-outlined text-xl">{icon}</span>
-                <span class="text-[11px] font-bold tracking-[0.15em]">{label}</span>
-            </div>
-            <p class=num_cls data-count=num.to_string()>{num}</p>
-            <p class="text-body-sm text-on-surface-variant">{sub}</p>
-        </div>
     }
 }
 

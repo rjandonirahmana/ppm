@@ -7,7 +7,7 @@ use leptos_meta::Title;
 
 use crate::models::RiwayatItem;
 use crate::web::api::{child_riwayat, parent_home};
-use crate::web::components::{DeviceFrame, MobileHeader};
+use crate::web::components::{DeviceFrame, EmptyState, MobileHeader};
 
 #[component]
 pub fn OrtuRiwayatPage() -> impl IntoView {
@@ -199,9 +199,7 @@ pub fn OrtuRiwayatPage() -> impl IntoView {
 fn RiwayatList(items: Vec<RiwayatItem>) -> impl IntoView {
     if items.is_empty() {
         return view! {
-            <div class="ppm-empty">
-                "Belum ada catatan kehadiran."
-            </div>
+            <EmptyState icon="history" title="Belum ada catatan kehadiran" />
         }
             .into_any();
     }

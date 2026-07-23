@@ -7,8 +7,9 @@ use deadpool_postgres::Pool;
 
 use super::fmt::{fmt_ago, fmt_range, wib};
 use crate::models::{
-    ChildChip, ChildMonitor, ChildRiwayat, ConnRequest, ParentHome, ParentPermitItem,
-    PendingConn, PermitItem, StudentSearchItem, TodayStatus,
+    permit_kind_label, permit_stage, ChildChip, ChildMonitor, ChildRiwayat, ConnRequest,
+    ParentHome, ParentPermitItem, PendingConn, PendingParentConfirm, PermitItem,
+    StudentSearchItem, TodayStatus,
 };
 use crate::repository as repo;
 
@@ -51,20 +52,6 @@ fn status_today(status: &str) -> &'static str {
     }
 }
 
-fn map_permit(kind: &str, status: &str) -> (&'static str, &'static str, &'static str) {
-    let kind_label = match kind {
-        "sick" => "Izin Sakit",
-        "leave" => "Izin Pulang",
-        _ => "Izin Lainnya",
-    };
-    let (status_label, status_kind) = match status {
-        "approved" => ("Disetujui", "approved"),
-        "rejected" => ("Ditolak", "rejected"),
-        _ => ("Menunggu", "pending"),
-    };
-    (kind_label, status_label, status_kind)
-}
-
 /// Panel pantauan satu anak (guard koneksi DILAKUKAN PEMANGGIL).
 async fn monitor_child(pool: &Pool, child_id: i64) -> Result<Option<ChildMonitor>> {
     let Some(info) = repo::child_info(pool, child_id).await? else {
@@ -100,9 +87,9 @@ async fn monitor_child(pool: &Pool, child_id: i64) -> Result<Option<ChildMonitor
     let permits = permits?
         .into_iter()
         .map(|p| {
-            let (kind_label, status_label, status_kind) = map_permit(&p.kind, &p.status);
+            let (status_label, status_kind) = permit_stage(&p.parent_status, &p.pamong_status);
             PermitItem {
-                kind_label: kind_label.into(),
+                kind_label: permit_kind_label(&p.kind).into(),
                 range_label: fmt_range(p.start_date, p.end_date),
                 status_label: status_label.into(),
                 status_kind: status_kind.into(),
@@ -158,10 +145,23 @@ pub async fn parent_home(pool: &Pool, parent_id: i64, child: Option<i64>) -> Res
         None => None,
     };
 
+    let pending_permits = repo::pending_parent_confirms(pool, parent_id)
+        .await?
+        .into_iter()
+        .map(|p| PendingParentConfirm {
+            id: p.id,
+            child_name: p.child_name,
+            kind_label: permit_kind_label(&p.kind).into(),
+            range_label: fmt_range(p.start_date, p.end_date),
+            reason: p.reason,
+        })
+        .collect();
+
     Ok(ParentHome {
         children,
         pending,
         monitor,
+        pending_permits,
     })
 }
 
@@ -189,10 +189,10 @@ pub async fn children_permits(pool: &Pool, parent_id: i64) -> Result<Vec<ParentP
         .await?
         .into_iter()
         .map(|p| {
-            let (kind_label, status_label, status_kind) = map_permit(&p.kind, &p.status);
+            let (status_label, status_kind) = permit_stage(&p.parent_status, &p.pamong_status);
             ParentPermitItem {
                 child_name: p.child_name,
-                kind_label: kind_label.into(),
+                kind_label: permit_kind_label(&p.kind).into(),
                 range_label: fmt_range(p.start_date, p.end_date),
                 reason: p.reason,
                 status_label: status_label.into(),
@@ -216,7 +216,22 @@ pub async fn submit_child_permit(
     if !repo::is_connected(pool, parent_id, child_id).await? {
         bail!("forbidden");
     }
-    super::santri::submit_permit(pool, child_id, kind, start, end, reason).await
+    super::santri::submit_permit(pool, child_id, parent_id, kind, start, end, reason).await
+}
+
+/// Konfirmasi/tolak izin ANAK yang diajukan santri sendiri (guard: harus
+/// terhubung — dicek via kepemilikan baris `pending_parent_confirms`, jadi
+/// cukup cocokkan `parent_id` di UPDATE, lihat repository::permits).
+pub async fn confirm_child_permit(
+    pool: &Pool,
+    parent_id: i64,
+    permit_id: i64,
+    approve: bool,
+) -> Result<()> {
+    if !repo::confirm_parent_permit(pool, permit_id, approve, parent_id).await? {
+        bail!("Izin tidak ditemukan atau sudah diproses.");
+    }
+    Ok(())
 }
 
 // ── Sisi SANTRI: menyetujui/menolak permintaan koneksi ────────────────────────

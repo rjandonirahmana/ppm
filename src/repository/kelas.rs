@@ -21,8 +21,9 @@ pub async fn staf_stats(pool: &Pool) -> Result<(i64, i64, i64, i64)> {
                     AND created_at >= date_trunc('month', NOW())), \
                 (SELECT COUNT(*) FROM attendances a JOIN users u ON u.id = a.user_id \
                     WHERE u.role = 'santri' AND a.status IN ('present','late') \
-                    AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = CURRENT_DATE), \
-                (SELECT COUNT(*) FROM permit_requests WHERE status = 'pending')",
+                    AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date), \
+                (SELECT COUNT(*) FROM permit_requests \
+                    WHERE parent_status = 'pending' OR (parent_status = 'approved' AND pamong_status = 'pending'))",
             &[],
         )
         .await
@@ -50,7 +51,7 @@ pub async fn today_sessions(pool: &Pool, limit: i64) -> Result<Vec<LiveSesiRow>>
              JOIN classes c ON c.id = s.class_id \
              LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
              LEFT JOIN users t ON t.id = s.teacher_id \
-             WHERE s.session_date = CURRENT_DATE \
+             WHERE s.session_date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date \
              ORDER BY CASE s.status WHEN 'ongoing' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END, \
                       cs.start_time ASC NULLS LAST \
              LIMIT $1",
@@ -315,12 +316,19 @@ pub async fn points_board(
         }
         Some(tid) => {
             let sql = format!(
-                "SELECT u.id, u.full_name, u.nis, c.name, u.points \
+                "SELECT u.id, u.full_name, u.nis, \
+                     (SELECT c2.name FROM class_participants cp2 \
+                         JOIN classes c2 ON c2.id = cp2.class_id \
+                         WHERE cp2.user_id = u.id \
+                           AND cp2.class_id IN (SELECT DISTINCT class_id FROM class_sessions WHERE teacher_id = $1) \
+                         LIMIT 1), \
+                     u.points \
                  FROM users u \
-                 JOIN class_participants cp ON cp.user_id = u.id \
-                 JOIN classes c ON c.id = cp.class_id \
                  WHERE u.role = 'santri' AND u.is_active = TRUE \
-                   AND cp.class_id IN (SELECT DISTINCT class_id FROM class_sessions WHERE teacher_id = $1) \
+                   AND EXISTS ( \
+                       SELECT 1 FROM class_participants cp WHERE cp.user_id = u.id \
+                       AND cp.class_id IN (SELECT DISTINCT class_id FROM class_sessions WHERE teacher_id = $1) \
+                   ) \
                  ORDER BY u.points {order} LIMIT $2"
             );
             c.query(&sql, &[&tid, &limit]).await
@@ -335,6 +343,72 @@ pub async fn points_board(
             nis: r.get(2),
             class_name: r.get(3),
             points: r.get(4),
+        })
+        .collect())
+}
+
+/// Satu kelas yang diikuti santri, dengan golongannya (migrasi 16) —
+/// "" bila kelas itu di luar sistem golongan Bacaan/Makna.
+pub struct StudentClassRow {
+    pub golongan: String,
+    pub name: String,
+}
+
+pub struct StudentBoardRow {
+    pub user_id: i64,
+    pub name: String,
+    pub nis: Option<String>,
+    pub points: i32,
+    /// SEMUA kelas yang diikuti santri (biasanya satu per golongan — satu
+    /// Bacaan + satu Makna) — beda dari `points_board` yang cuma ambil SATU
+    /// kelas (LIMIT 1) krn dulu diasumsikan satu santri = satu kelas.
+    pub classes: Vec<StudentClassRow>,
+}
+
+/// Papan santri UTUH (dipakai halaman Students) — tak seperti `points_board`,
+/// mengambil SEMUA kelas tiap santri (bukan LIMIT 1) agar santri yang ikut
+/// kelas Bacaan SEKALIGUS Makna tetap tampil keduanya di UI.
+pub async fn students_with_classes(pool: &Pool, limit: i64) -> Result<Vec<StudentBoardRow>> {
+    let c = pool.get().await?;
+    let students = c
+        .query(
+            "SELECT id, full_name, nis, points FROM users \
+             WHERE role = 'santri' AND is_active = TRUE ORDER BY points DESC LIMIT $1",
+            &[&limit],
+        )
+        .await
+        .context("students_with_classes: students")?;
+    let ids: Vec<i64> = students.iter().map(|r| r.get(0)).collect();
+    let class_rows = c
+        .query(
+            "SELECT DISTINCT cp.user_id, COALESCE(c.golongan, ''), c.name \
+             FROM class_participants cp JOIN classes c ON c.id = cp.class_id \
+             WHERE cp.user_id = ANY($1) \
+             ORDER BY 2 NULLS LAST, 3",
+            &[&ids],
+        )
+        .await
+        .context("students_with_classes: classes")?;
+    let mut by_user: std::collections::HashMap<i64, Vec<StudentClassRow>> =
+        std::collections::HashMap::new();
+    for r in class_rows {
+        let uid: i64 = r.get(0);
+        by_user
+            .entry(uid)
+            .or_default()
+            .push(StudentClassRow { golongan: r.get(1), name: r.get(2) });
+    }
+    Ok(students
+        .into_iter()
+        .map(|r| {
+            let user_id: i64 = r.get(0);
+            StudentBoardRow {
+                classes: by_user.remove(&user_id).unwrap_or_default(),
+                user_id,
+                name: r.get(1),
+                nis: r.get(2),
+                points: r.get(3),
+            }
         })
         .collect())
 }
@@ -391,8 +465,10 @@ pub async fn recent_points_all(pool: &Pool, limit: i64) -> Result<Vec<(String, S
             "SELECT u.full_name, COALESCE(c.name, '-'), p.reason, p.delta \
              FROM point_logs p \
              JOIN users u ON u.id = p.user_id \
-             LEFT JOIN class_participants cp ON cp.user_id = u.id AND cp.is_primary \
-             LEFT JOIN classes c ON c.id = cp.class_id \
+             LEFT JOIN classes c ON c.id = ( \
+                 SELECT cp.class_id FROM class_participants cp \
+                 WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
+             ) \
              WHERE u.role = 'santri' \
              ORDER BY p.created_at DESC LIMIT $1",
             &[&limit],
@@ -455,6 +531,9 @@ pub struct ClassListRow {
     pub name: String,
     pub description: String,
     pub category: Option<String>,
+    /// Golongan (Bacaan/Makna/…, migrasi 16) — sumbu klasifikasi TERPISAH
+    /// dari category (lihat migration untuk alasan).
+    pub golongan: Option<String>,
     pub teacher: String,
     pub member_count: i64,
     pub schedule_count: i64,
@@ -465,7 +544,7 @@ pub async fn list_classes(pool: &Pool) -> Result<Vec<ClassListRow>> {
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT c.id, c.name, COALESCE(c.description, ''), c.category, \
+            "SELECT c.id, c.name, COALESCE(c.description, ''), c.category, c.golongan, \
                 COALESCE((SELECT t.full_name FROM class_sessions s JOIN users t ON t.id = s.teacher_id \
                     WHERE s.class_id = c.id AND s.teacher_id IS NOT NULL \
                     ORDER BY s.session_date DESC LIMIT 1), '-'), \
@@ -483,9 +562,10 @@ pub async fn list_classes(pool: &Pool) -> Result<Vec<ClassListRow>> {
             name: r.get(1),
             description: r.get(2),
             category: r.get(3),
-            teacher: r.get(4),
-            member_count: r.get(5),
-            schedule_count: r.get(6),
+            golongan: r.get(4),
+            teacher: r.get(5),
+            member_count: r.get(6),
+            schedule_count: r.get(7),
         })
         .collect())
 }
@@ -509,18 +589,34 @@ pub async fn distinct_categories(pool: &Pool) -> Result<Vec<String>> {
     Ok(rows.into_iter().map(|r| r.get(0)).collect())
 }
 
-/// Ubah kelas (nama + kategori). category kosong → NULL.
+/// Golongan kelas yang sudah dipakai (DISTINCT, migrasi 16) — untuk dropdown +
+/// ketik baru (mis. "Bacaan", "Makna").
+pub async fn distinct_golongan(pool: &Pool) -> Result<Vec<String>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT golongan FROM classes WHERE golongan IS NOT NULL AND golongan <> '' ORDER BY 1",
+            &[],
+        )
+        .await
+        .context("distinct_golongan")?;
+    Ok(rows.into_iter().map(|r| r.get(0)).collect())
+}
+
+/// Ubah kelas (nama + kategori + golongan). category/golongan kosong → NULL.
 pub async fn update_class(
     pool: &Pool,
     class_id: i64,
     name: &str,
     category: Option<&str>,
+    golongan: Option<&str>,
 ) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
         .execute(
-            "UPDATE classes SET name = $2, category = $3, updated_at = NOW() WHERE id = $1",
-            &[&class_id, &name, &category],
+            "UPDATE classes SET name = $2, category = $3, golongan = $4, updated_at = NOW() \
+             WHERE id = $1",
+            &[&class_id, &name, &category, &golongan],
         )
         .await
         .context("update_class")?;
@@ -541,37 +637,39 @@ pub async fn class_totals(pool: &Pool) -> Result<(i64, i64)> {
     Ok((row.get(0), row.get(1)))
 }
 
-/// Buat kelas baru (nama + kategori opsional) → id.
+/// Buat kelas baru (nama + kategori + golongan, semua opsional) → id.
 pub async fn create_class(
     pool: &Pool,
     name: &str,
     category: Option<&str>,
+    golongan: Option<&str>,
     description: &str,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
-            "INSERT INTO classes (name, category, description) VALUES ($1, $2, $3) RETURNING id",
-            &[&name, &category, &description],
+            "INSERT INTO classes (name, category, golongan, description) \
+             VALUES ($1, $2, $3, $4) RETURNING id",
+            &[&name, &category, &golongan, &description],
         )
         .await
         .context("create_class")?;
     Ok(row.get(0))
 }
 
-/// Info dasar kelas (nama, deskripsi, kategori).
+/// Info dasar kelas (nama, deskripsi, kategori, golongan).
 pub async fn class_info(
     pool: &Pool,
     class_id: i64,
-) -> Result<Option<(String, String, Option<String>)>> {
+) -> Result<Option<(String, String, Option<String>, Option<String>)>> {
     let c = pool.get().await?;
     let row = c
         .query_opt(
-            "SELECT name, COALESCE(description, ''), category FROM classes WHERE id = $1",
+            "SELECT name, COALESCE(description, ''), category, golongan FROM classes WHERE id = $1",
             &[&class_id],
         )
         .await?;
-    Ok(row.map(|r| (r.get(0), r.get(1), r.get(2))))
+    Ok(row.map(|r| (r.get(0), r.get(1), r.get(2), r.get(3))))
 }
 
 /// Santri anggota kelas (unik).
@@ -611,6 +709,11 @@ pub struct SchedRow {
     /// Poin custom saat TERLAMBAT di jadwal ini (migrasi 13). None = pakai
     /// default global point_rule("late") = +2.
     pub late_points: Option<i16>,
+    /// Poin custom (magnitude positif) saat ALPA di jadwal ini (migrasi 15).
+    /// None = pakai default global 15.
+    pub absent_points: Option<i16>,
+    /// Ruang/lokasi pertemuan (migrasi 17), mis. "Room 302 (Al-Azhar)".
+    pub room: Option<String>,
 }
 
 /// Jadwal-jadwal milik kelas.
@@ -619,7 +722,7 @@ pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>
     let rows = c
         .query(
             "SELECT id, COALESCE(title, ''), start_time, end_time, limit_entery_time, \
-                    recurrence_type, start_date, end_date, category, late_points \
+                    recurrence_type, start_date, end_date, category, late_points, absent_points, room \
              FROM class_schedules WHERE class_id = $1 ORDER BY start_time",
             &[&class_id],
         )
@@ -638,6 +741,8 @@ pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>
             end_date: r.get(7),
             category: r.get(8),
             late_points: r.get(9),
+            absent_points: r.get(10),
+            room: r.get(11),
         })
         .collect())
 }
@@ -656,17 +761,19 @@ pub async fn create_schedule(
     end_date: Option<chrono::NaiveDate>,
     category: Option<&str>,
     late_points: Option<i16>,
+    absent_points: Option<i16>,
+    room: Option<&str>,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
             "INSERT INTO class_schedules \
                 (class_id, title, start_time, end_time, limit_entery_time, recurrence_type, \
-                 start_date, end_date, category, late_points) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id",
+                 start_date, end_date, category, late_points, absent_points, room) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
             &[
                 &class_id, &title, &start_time, &end_time, &limit_time, &recurrence_type,
-                &start_date, &end_date, &category, &late_points,
+                &start_date, &end_date, &category, &late_points, &absent_points, &room,
             ],
         )
         .await
@@ -744,13 +851,15 @@ pub async fn update_schedule(
     end_date: Option<chrono::NaiveDate>,
     category: Option<&str>,
     late_points: Option<i16>,
+    absent_points: Option<i16>,
+    room: Option<&str>,
 ) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
         .execute(
             "UPDATE class_schedules SET title = $2, start_time = $3, end_time = $4, \
                 limit_entery_time = $5, recurrence_type = $6, start_date = $7, end_date = $8, \
-                category = $9, late_points = $10 \
+                category = $9, late_points = $10, absent_points = $11, room = $12 \
              WHERE id = $1",
             &[
                 &schedule_id,
@@ -763,6 +872,8 @@ pub async fn update_schedule(
                 &end_date,
                 &category,
                 &late_points,
+                &absent_points,
+                &room,
             ],
         )
         .await
@@ -932,8 +1043,10 @@ pub async fn some_students(pool: &Pool, limit: i64) -> Result<Vec<super::parents
         .query(
             "SELECT u.id, u.full_name, u.nis, cl.name \
              FROM users u \
-             LEFT JOIN class_participants cp ON cp.user_id = u.id AND cp.is_primary \
-             LEFT JOIN classes cl ON cl.id = cp.class_id \
+             LEFT JOIN classes cl ON cl.id = ( \
+                 SELECT cp.class_id FROM class_participants cp \
+                 WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
+             ) \
              WHERE u.role = 'santri' AND u.is_active = TRUE \
              ORDER BY u.full_name LIMIT $1",
             &[&limit],
@@ -1005,6 +1118,120 @@ pub async fn active_schedules_all(
         .into_iter()
         .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3), r.get(4), r.get(5)))
         .collect())
+}
+
+// ── Kurikulum (migrasi 17) ───────────────────────────────────────────────────
+
+pub struct CurriculumRow {
+    pub id: i64,
+    pub title: String,
+    pub description: Option<String>,
+    pub scope_start: Option<String>,
+    pub scope_end: Option<String>,
+    pub progress_pct: i16,
+    pub order_index: i16,
+    pub status: String,
+}
+
+/// Cakupan materi/kitab kelas ini, terurut sesuai order_index.
+pub async fn class_curriculum(pool: &Pool, class_id: i64) -> Result<Vec<CurriculumRow>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT id, title, description, scope_start, scope_end, progress_pct, \
+                    order_index, status \
+             FROM curriculum WHERE class_id = $1 ORDER BY order_index, id",
+            &[&class_id],
+        )
+        .await
+        .context("class_curriculum")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| CurriculumRow {
+            id: r.get(0),
+            title: r.get(1),
+            description: r.get(2),
+            scope_start: r.get(3),
+            scope_end: r.get(4),
+            progress_pct: r.get(5),
+            order_index: r.get(6),
+            status: r.get(7),
+        })
+        .collect())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_curriculum(
+    pool: &Pool,
+    class_id: i64,
+    title: &str,
+    description: &str,
+    scope_start: &str,
+    scope_end: &str,
+    progress_pct: i16,
+    status: &str,
+) -> Result<i64> {
+    let c = pool.get().await?;
+    let order_index: i16 = c
+        .query_one(
+            // Postgres promotes MAX(smallint) + 1 → integer; cast balik ke
+            // smallint di SQL (bukan hanya di sisi Rust) supaya tipe kolom
+            // yang dibalik cocok dgn `.get::<_, i16>` — beda tipe = panic
+            // runtime "error deserializing column" (bukan compile error,
+            // krn tokio-postgres query berupa string biasa).
+            "SELECT COALESCE(MAX(order_index) + 1, 0)::SMALLINT FROM curriculum WHERE class_id = $1",
+            &[&class_id],
+        )
+        .await
+        .context("create_curriculum: order_index")?
+        .get(0);
+    let row = c
+        .query_one(
+            "INSERT INTO curriculum \
+                (class_id, title, description, scope_start, scope_end, progress_pct, \
+                 order_index, status) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+            &[
+                &class_id, &title, &description, &scope_start, &scope_end, &progress_pct,
+                &order_index, &status,
+            ],
+        )
+        .await
+        .context("create_curriculum")?;
+    Ok(row.get(0))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn update_curriculum(
+    pool: &Pool,
+    id: i64,
+    title: &str,
+    description: &str,
+    scope_start: &str,
+    scope_end: &str,
+    progress_pct: i16,
+    status: &str,
+) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE curriculum SET title = $2, description = $3, scope_start = $4, \
+                scope_end = $5, progress_pct = $6, status = $7, updated_at = NOW() \
+             WHERE id = $1",
+            &[&id, &title, &description, &scope_start, &scope_end, &progress_pct, &status],
+        )
+        .await
+        .context("update_curriculum")?;
+    Ok(n > 0)
+}
+
+pub async fn delete_curriculum(pool: &Pool, id: i64) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute("DELETE FROM curriculum WHERE id = $1", &[&id])
+        .await
+        .context("delete_curriculum")?;
+    Ok(n > 0)
 }
 
 /// Update kolom rekaman sesi (dipanggil tiap chunk siaran — best effort).

@@ -5,9 +5,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use deadpool_postgres::Pool;
+use redis::aio::ConnectionManager;
 use tokio::sync::broadcast;
 
 use crate::auth::JwtService;
+use crate::config::WahaConfig;
 use crate::service::storage::StorageService;
 
 pub struct AppState {
@@ -15,6 +17,14 @@ pub struct AppState {
     pub jwt: JwtService,
     /// RustFS untuk rekaman siaran; None = simpan lokal (RUSTFS_ENDPOINT kosong).
     pub storage: Option<Arc<StorageService>>,
+    /// Redis: link undangan registrasi + pending registration/OTP (lihat
+    /// service/registration.rs). `ConnectionManager` sudah Clone murah &
+    /// auto-reconnect — dipakai langsung, bukan lewat pool.
+    pub redis: ConnectionManager,
+    /// HTTP client dipakai ulang (pool koneksi) utk panggil WAHA — dibangun
+    /// SEKALI, pola sama StorageService/JwtService.
+    pub http: reqwest::Client,
+    pub waha: Arc<WahaConfig>,
     /// Bus sinyal per-sesi utk SSE /api/live-events/{id}: chat/status/rekaman
     /// berubah → send(()) → klien refetch. Payload kosong (klien fetch sendiri)
     /// → tak ada state basi. Pengganti polling 4 dtk (audit Jul 2026 poin 3).
@@ -22,8 +32,16 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(pool: Pool, jwt: JwtService, storage: Option<Arc<StorageService>>) -> Self {
-        Self { pool, jwt, storage, live_bus: Mutex::new(HashMap::new()) }
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        pool: Pool,
+        jwt: JwtService,
+        storage: Option<Arc<StorageService>>,
+        redis: ConnectionManager,
+        http: reqwest::Client,
+        waha: Arc<WahaConfig>,
+    ) -> Self {
+        Self { pool, jwt, storage, redis, http, waha, live_bus: Mutex::new(HashMap::new()) }
     }
 
     /// Daftar sebagai pendengar perubahan sesi `session_id`.

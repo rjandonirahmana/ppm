@@ -111,7 +111,7 @@ fn split_points(
 
 /// Rapor Pribadi Santri.
 pub async fn laporan_santri(pool: &Pool, user: &SessionUser) -> Result<LaporanSantriData> {
-    let (since, _label) = super::santri::semester_start();
+    let (since, _label) = super::santri::current_semester(pool).await?;
     let (stats, points, hafalan, juz, gate, home) = tokio::join!(
         repo::semester_stats(pool, user.id, since),
         repo::point_history_of(pool, user.id, 30),
@@ -155,7 +155,7 @@ pub async fn laporan_ortu(pool: &Pool, parent_id: i64, child_id: Option<i64>) ->
     let Some(info) = repo::child_info(pool, target).await? else {
         bail!("Santri tidak ditemukan.");
     };
-    let (since, _label) = super::santri::semester_start();
+    let (since, _label) = super::santri::current_semester(pool).await?;
     let (stats, points, hafalan, juz, gate, home) = tokio::join!(
         repo::semester_stats(pool, target, since),
         repo::point_history_of(pool, target, 30),

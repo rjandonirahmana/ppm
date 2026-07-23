@@ -6,7 +6,7 @@
 //! Bukan lagi Play CDN (tak ada compile Tailwind di browser).
 
 use leptos::prelude::*;
-use leptos_meta::{provide_meta_context, MetaTags, Title};
+use leptos_meta::{provide_meta_context, HashedStylesheet, MetaTags, Title};
 use leptos_router::{
     components::{FlatRoutes, Route, Router},
     path,
@@ -30,7 +30,12 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
                 // ── CSS: Tailwind self-host (di-compile cargo-leptos → statis) ──
                 // Ganti Play CDN: tanpa compile Tailwind di browser. Tema & CSS
                 // kustom ada di style/tailwind.css + tailwind.config.js.
-                <link rel="stylesheet" href="/pkg/ppm.css" />
+                // HashedStylesheet (bukan <link href="/pkg/ppm.css"> statis) —
+                // WAJIB krn hash-files=true (Cargo.toml): nama file css berubah
+                // tiap build (mis. ppm.abcd1234.css), komponen ini baca hash.txt
+                // saat request & rakit href yang benar (leptos_meta docs: <link>
+                // statis "does *not* work with... hash-files").
+                <HashedStylesheet options=options.clone() id="leptos" />
 
                 // ── Interaktivitas: scroll-reveal + count-up angka ───────────
                 // 1) Tandai <html> reveal-js SINKRON → [data-reveal] hanya
@@ -151,6 +156,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/sesi/:id/live") view=SesiLivePage />
                 <Route path=path!("/profil") view=ProfilPage />
                 <Route path=path!("/laporan") view=LaporanPage />
+                <Route path=path!("/akademik") view=AkademikSantriPage />
 
                 // Staf / Guru / Dewan Guru
                 <Route path=path!("/staf") view=StafDashboardPage />
@@ -160,6 +166,9 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/poin-dewan") view=PoinDewanPage />
                 <Route path=path!("/verifikasi-pamong") view=VerifikasiPamongPage />
                 <Route path=path!("/verifikasi-tahap-2") view=VerifikasiTahap2Page />
+                <Route path=path!("/izin-staf") view=IzinStafPage />
+                <Route path=path!("/materi") view=MateriPage />
+                <Route path=path!("/kontrol-pengguna") view=KontrolPenggunaPage />
                 <Route path=path!("/students") view=StudentsPage />
                 <Route path=path!("/kelas") view=KelasPage />
                 <Route path=path!("/kelas/:id") view=KelasDetailPage />

@@ -14,7 +14,10 @@ pub async fn toggle_gate(pool: &Pool, user_id: i64, device_id: Option<i64>) -> R
     let tx = c.transaction().await.context("toggle_gate: begin")?;
 
     let cur: String = tx
-        .query_one("SELECT gate_status FROM users WHERE id = $1 FOR UPDATE", &[&user_id])
+        .query_one(
+            "SELECT gate_status FROM users WHERE id = $1 FOR UPDATE",
+            &[&user_id],
+        )
         .await
         .context("toggle_gate: select")?
         .get(0);
@@ -52,8 +55,10 @@ pub async fn students_outside(pool: &Pool, limit: i64) -> Result<Vec<OutsideRow>
         .query(
             "SELECT u.id, u.full_name, u.nis, c.name, u.gate_at \
              FROM users u \
-             LEFT JOIN class_participants cp ON cp.user_id = u.id AND cp.is_primary \
-             LEFT JOIN classes c ON c.id = cp.class_id \
+             LEFT JOIN classes c ON c.id = ( \
+                 SELECT cp.class_id FROM class_participants cp \
+                 WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
+             ) \
              WHERE u.role = 'santri' AND u.is_active = TRUE AND u.gate_status = 'out' \
              ORDER BY u.gate_at DESC NULLS LAST LIMIT $1",
             &[&limit],
@@ -89,7 +94,10 @@ pub async fn count_outside(pool: &Pool) -> Result<i64> {
 pub async fn gate_status_of(pool: &Pool, user_id: i64) -> Result<(String, Option<DateTime<Utc>>)> {
     let c = pool.get().await?;
     let row = c
-        .query_one("SELECT gate_status, gate_at FROM users WHERE id = $1", &[&user_id])
+        .query_one(
+            "SELECT gate_status, gate_at FROM users WHERE id = $1",
+            &[&user_id],
+        )
         .await
         .context("gate_status_of")?;
     Ok((row.get(0), row.get(1)))

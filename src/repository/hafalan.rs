@@ -127,8 +127,10 @@ pub async fn top_hafalan(pool: &Pool, limit: i64) -> Result<Vec<(i64, String, St
                         WHERE h.user_id = u.id AND h.juz IS NOT NULL AND h.quality <> 'mengulang') AS juz_n, \
                     u.points::BIGINT \
              FROM users u \
-             LEFT JOIN class_participants cp ON cp.user_id = u.id AND cp.is_primary \
-             LEFT JOIN classes c ON c.id = cp.class_id \
+             LEFT JOIN classes c ON c.id = ( \
+                 SELECT cp.class_id FROM class_participants cp \
+                 WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
+             ) \
              WHERE u.role = 'santri' AND u.is_active = TRUE \
              ORDER BY juz_n DESC, u.points DESC LIMIT $1",
             &[&limit],

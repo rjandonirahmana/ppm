@@ -9,8 +9,10 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{ChildMonitor, ParentHome, StudentSearchItem};
-use crate::web::api::{parent_home, request_connection_action, search_students_action};
+use crate::models::{ChildMonitor, ParentHome, PendingParentConfirm, StudentSearchItem};
+use crate::web::api::{
+    confirm_child_permit_action, parent_home, request_connection_action, search_students_action,
+};
 use crate::web::components::{FetchError, DeviceFrame, MobileHeader};
 
 #[component]
@@ -90,6 +92,7 @@ fn HomeBody(
     let has_children = !d.children.is_empty();
     let children = d.children.clone();
     let pending = d.pending.clone();
+    let pending_permits = d.pending_permits.clone();
     // Id anak yang sedang dipantau (Copy → aman dipakai closure chip).
     let monitor_id = d.monitor.as_ref().map(|m| m.id);
 
@@ -131,6 +134,11 @@ fn HomeBody(
                 }
             })}
 
+        // Panel pencarian & kartu "belum terhubung" dibatasi lebar di desktop
+        // (md:max-w-md) — sebelum ada anak terhubung tak ada grid lain di
+        // halaman ini utk mengisi kanvas 72rem, jadi biarkan tetap selebar
+        // kolom mobile drpd melebar penuh (lihat tailwind.css .ppm-wide).
+        <div class="space-y-4 md:max-w-md">
         // ── Pencarian & kirim permintaan (selalu utk yg belum punya anak) ────
         {(!has_children || show_search.get())
             .then(|| view! { <SearchPanel refetch=refetch /> })}
@@ -168,12 +176,14 @@ fn HomeBody(
                     </div>
                 }
             })}
+        </div>
 
-        // ── Permintaan menunggu persetujuan santri ───────────────────────────
+        // ── Permintaan menunggu persetujuan santri (dibatasi md:max-w-md,
+        // lihat catatan di panel pencarian di atas) ─────────────────────────
         {(!pending.is_empty())
             .then(|| {
                 view! {
-                    <div class="bg-secondary-container/50 border border-secondary-container rounded-2xl overflow-hidden">
+                    <div class="md:max-w-md bg-secondary-container/50 border border-secondary-container rounded-2xl overflow-hidden">
                         <div class="px-4 py-3 flex items-center gap-2 text-primary">
                             <span class="material-symbols-outlined text-lg pulse-dot">"schedule"</span>
                             <span class="text-[11px] font-bold tracking-[0.15em]">
@@ -211,11 +221,34 @@ fn HomeBody(
                 }
             })}
 
+        // ── Izin anak menunggu konfirmasi orang tua (migrasi 17) ────────────
+        {(!pending_permits.is_empty())
+            .then(|| {
+                view! {
+                    <div class="md:max-w-md space-y-2">
+                        <h3 class="text-body-md font-bold text-on-background flex items-center gap-2">
+                            <span class="material-symbols-outlined text-warning">"pending_actions"</span>
+                            "Izin Perlu Konfirmasi Anda"
+                        </h3>
+                        {pending_permits
+                            .into_iter()
+                            .map(|p| view! { <PendingPermitRow p=p refetch=refetch /> })
+                            .collect_view()}
+                        <a
+                            href="/orang-tua/izin"
+                            class="block text-center text-primary text-body-sm font-semibold"
+                        >
+                            "Kelola di Daftar Izin →"
+                        </a>
+                    </div>
+                }
+            })}
+
         // ── Panel pantauan anak terpilih ─────────────────────────────────────
         {d.monitor.map(|m| view! { <MonitorPanel m=m /> })}
 
-        // ── Butuh bantuan ────────────────────────────────────────────────────
-        <div class="spiritual-gradient rounded-2xl p-5 text-on-primary">
+        // ── Butuh bantuan (md:max-w-md — kartu CTA tunggal, bukan grid) ──────
+        <div class="md:max-w-md spiritual-gradient rounded-2xl p-5 text-on-primary">
             <p class="text-body-lg font-bold">"Butuh Bantuan?"</p>
             <p class="text-body-sm opacity-85 mt-1">
                 "Jika Anda kesulitan menemukan NIS santri atau permintaan tidak kunjung dikonfirmasi, silakan hubungi bagian administrasi."
@@ -223,6 +256,54 @@ fn HomeBody(
             <button class="w-full mt-4 py-3 bg-white/10 border border-white/20 rounded-xl text-body-sm font-semibold flex items-center justify-center gap-2">
                 <span class="material-symbols-outlined text-lg">"forum"</span>
                 "Hubungi Admin"
+            </button>
+        </div>
+    }
+}
+
+/// Baris ringkas izin anak menunggu konfirmasi (beranda; daftar lengkap +
+/// alasan ada di /orang-tua/izin).
+#[component]
+fn PendingPermitRow(
+    p: PendingParentConfirm,
+    refetch: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
+    let id = p.id;
+    let busy = RwSignal::new(false);
+    let decide = move |approve: bool| {
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        leptos::task::spawn_local(async move {
+            let _ = confirm_child_permit_action(id, approve).await;
+            busy.set(false);
+            refetch();
+        });
+    };
+    view! {
+        <div class="ppm-card p-3.5 flex items-center gap-3">
+            <div class="flex-1 min-w-0">
+                <p class="text-body-sm font-semibold text-on-background truncate">
+                    {p.child_name} " • " {p.kind_label}
+                </p>
+                <p class="text-[11px] text-on-surface-variant truncate">{p.range_label}</p>
+            </div>
+            <button
+                class="w-8 h-8 rounded-lg bg-error-container/60 text-error flex items-center justify-center press disabled:opacity-50 shrink-0"
+                disabled=move || busy.get()
+                on:click=move |_| decide(false)
+                aria-label="Tolak"
+            >
+                <span class="material-symbols-outlined text-[18px]">"close"</span>
+            </button>
+            <button
+                class="w-8 h-8 rounded-lg bg-primary text-on-primary flex items-center justify-center press disabled:opacity-50 shrink-0"
+                disabled=move || busy.get()
+                on:click=move |_| decide(true)
+                aria-label="Konfirmasi"
+            >
+                <span class="material-symbols-outlined text-[18px]">"check"</span>
             </button>
         </div>
     }
@@ -497,6 +578,7 @@ fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
                         let badge = match p.status_kind.as_str() {
                             "approved" => "px-3 py-1.5 rounded-full text-label-md bg-success/10 text-success",
                             "rejected" => "px-3 py-1.5 rounded-full text-label-md bg-error-container text-error",
+                            "pending_parent" => "px-3 py-1.5 rounded-full text-label-md bg-info/10 text-info",
                             _ => "px-3 py-1.5 rounded-full text-label-md bg-warning/10 text-warning",
                         };
                         view! {

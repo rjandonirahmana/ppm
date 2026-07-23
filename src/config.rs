@@ -13,6 +13,19 @@ pub struct AppConfig {
     pub jwt_secret: String,
     /// RustFS (S3-compatible) untuk rekaman siaran — None = simpan lokal saja.
     pub rustfs: Option<RustFsConfig>,
+    /// Redis: link undangan registrasi (24 jam) + pending registration/OTP
+    /// (10 menit). WAJIB (fail-fast) — tak ada mode "nonaktif" yang masuk akal
+    /// utk fitur yang inti kerjanya menyimpan kode OTP sementara.
+    pub redis_url: String,
+    pub waha: WahaConfig,
+}
+
+/// WAHA (WhatsApp HTTP API) — kirim OTP + password registrasi lewat WA.
+/// Pola sama e-ticketing: base_url + session + api_key opsional.
+pub struct WahaConfig {
+    pub base_url: String,
+    pub session: String,
+    pub api_key: String,
 }
 
 /// Kredensial RustFS (pola e-ticketing/wedding-web). Aktif bila RUSTFS_ENDPOINT
@@ -53,6 +66,12 @@ impl AppConfig {
                         .context("RUSTFS_PUBLIC_URL wajib bila RUSTFS_ENDPOINT di-set")?,
                 }),
                 Err(_) => None,
+            },
+            redis_url: env::var("REDIS_URL").context("REDIS_URL wajib diset (registrasi+OTP)")?,
+            waha: WahaConfig {
+                base_url: env::var("WAHA_BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into()),
+                session: env::var("WAHA_SESSION").unwrap_or_else(|_| "default".into()),
+                api_key: env::var("WAHA_API_KEY").unwrap_or_default(),
             },
         })
     }

@@ -94,7 +94,8 @@ pub async fn approved_today(pool: &Pool) -> Result<i64> {
     let row = c
         .query_one(
             "SELECT COUNT(*) FROM attendances \
-             WHERE pamong_status = 'approved' AND pamong_at >= date_trunc('day', NOW())",
+             WHERE pamong_status = 'approved' \
+               AND (pamong_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date",
             &[],
         )
         .await?;
@@ -367,7 +368,8 @@ pub async fn verified_today(pool: &Pool) -> Result<i64> {
     let row = c
         .query_one(
             "SELECT COUNT(*) FROM attendances \
-             WHERE verify_status = 'approved' AND verified_at >= date_trunc('day', NOW())",
+             WHERE verify_status = 'approved' \
+               AND (verified_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date",
             &[],
         )
         .await?;
@@ -397,7 +399,10 @@ pub async fn decide_verify(pool: &Pool, att_id: i64, approver: i64, approve: boo
 /// yang sudah TUNTAS. Auto-verified (pamong+dewan guru = approved, oleh sistem)
 /// + penalti poin langsung, agar tak membanjiri antrean verifikasi manusia &
 /// query analisa/report tinggal filter `status='absent'` (tak perlu hitung
-/// "tak ada baris" secara terpisah).
+/// "tak ada baris" secara terpisah). Poin yang dipotong per santri mengikuti
+/// `class_schedules.absent_points` bila diisi (migrasi 15) — beda jadwal beda
+/// bobot pelanggaran — atau default global 15 bila NULL. Nilai kolom SELALU
+/// magnitude positif; dihitung sebagai `points = points - absent_points`.
 ///
 /// Sesi TUNTAS = tanggalnya sudah lewat (hari sebelumnya atau lebih lama), ATAU
 /// hari ini tapi jam selesai jadwalnya sudah lewat. Sesi TANPA jadwal (ad-hoc,
@@ -441,18 +446,29 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
                         WHERE a2.user_id = cp.user_id AND a2.class_schedule_id = s.class_schedule_id \
                           AND (a2.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = s.session_date) \
                   AND NOT EXISTS (SELECT 1 FROM permit_requests p \
-                        WHERE p.user_id = cp.user_id AND p.status = 'approved' \
+                        WHERE p.user_id = cp.user_id \
+                          AND p.parent_status = 'approved' AND p.pamong_status = 'approved' \
                           AND p.start_date <= s.session_date \
                           AND COALESCE(p.end_date, p.start_date) >= s.session_date) \
                 RETURNING id, user_id \
              ), \
              lg AS ( \
                 INSERT INTO point_logs (user_id, delta, reason, category) \
-                SELECT user_id, -15, 'Kehadiran (absent) — otomatis', 'discipline' FROM ins \
+                SELECT ins.user_id, -COALESCE(sch.absent_points, 15)::int, \
+                       'Kehadiran (absent) — otomatis', 'discipline' \
+                FROM ins \
+                JOIN attendances att ON att.id = ins.id \
+                LEFT JOIN class_schedules sch ON sch.id = att.class_schedule_id \
              ), \
-             agg AS (SELECT user_id, COUNT(*)::int AS n FROM ins GROUP BY user_id), \
+             agg AS ( \
+                SELECT ins.user_id, SUM(COALESCE(sch.absent_points, 15))::int AS total \
+                FROM ins \
+                JOIN attendances att ON att.id = ins.id \
+                LEFT JOIN class_schedules sch ON sch.id = att.class_schedule_id \
+                GROUP BY ins.user_id \
+             ), \
              upd AS ( \
-                UPDATE users u SET points = points - (agg.n * 15) \
+                UPDATE users u SET points = points - agg.total \
                 FROM agg WHERE u.id = agg.user_id RETURNING u.id \
              ) \
              SELECT COUNT(*)::bigint FROM ins",
@@ -461,4 +477,75 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
         .await
         .context("run_auto_absent")?;
     Ok(row.get(0))
+}
+
+// ── Auto-verify (queue tak disentuh manusia >1 hari) ─────────────────────────
+
+/// Auto-approve TAHAP 1 (pamong) untuk absensi yang sudah >1 hari menunggu
+/// sejak `scanned_at` tanpa keputusan manual (satu query set-based, sama
+/// filosofi `run_auto_absent` — jangan biarkan antrean menumpuk selamanya).
+/// Poin diberikan SAMA seperti `decide_pamong` approve manual: present +10,
+/// late +2 (atau override `class_schedules.late_points` bila diisi),
+/// outside_schedule/permit/sick netral. `pamong_by` dibiarkan NULL (oleh
+/// sistem, bukan pengguna — pola sama `run_auto_absent`). Return jumlah baris.
+pub async fn run_auto_verify_pamong(pool: &Pool) -> Result<i64> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "WITH upd AS ( \
+                UPDATE attendances a SET pamong_status = 'approved', pamong_at = NOW() \
+                WHERE a.pamong_status = 'pending' \
+                  AND a.scanned_at < NOW() - INTERVAL '1 day' \
+                RETURNING a.id, a.user_id, a.status, a.class_schedule_id \
+             ), \
+             pts AS ( \
+                SELECT upd.user_id, upd.status, \
+                       CASE \
+                         WHEN upd.status = 'late' AND sch.late_points IS NOT NULL THEN sch.late_points::int \
+                         WHEN upd.status = 'late' THEN 2 \
+                         WHEN upd.status = 'present' THEN 10 \
+                         WHEN upd.status IN ('permit','sick','outside_schedule') THEN 0 \
+                         ELSE -15 \
+                       END AS delta \
+                FROM upd \
+                LEFT JOIN class_schedules sch ON sch.id = upd.class_schedule_id \
+             ), \
+             lg AS ( \
+                INSERT INTO point_logs (user_id, delta, reason, category) \
+                SELECT user_id, delta, \
+                       'Kehadiran (' || status || ') — auto-verifikasi 1 hari', \
+                       CASE WHEN delta < 0 THEN 'discipline' ELSE 'attendance' END \
+                FROM pts WHERE delta <> 0 \
+             ), \
+             agg AS ( \
+                SELECT user_id, SUM(delta)::int AS total FROM pts WHERE delta <> 0 GROUP BY user_id \
+             ), \
+             u AS ( \
+                UPDATE users us SET points = points + agg.total \
+                FROM agg WHERE us.id = agg.user_id RETURNING us.id \
+             ) \
+             SELECT COUNT(*)::bigint FROM upd",
+            &[],
+        )
+        .await
+        .context("run_auto_verify_pamong")?;
+    Ok(row.get(0))
+}
+
+/// Auto-approve TAHAP 2 (dewan guru — final) untuk absensi yang sudah disetujui
+/// pamong tapi >1 hari menunggu verifikasi final sejak `pamong_at`. TIDAK
+/// mengubah poin (sama seperti `decide_verify` manual — poin sudah diberikan
+/// di tahap pamong). Return jumlah baris.
+pub async fn run_auto_verify_final(pool: &Pool) -> Result<i64> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE attendances SET verify_status = 'approved', verified_at = NOW() \
+             WHERE pamong_status = 'approved' AND verify_status = 'pending' \
+               AND pamong_at < NOW() - INTERVAL '1 day'",
+            &[],
+        )
+        .await
+        .context("run_auto_verify_final")?;
+    Ok(n as i64)
 }

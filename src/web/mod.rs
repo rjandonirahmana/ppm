@@ -3,6 +3,9 @@
 pub mod api;
 pub mod app;
 pub mod components;
+// Unduh laporan PDF/Excel (server, axum — di luar server-fn).
+#[cfg(feature = "ssr")]
+pub mod export;
 // Siaran suara sesi: handler axum (server) + komponen klien (universal).
 #[cfg(feature = "ssr")]
 pub mod live_audio;
@@ -10,4 +13,7 @@ pub mod live_audio_ui;
 // SSE ruang live (server): sinyal perubahan → klien refetch.
 #[cfg(feature = "ssr")]
 pub mod live_events;
+// Upload file Materials Library (server, multipart — di luar server-fn).
+#[cfg(feature = "ssr")]
+pub mod materials;
 pub mod pages;

@@ -39,14 +39,36 @@ pub struct RiwayatData {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PermitItem {
-    /// "Izin Sakit" / "Izin Pulang" / "Izin Lainnya"
+    /// "Izin Sakit" / "Izin Pulang" / "Keperluan"
     pub kind_label: String,
     /// "12 – 13 Nov 2025"
     pub range_label: String,
-    /// "Menunggu" / "Disetujui" / "Ditolak"
+    /// "Menunggu Orang Tua" / "Menunggu Pengurus" / "Disetujui" / "Ditolak…"
     pub status_label: String,
-    /// pending|approved|rejected → warna badge.
+    /// pending_parent|pending_pamong|approved|rejected → warna badge.
     pub status_kind: String,
+}
+
+/// "Izin Sakit" / "Izin Pulang" / "Keperluan" / "Izin Lainnya".
+pub fn permit_kind_label(kind: &str) -> &'static str {
+    match kind {
+        "sick" => "Izin Sakit",
+        "leave" => "Izin Pulang",
+        "keperluan" => "Keperluan",
+        _ => "Izin Lainnya",
+    }
+}
+
+/// Label + kind gabungan dua-tahap (migrasi 17: Orang Tua → Pamong) untuk
+/// satu baris permit_requests — dipakai tampilan santri & orang tua.
+pub fn permit_stage(parent_status: &str, pamong_status: &str) -> (&'static str, &'static str) {
+    match (parent_status, pamong_status) {
+        ("rejected", _) => ("Ditolak Orang Tua", "rejected"),
+        ("pending", _) => ("Menunggu Orang Tua", "pending_parent"),
+        (_, "rejected") => ("Ditolak Pengurus", "rejected"),
+        (_, "approved") => ("Disetujui", "approved"),
+        _ => ("Menunggu Pengurus", "pending_pamong"),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -1,14 +1,18 @@
 //! web/pages — Halaman aplikasi (SSR + hydrate).
 
+mod akademik;
 mod analisis;
 mod beranda;
 mod dashboard_santri;
 mod design_pages;
 mod izin;
+mod izin_staf;
 mod kelas;
 mod kelas_detail;
+mod kontrol_pengguna;
 mod laporan;
 mod login;
+mod materi;
 mod menu;
 mod not_found;
 mod ortu_beranda;
@@ -25,15 +29,19 @@ mod students;
 mod verifikasi_pamong;
 mod verifikasi_tahap2;
 
+pub use akademik::AkademikSantriPage;
 pub use analisis::{DewanGuruDashboardPage, GuruDashboardPage};
 pub use beranda::BerandaPage;
 pub use dashboard_santri::SantriDashboardPage;
 pub use design_pages::*;
 pub use izin::IzinPage;
+pub use izin_staf::IzinStafPage;
 pub use kelas::KelasPage;
 pub use kelas_detail::KelasDetailPage;
+pub use kontrol_pengguna::KontrolPenggunaPage;
 pub use laporan::LaporanPage;
 pub use login::LoginPage;
+pub use materi::{MaterialsWidget, MateriPage};
 pub use menu::MenuPage;
 pub use not_found::NotFoundPage;
 pub use ortu_beranda::OrtuBerandaPage;
@@ -42,7 +50,7 @@ pub use ortu_riwayat::OrtuRiwayatPage;
 pub use poin::{PoinDewanPage, PoinPage};
 pub use profil::ProfilPage;
 pub use riwayat::RiwayatPage;
-pub use sesi::SesiPage;
+pub use sesi::{SesiContent, SesiPage};
 pub use sesi_detail::SesiDetailPage;
 pub use sesi_live::SesiLivePage;
 pub use students::StudentsPage;
