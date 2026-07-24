@@ -12,7 +12,7 @@ use crate::web::api::{
     academic_audit_data, books_list, create_book_action, create_class_action, delete_book_action,
     kelas_list,
 };
-use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
+use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 use crate::web::pages::SesiContent;
 
 #[component]
@@ -55,18 +55,24 @@ pub fn KelasPage() -> impl IntoView {
                         <KelasTabBtn tab=tab value="kelas" label="Kelas" />
                         <KelasTabBtn tab=tab value="sesi" label="Sesi" />
                         <KelasTabBtn tab=tab value="akademik" label="Akademik" />
-                        // "Buku" hanya utk admin/pamong (kelola daftar buku hafalan) —
-                        // baca role dari context sesi GLOBAL (bukan resource kelas_list
-                        // ini) supaya tak menunggu data kelas dulu. WAJIB Transition
-                        // (baca Resource sesi harus di dalam Suspense/Transition).
+                        // "Buku" utk admin/pamong/guru/dewan guru (kelola daftar buku
+                        // hafalan — guru & dewan guru kini SAMA dgn admin) — baca role
+                        // dari context sesi GLOBAL (bukan resource kelas_list ini)
+                        // supaya tak menunggu data kelas dulu. WAJIB Transition (baca
+                        // Resource sesi harus di dalam Suspense/Transition).
                         <Transition fallback=|| ()>
                             {move || {
                                 let can_manage = session
                                     .and_then(|s| s.get())
                                     .flatten()
-                                    .map(|u| matches!(u.role.as_str(), "admin" | "supervisor"))
+                                    .map(|u| {
+                                        matches!(
+                                            u.role.as_str(),
+                                            "admin" | "supervisor" | "teacher" | "dewan_guru"
+                                        )
+                                    })
                                     .unwrap_or(false);
-                                can_manage.then(|| view! { <KelasTabBtn tab=tab value="buku" label="Buku" /> })
+                                can_manage.then(|| view! { <KelasTabBtn tab=tab value="buku" label="Materi" /> })
                             }}
                         </Transition>
                     </div>
@@ -88,7 +94,12 @@ pub fn KelasPage() -> impl IntoView {
                                             let can_manage = session
                                                 .and_then(|s| s.get())
                                                 .flatten()
-                                                .map(|u| matches!(u.role.as_str(), "admin" | "supervisor"))
+                                                .map(|u| {
+                                                    matches!(
+                                                        u.role.as_str(),
+                                                        "admin" | "supervisor" | "teacher" | "dewan_guru"
+                                                    )
+                                                })
                                                 .unwrap_or(false);
                                             view! { <BooksTab can_manage=can_manage /> }
                                         }}
@@ -116,123 +127,116 @@ pub fn KelasPage() -> impl IntoView {
                                 .map(|res| match res {
                                     Ok(d) => {
                                         let items = d.items.clone();
+                                        let mut cats: Vec<String> = items
+                                            .iter()
+                                            .map(|k| k.category.clone())
+                                            .filter(|c| !c.is_empty())
+                                            .collect();
+                                        cats.sort();
+                                        cats.dedup();
+                                        let mut golongans: Vec<String> = items
+                                            .iter()
+                                            .map(|k| k.golongan.clone())
+                                            .filter(|g| !g.is_empty())
+                                            .collect();
+                                        golongans.sort();
+                                        golongans.dedup();
                                         view! {
-                                            // ── Statistik ──────────────────────
-                                            <div class="grid grid-cols-2 gap-3">
-                                                <div class="ppm-card p-4 flex items-center gap-3 card-hover">
-                                                    <div class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center">
+                                            <div class="space-y-4">
+                                            // ── Statistik: baris ringkas (kartu ukuran-konten,
+                                            // rata kiri) — dulu 2 kartu melar penuh 72rem. ──
+                                            <div class="grid grid-cols-2 gap-3 md:flex md:gap-3">
+                                                <div class="ppm-card p-4 flex items-center gap-3 card-hover md:min-w-[11rem]">
+                                                    <div class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center shrink-0">
                                                         <span class="material-symbols-outlined">"school"</span>
                                                     </div>
                                                     <div>
-                                                        <p class="text-2xl font-bold text-on-background" data-count=d.total_kelas.to_string()>
+                                                        <p class="text-2xl font-bold text-on-background leading-none" data-count=d.total_kelas.to_string()>
                                                             {d.total_kelas}
                                                         </p>
-                                                        <p class="text-[11px] font-bold tracking-wider text-on-surface-variant">
+                                                        <p class="text-[11px] font-bold tracking-wider text-on-surface-variant mt-1">
                                                             "TOTAL KELAS"
                                                         </p>
                                                     </div>
                                                 </div>
-                                                <div class="ppm-card p-4 flex items-center gap-3 card-hover">
-                                                    <div class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center">
+                                                <div class="ppm-card p-4 flex items-center gap-3 card-hover md:min-w-[11rem]">
+                                                    <div class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center shrink-0">
                                                         <span class="material-symbols-outlined">"groups"</span>
                                                     </div>
                                                     <div>
-                                                        <p class="text-2xl font-bold text-on-background" data-count=d.total_santri.to_string()>
+                                                        <p class="text-2xl font-bold text-on-background leading-none" data-count=d.total_santri.to_string()>
                                                             {d.total_santri}
                                                         </p>
-                                                        <p class="text-[11px] font-bold tracking-wider text-on-surface-variant">
+                                                        <p class="text-[11px] font-bold tracking-wider text-on-surface-variant mt-1">
                                                             "TOTAL SANTRI"
                                                         </p>
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            // ── Cari + tambah kelas: md:max-w-md (input/tombol
-                                            // tunggal jangan melebar penuh kanvas desktop 72rem —
-                                            // list KelasCard di bawah TETAP full-width via grid). ──
-                                            <div class="space-y-4 md:max-w-md">
+                                            // ── Cari: bilah penuh di atas grid (dulu justify-between
+                                            // dgn stats → celah kosong besar di tengah kanvas lebar). ──
                                             <div class="relative">
                                                 <span class="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-outline">
                                                     "search"
                                                 </span>
                                                 <input
                                                     type="text"
-                                                    class="w-full pl-11 pr-4 py-3.5 bg-surface-container border-0 rounded-xl text-body-md text-on-surface"
-                                                    placeholder="Cari nama kelas atau ustadz…"
+                                                    class="w-full pl-11 pr-4 py-3 bg-surface-container border-0 rounded-xl text-body-md text-on-surface"
+                                                    placeholder="Cari kelas atau ustadz…"
                                                     prop:value=move || query.get()
                                                     on:input=move |ev| query.set(event_target_value(&ev))
                                                 />
                                             </div>
 
-                                            // ── Form tambah kelas ──────────────
-                                            // Datalist kategori + golongan (autocomplete + boleh ketik baru)
-                                            {
-                                                let mut cats: Vec<String> = items
-                                                    .iter()
-                                                    .map(|k| k.category.clone())
-                                                    .filter(|c| !c.is_empty())
-                                                    .collect();
-                                                cats.sort();
-                                                cats.dedup();
-                                                let mut golongans: Vec<String> = items
-                                                    .iter()
-                                                    .map(|k| k.golongan.clone())
-                                                    .filter(|g| !g.is_empty())
-                                                    .collect();
-                                                golongans.sort();
-                                                golongans.dedup();
-                                                view! {
-                                                    <datalist id="kategori-kelas">
-                                                        {cats
-                                                            .into_iter()
-                                                            .map(|c| view! { <option value=c></option> })
-                                                            .collect_view()}
-                                                    </datalist>
-                                                    <datalist id="golongan-kelas">
-                                                        {golongans
-                                                            .into_iter()
-                                                            .map(|g| view! { <option value=g></option> })
-                                                            .collect_view()}
-                                                    </datalist>
-                                                }
-                                            }
-
-                                            <TambahKelas show_form=show_form refetch=move || data.refetch() />
-                                            </div>
-
-                                            // ── Daftar kelas (filter klien) ────
-                                            {move || {
-                                                let q = query.get().to_lowercase();
-                                                let list: Vec<KelasItem> = items
-                                                    .clone()
+                                            // Datalist autocomplete kategori + golongan (tak terlihat).
+                                            <datalist id="kategori-kelas">
+                                                {cats
                                                     .into_iter()
-                                                    .filter(|k| {
-                                                        q.is_empty()
-                                                            || k.name.to_lowercase().contains(&q)
-                                                            || k.teacher.to_lowercase().contains(&q)
-                                                    })
-                                                    .collect();
-                                                if list.is_empty() {
-                                                    view! {
-                                                        <EmptyState
-                                                            icon="school"
-                                                            title="Belum ada kelas"
-                                                            subtitle="Tambahkan kelas baru lewat tombol di atas."
-                                                        />
+                                                    .map(|c| view! { <option value=c></option> })
+                                                    .collect_view()}
+                                            </datalist>
+                                            <datalist id="golongan-kelas">
+                                                {golongans
+                                                    .into_iter()
+                                                    .map(|g| view! { <option value=g></option> })
+                                                    .collect_view()}
+                                            </datalist>
+
+                                            // ── Daftar kelas: kartu "Tambah" (statis, sel pertama)
+                                            // + kartu kelas (reaktif filter pencarian). Kartu Tambah
+                                            // KINI menyatu di grid (dulu terpisah di kolom sempit di
+                                            // atas). items-start: form Tambah yang terbuka tak
+                                            // meregangkan tinggi kartu kelas di baris yang sama. ──
+                                            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-start">
+                                                <TambahKelas show_form=show_form refetch=move || data.refetch() />
+                                                {move || {
+                                                    let q = query.get().to_lowercase();
+                                                    let list: Vec<KelasItem> = items
+                                                        .clone()
+                                                        .into_iter()
+                                                        .filter(|k| {
+                                                            q.is_empty()
+                                                                || k.name.to_lowercase().contains(&q)
+                                                                || k.teacher.to_lowercase().contains(&q)
+                                                        })
+                                                        .collect();
+                                                    if list.is_empty() && !q.is_empty() {
+                                                        view! {
+                                                            <p class="col-span-full text-body-sm text-on-surface-variant px-1 py-2">
+                                                                "Tidak ada kelas yang cocok dengan pencarian."
+                                                            </p>
+                                                        }
+                                                            .into_any()
+                                                    } else {
+                                                        list.into_iter()
+                                                            .map(|k| view! { <KelasCard k=k /> })
+                                                            .collect_view()
+                                                            .into_any()
                                                     }
-                                                        .into_any()
-                                                } else {
-                                                    // Desktop: kartu kelas 2 kolom (mockup manajemen kelas).
-                                                    view! {
-                                                        <div class="space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-4">
-                                                            {list.into_iter()
-                                                                .map(|k| view! { <KelasCard k=k /> })
-                                                                .collect_view()}
-                                                        </div>
-                                                    }
-                                                        .into_any()
-                                                }
-                                            }}
+                                                }}
+                                            </div>
+                                            </div>
                                         }
                                             .into_any()
                                     }
@@ -365,8 +369,11 @@ fn TambahKelas(show_form: RwSignal<bool>, refetch: impl Fn() + Copy + Send + 'st
                     .into_any()
             } else {
                 view! {
+                    // md:min-h menyamakan tinggi dgn KelasCard (badge+judul+guru+
+                    // statistik+tombol) supaya kartu Tambah tak kelihatan kerdil
+                    // sebagai sel pertama grid saat form tertutup.
                     <button
-                        class="w-full border-2 border-dashed border-outline-variant rounded-2xl p-6 flex flex-col items-center gap-2 text-on-surface-variant hover:border-primary hover:text-primary transition-colors press"
+                        class="w-full h-full md:min-h-[13.5rem] border-2 border-dashed border-outline-variant rounded-2xl p-6 flex flex-col items-center justify-center gap-2 text-on-surface-variant hover:border-primary hover:text-primary transition-colors press"
                         on:click=move |_| show_form.set(true)
                     >
                         <span class="w-12 h-12 rounded-full bg-surface-container flex items-center justify-center">
@@ -452,7 +459,7 @@ fn KelasTabBtn(tab: RwSignal<String>, value: &'static str, label: &'static str) 
     }
 }
 
-// ── Tab BUKU: kelola daftar buku hafalan (pindah dari /students) ────────────
+// ── Tab MATERI: kelola daftar materi (kitab/Qur'an) — dulu "Buku" ──────────
 
 #[component]
 fn BooksTab(can_manage: bool) -> impl IntoView {
@@ -478,7 +485,7 @@ fn BooksTab(can_manage: bool) -> impl IntoView {
                                 if items.is_empty() {
                                     view! {
                                         <p class="text-body-sm text-on-surface-variant text-center py-4">
-                                            "Belum ada buku terdaftar."
+                                            "Belum ada materi terdaftar."
                                         </p>
                                     }
                                         .into_any()
@@ -541,7 +548,7 @@ fn BookRow(b: BookItem, can_manage: bool, refetch: impl Fn() + Copy + Send + 'st
                             class="w-8 h-8 rounded-lg bg-error-container/60 text-error flex items-center justify-center shrink-0 disabled:opacity-50"
                             disabled=move || busy.get()
                             on:click=del
-                            aria-label="Hapus buku"
+                            aria-label="Hapus materi"
                         >
                             <span class="material-symbols-outlined text-[18px]">"delete"</span>
                         </button>
@@ -588,7 +595,7 @@ fn AddBookForm(refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
         <form class="ppm-card p-4 space-y-3" method="post" on:submit=submit>
             <h3 class="text-body-md font-bold text-on-background flex items-center gap-2">
                 <span class="material-symbols-outlined text-primary">"add_circle"</span>
-                "Tambah Buku"
+                "Tambah Materi"
             </h3>
             {move || {
                 msg.get()
@@ -603,7 +610,7 @@ fn AddBookForm(refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
             <input
                 type="text"
                 class=field
-                placeholder="Judul buku (mis. Sahih Bukhari, Al-Qur'an)"
+                placeholder="Judul materi (mis. Sahih Bukhari, Al-Qur'an)"
                 prop:value=move || title.get()
                 on:input=move |ev| title.set(event_target_value(&ev))
             />
@@ -620,7 +627,7 @@ fn AddBookForm(refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
                 class="w-full py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-body-sm disabled:opacity-60"
                 disabled=move || busy.get()
             >
-                {move || if busy.get() { "Menyimpan…" } else { "Simpan Buku" }}
+                {move || if busy.get() { "Menyimpan…" } else { "Simpan Materi" }}
             </button>
         </form>
     }
@@ -635,7 +642,7 @@ fn AcademicAuditTab() -> impl IntoView {
     view! {
         <div class="space-y-3 stagger">
             <p class="text-body-sm text-on-surface-variant">
-                "Rata-rata progres tiap santri di semua buku (hadist/Qur'an) — paling tertinggal ditampilkan lebih dulu. Klik baris untuk buka detail di Students."
+                "Rata-rata progres tiap santri di semua materi (hadits/Qur'an) — paling tertinggal ditampilkan lebih dulu. Klik baris untuk buka detail di Students."
             </p>
             <Suspense fallback=|| {
                 view! {
@@ -652,7 +659,7 @@ fn AcademicAuditTab() -> impl IntoView {
                                 if items.is_empty() {
                                     view! {
                                         <p class="text-body-sm text-on-surface-variant text-center py-8">
-                                            "Belum ada buku terdaftar untuk diaudit."
+                                            "Belum ada materi terdaftar untuk diaudit."
                                         </p>
                                     }
                                         .into_any()
@@ -686,7 +693,7 @@ fn AcademicAuditRow(s: StudentAcademicItem) -> impl IntoView {
     } else {
         "bg-error"
     };
-    let progress_label = format!("{}/{} buku dimulai", s.books_started, s.total_books);
+    let progress_label = format!("{}/{} materi dimulai", s.books_started, s.total_books);
     let href = format!("/students?student={}", s.user_id);
     view! {
         <a

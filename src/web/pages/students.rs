@@ -100,9 +100,11 @@ pub fn StudentsPage() -> impl IntoView {
                                         let total = d.students.len();
                                         let pending = StoredValue::new(d.pending.clone());
                                         let verified_today = d.verified_today;
-                                        // Kelola buku + isi progres: admin/pamong saja.
-                                        let can_manage_books =
-                                            matches!(d.role.as_str(), "admin" | "supervisor");
+                                        // Kelola buku + isi progres: admin/pamong/guru/dewan guru.
+                                        let can_manage_books = matches!(
+                                            d.role.as_str(),
+                                            "admin" | "supervisor" | "teacher" | "dewan_guru"
+                                        );
 
                                         // Aksi verifikasi: cabang sesuai tahap peran.
                                         // `is_t1` bool (Copy) agar closure tetap Copy.
@@ -347,7 +349,7 @@ fn StudentBookPanel(student_id: i64, student_name: String, can_manage: bool) -> 
         <div class="ppm-card p-3.5 space-y-2">
             <p class="text-body-sm font-bold text-on-background flex items-center gap-1.5">
                 <span class="material-symbols-outlined text-primary text-[18px]">"menu_book"</span>
-                {format!("Progres Buku — {student_name}")}
+                {format!("Progres Materi — {student_name}")}
             </p>
             <Suspense fallback=|| {
                 view! { <div class="h-12 bg-surface-container rounded-xl animate-pulse"></div> }
@@ -359,7 +361,7 @@ fn StudentBookPanel(student_id: i64, student_name: String, can_manage: bool) -> 
                                 if items.is_empty() {
                                     view! {
                                         <p class="text-body-sm text-on-surface-variant">
-                                            "Belum ada buku terdaftar."
+                                            "Belum ada materi terdaftar."
                                         </p>
                                     }
                                         .into_any()

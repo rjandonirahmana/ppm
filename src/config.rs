@@ -1,7 +1,9 @@
 //! config.rs — Konfigurasi aplikasi + pool Postgres (server-only).
 
 use anyhow::{Context, Result};
-use deadpool_postgres::{Config as PgConfig, Pool, PoolConfig, Runtime};
+use deadpool_postgres::{
+    Config as PgConfig, ManagerConfig, Pool, PoolConfig, RecyclingMethod, Runtime,
+};
 use std::env;
 use tokio_postgres::NoTls;
 
@@ -82,6 +84,13 @@ pub async fn create_pool(database_url: &str, max_size: usize) -> Result<Pool> {
     let mut cfg = PgConfig::new();
     cfg.url = Some(database_url.to_string());
     cfg.pool = Some(PoolConfig::new(max_size));
+    // Verifikasi koneksi SEBELUM dipakai ulang. DB VPS / firewall memutus koneksi
+    // yang menganggur → tanpa ini deadpool (default `Fast`) bisa menyerahkan
+    // koneksi MATI (client `is_closed()` masih false karena SERVER yang memutus)
+    // → query pertama gagal "connection closed/reset". `Verified` melakukan ping
+    // ringan (simple_query "") pada recycle sehingga koneksi basi dibuang & dibuat
+    // baru → menghilangkan error koneksi intermiten (mis. login setelah app idle).
+    cfg.manager = Some(ManagerConfig { recycling_method: RecyclingMethod::Verified });
     let pool = cfg
         .create_pool(Some(Runtime::Tokio1), NoTls)
         .context("gagal membuat pool Postgres")?;

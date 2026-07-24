@@ -41,8 +41,10 @@ pub async fn delete_book(pool: &Pool, id: i64) -> Result<()> {
 }
 
 /// Parse "11-20, 45-50, 23" → JSONB array [[11,20],[45,50],[23,23]]. Validasi:
-/// tiap halaman dalam rentang 1..=total_pages, awal <= akhir.
-fn parse_missing_pages(text: &str, total_pages: i32) -> Result<Value> {
+/// tiap halaman dalam rentang 1..=total_pages, awal <= akhir. Generik (bukan
+/// cuma "halaman kosong") — dipakai juga service/kelas.rs utk materi buku
+/// per sesi (migrasi 20), format JSONB SAMA dgn `academic_user.missing_pages`.
+pub(crate) fn parse_page_ranges(text: &str, total_pages: i32) -> Result<Value> {
     let mut ranges = Vec::new();
     for part in text.split(',') {
         let part = part.trim();
@@ -77,7 +79,7 @@ fn parse_missing_pages(text: &str, total_pages: i32) -> Result<Value> {
 }
 
 /// Format JSONB array → "11-20, 45-50, 23" (angka tunggal bila awal==akhir).
-fn format_missing_pages(v: &Value) -> String {
+pub(crate) fn format_page_ranges(v: &Value) -> String {
     let Some(arr) = v.as_array() else { return String::new() };
     arr.iter()
         .filter_map(|r| {
@@ -99,7 +101,7 @@ pub async fn student_progress(pool: &Pool, user_id: i64) -> Result<Vec<BookProgr
             book_title: r.book_title,
             total_pages: r.total_pages,
             percentage: r.percentage,
-            missing_pages_label: format_missing_pages(&r.missing_pages),
+            missing_pages_label: format_page_ranges(&r.missing_pages),
         })
         .collect())
 }
@@ -139,6 +141,6 @@ pub async fn set_progress(
     if !(0..=100).contains(&pct) {
         bail!("Persentase harus di antara 0 sampai 100.");
     }
-    let missing = parse_missing_pages(missing_pages_text, book.total_pages)?;
+    let missing = parse_page_ranges(missing_pages_text, book.total_pages)?;
     repo::upsert_progress(pool, user_id, book_id, pct, &missing, actor_id).await
 }

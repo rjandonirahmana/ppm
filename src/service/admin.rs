@@ -6,8 +6,100 @@ use anyhow::{bail, Result};
 use deadpool_postgres::Pool;
 
 use super::fmt::fmt_ago;
-use crate::models::{ActivityLogItem, UserControlData, UserRow};
+use crate::models::{ActivityLogItem, RfidDeviceItem, UserControlData, UserRow};
 use crate::repository as repo;
+
+/// api_key acak (32 hex) untuk perangkat RFID baru.
+fn gen_api_key() -> String {
+    use rand::RngExt;
+    let mut bytes = [0u8; 16];
+    rand::rng().fill(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Daftar perangkat RFID (ruang) untuk manajemen admin + dropdown jadwal.
+pub async fn rfid_devices(pool: &Pool) -> Result<Vec<RfidDeviceItem>> {
+    Ok(repo::list_devices(pool)
+        .await?
+        .into_iter()
+        .map(|d| RfidDeviceItem {
+            id: d.id,
+            device_name: d.device_name,
+            serial_number: d.serial_number.unwrap_or_default(),
+            location: d.location.unwrap_or_default(),
+            api_key: d.api_key,
+        })
+        .collect())
+}
+
+/// Buat perangkat RFID. `api_key` kosong → di-generate. Return (id, api_key).
+pub async fn create_rfid_device(
+    pool: &Pool,
+    device_name: &str,
+    serial_number: &str,
+    location: &str,
+    api_key: &str,
+) -> Result<i64> {
+    let name = device_name.trim();
+    if name.is_empty() {
+        bail!("Nama perangkat/ruang wajib diisi.");
+    }
+    let serial = serial_number.trim();
+    let loc = location.trim();
+    let key = api_key.trim();
+    let key = if key.is_empty() { gen_api_key() } else { key.to_string() };
+    repo::create_device(
+        pool,
+        name,
+        (!serial.is_empty()).then_some(serial),
+        (!loc.is_empty()).then_some(loc),
+        &key,
+    )
+    .await
+}
+
+pub async fn update_rfid_device(
+    pool: &Pool,
+    id: i64,
+    device_name: &str,
+    serial_number: &str,
+    location: &str,
+) -> Result<()> {
+    let name = device_name.trim();
+    if name.is_empty() {
+        bail!("Nama perangkat/ruang wajib diisi.");
+    }
+    let serial = serial_number.trim();
+    let loc = location.trim();
+    if !repo::update_device(
+        pool,
+        id,
+        name,
+        (!serial.is_empty()).then_some(serial),
+        (!loc.is_empty()).then_some(loc),
+    )
+    .await?
+    {
+        bail!("Perangkat tidak ditemukan.");
+    }
+    Ok(())
+}
+
+/// Ganti api_key perangkat (mis. bila bocor) → return api_key baru.
+pub async fn regenerate_rfid_key(pool: &Pool, id: i64) -> Result<String> {
+    let key = gen_api_key();
+    if !repo::set_api_key(pool, id, &key).await? {
+        bail!("Perangkat tidak ditemukan.");
+    }
+    Ok(key)
+}
+
+pub async fn delete_rfid_device(pool: &Pool, id: i64) -> Result<()> {
+    if !repo::delete_device(pool, id).await? {
+        bail!("Perangkat tidak ditemukan.");
+    }
+    Ok(())
+}
 
 fn role_label(role: &str) -> &'static str {
     match role {

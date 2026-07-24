@@ -239,8 +239,10 @@ pub fn MateriPage() -> impl IntoView {
                                             }
                                                 .into_any()
                                         } else {
+                                            // Desktop: baris materi (kompak) 2 kolom agar tak
+                                            // melar penuh kanvas; mobile tetap bertumpuk.
                                             view! {
-                                                <div class="space-y-2">
+                                                <div class="space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-2">
                                                     {items
                                                         .into_iter()
                                                         .map(|m| {

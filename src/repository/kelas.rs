@@ -706,14 +706,38 @@ pub struct SchedRow {
     /// utk sesi yang lahir dari jadwal ini (lihat migrasi 10, gerbang rekam
     /// suara di models::category_allows_recording).
     pub category: Option<String>,
-    /// Poin custom saat TERLAMBAT di jadwal ini (migrasi 13). None = pakai
-    /// default global point_rule("late") = +2.
+    /// Poin BONUS saat TEPAT WAKTU (migrasi 21). None = default 10. Ditambahkan.
+    pub present_points: Option<i16>,
+    /// Poin DIPOTONG saat TERLAMBAT (migrasi 13/21). None = default 0. Magnitude
+    /// positif, dikurangkan.
     pub late_points: Option<i16>,
-    /// Poin custom (magnitude positif) saat ALPA di jadwal ini (migrasi 15).
-    /// None = pakai default global 15.
+    /// Poin DIPOTONG saat ALPA (migrasi 15). None = default 15. Magnitude
+    /// positif, dikurangkan.
     pub absent_points: Option<i16>,
-    /// Ruang/lokasi pertemuan (migrasi 17), mis. "Room 302 (Al-Azhar)".
-    pub room: Option<String>,
+    /// Ruang = perangkat RFID (migrasi 24). None = belum diset. room_name utk
+    /// tampilan (join rfid_devices.device_name).
+    pub room_id: Option<i64>,
+    pub room_name: Option<String>,
+    /// Tanggal manual (migrasi 23) untuk recurrence 'custom' — ISO "YYYY-MM-DD".
+    /// Kosong utk pola biasa (harian/mingguan/bulanan/sekali).
+    pub custom_dates: Vec<String>,
+}
+
+/// Opsi ruang (perangkat RFID) untuk dropdown jadwal — hanya id + nama (tanpa
+/// api_key, aman dikirim ke semua peran staf).
+pub async fn device_options(pool: &Pool) -> Result<Vec<(i64, String)>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query("SELECT id, device_name FROM rfid_devices ORDER BY device_name", &[])
+        .await
+        .context("device_options")?;
+    Ok(rows.into_iter().map(|r| (r.get(0), r.get(1))).collect())
+}
+
+fn json_dates(v: &serde_json::Value) -> Vec<String> {
+    v.as_array()
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default()
 }
 
 /// Jadwal-jadwal milik kelas.
@@ -721,9 +745,13 @@ pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT id, COALESCE(title, ''), start_time, end_time, limit_entery_time, \
-                    recurrence_type, start_date, end_date, category, late_points, absent_points, room \
-             FROM class_schedules WHERE class_id = $1 ORDER BY start_time",
+            "SELECT cs.id, COALESCE(cs.title, ''), cs.start_time, cs.end_time, \
+                    cs.limit_entery_time, cs.recurrence_type, cs.start_date, cs.end_date, \
+                    cs.category, cs.present_points, cs.late_points, cs.absent_points, \
+                    cs.room_id, dev.device_name, cs.custom_dates \
+             FROM class_schedules cs \
+             LEFT JOIN rfid_devices dev ON dev.id = cs.room_id \
+             WHERE cs.class_id = $1 ORDER BY cs.start_time",
             &[&class_id],
         )
         .await
@@ -740,9 +768,12 @@ pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>
             start_date: r.get(6),
             end_date: r.get(7),
             category: r.get(8),
-            late_points: r.get(9),
-            absent_points: r.get(10),
-            room: r.get(11),
+            present_points: r.get(9),
+            late_points: r.get(10),
+            absent_points: r.get(11),
+            room_id: r.get(12),
+            room_name: r.get(13),
+            custom_dates: json_dates(&r.get::<_, serde_json::Value>(14)),
         })
         .collect())
 }
@@ -760,20 +791,24 @@ pub async fn create_schedule(
     start_date: chrono::NaiveDate,
     end_date: Option<chrono::NaiveDate>,
     category: Option<&str>,
+    present_points: Option<i16>,
     late_points: Option<i16>,
     absent_points: Option<i16>,
-    room: Option<&str>,
+    room_id: Option<i64>,
+    custom_dates: &serde_json::Value,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
             "INSERT INTO class_schedules \
                 (class_id, title, start_time, end_time, limit_entery_time, recurrence_type, \
-                 start_date, end_date, category, late_points, absent_points, room) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
+                 start_date, end_date, category, present_points, late_points, absent_points, \
+                 room_id, custom_dates) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id",
             &[
                 &class_id, &title, &start_time, &end_time, &limit_time, &recurrence_type,
-                &start_date, &end_date, &category, &late_points, &absent_points, &room,
+                &start_date, &end_date, &category, &present_points, &late_points, &absent_points,
+                &room_id, custom_dates,
             ],
         )
         .await
@@ -781,7 +816,9 @@ pub async fn create_schedule(
     Ok(row.get(0))
 }
 
-/// Buat sesi baru → id.
+/// Buat sesi baru → id. `book_id` opsional (sesi non-mengaji spt Sholat tak
+/// perlu materi buku); `book_pages` JSONB array pasangan halaman (migrasi 20).
+#[allow(clippy::too_many_arguments)]
 pub async fn create_session(
     pool: &Pool,
     class_id: i64,
@@ -789,13 +826,18 @@ pub async fn create_session(
     teacher_id: Option<i64>,
     title: &str,
     session_date: chrono::NaiveDate,
+    book_id: Option<i64>,
+    book_pages: &serde_json::Value,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
-            "INSERT INTO class_sessions (class_id, class_schedule_id, teacher_id, title, session_date) \
-             VALUES ($1, $2, $3, $4, $5) RETURNING id",
-            &[&class_id, &schedule_id, &teacher_id, &title, &session_date],
+            "INSERT INTO class_sessions \
+                (class_id, class_schedule_id, teacher_id, title, session_date, book_id, book_pages) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+            &[
+                &class_id, &schedule_id, &teacher_id, &title, &session_date, &book_id, book_pages,
+            ],
         )
         .await
         .context("create_session")?;
@@ -850,16 +892,19 @@ pub async fn update_schedule(
     start_date: chrono::NaiveDate,
     end_date: Option<chrono::NaiveDate>,
     category: Option<&str>,
+    present_points: Option<i16>,
     late_points: Option<i16>,
     absent_points: Option<i16>,
-    room: Option<&str>,
+    room_id: Option<i64>,
+    custom_dates: &serde_json::Value,
 ) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
         .execute(
             "UPDATE class_schedules SET title = $2, start_time = $3, end_time = $4, \
                 limit_entery_time = $5, recurrence_type = $6, start_date = $7, end_date = $8, \
-                category = $9, late_points = $10, absent_points = $11, room = $12 \
+                category = $9, present_points = $10, late_points = $11, absent_points = $12, \
+                room_id = $13, custom_dates = $14 \
              WHERE id = $1",
             &[
                 &schedule_id,
@@ -871,9 +916,11 @@ pub async fn update_schedule(
                 &start_date,
                 &end_date,
                 &category,
+                &present_points,
                 &late_points,
                 &absent_points,
-                &room,
+                &room_id,
+                custom_dates,
             ],
         )
         .await
@@ -1023,6 +1070,24 @@ pub async fn set_session_teacher(
     Ok(n > 0)
 }
 
+/// Set/ubah materi buku sesi (book_id NULL bila 0/None; migrasi 20).
+pub async fn set_session_book(
+    pool: &Pool,
+    session_id: i64,
+    book_id: Option<i64>,
+    book_pages: &serde_json::Value,
+) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE class_sessions SET book_id = $2, book_pages = $3 WHERE id = $1",
+            &[&session_id, &book_id, book_pages],
+        )
+        .await
+        .context("set_session_book")?;
+    Ok(n > 0)
+}
+
 /// Set status sesi (mis. 'cancelled' = libur, 'scheduled' = aktif kembali).
 pub async fn set_session_status(pool: &Pool, session_id: i64, status: &str) -> Result<bool> {
     let c = pool.get().await?;
@@ -1131,6 +1196,9 @@ pub struct CurriculumRow {
     pub progress_pct: i16,
     pub order_index: i16,
     pub status: String,
+    /// Tautan ke materi terdaftar (migrasi 22) — None = materi bebas-teks.
+    pub book_id: Option<i64>,
+    pub book_title: Option<String>,
 }
 
 /// Cakupan materi/kitab kelas ini, terurut sesuai order_index.
@@ -1138,9 +1206,11 @@ pub async fn class_curriculum(pool: &Pool, class_id: i64) -> Result<Vec<Curricul
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT id, title, description, scope_start, scope_end, progress_pct, \
-                    order_index, status \
-             FROM curriculum WHERE class_id = $1 ORDER BY order_index, id",
+            "SELECT cu.id, cu.title, cu.description, cu.scope_start, cu.scope_end, \
+                    cu.progress_pct, cu.order_index, cu.status, cu.book_id, b.title \
+             FROM curriculum cu \
+             LEFT JOIN books b ON b.id = cu.book_id \
+             WHERE cu.class_id = $1 ORDER BY cu.order_index, cu.id",
             &[&class_id],
         )
         .await
@@ -1156,6 +1226,8 @@ pub async fn class_curriculum(pool: &Pool, class_id: i64) -> Result<Vec<Curricul
             progress_pct: r.get(5),
             order_index: r.get(6),
             status: r.get(7),
+            book_id: r.get(8),
+            book_title: r.get(9),
         })
         .collect())
 }
@@ -1170,6 +1242,7 @@ pub async fn create_curriculum(
     scope_end: &str,
     progress_pct: i16,
     status: &str,
+    book_id: Option<i64>,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let order_index: i16 = c
@@ -1189,11 +1262,11 @@ pub async fn create_curriculum(
         .query_one(
             "INSERT INTO curriculum \
                 (class_id, title, description, scope_start, scope_end, progress_pct, \
-                 order_index, status) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+                 order_index, status, book_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
             &[
                 &class_id, &title, &description, &scope_start, &scope_end, &progress_pct,
-                &order_index, &status,
+                &order_index, &status, &book_id,
             ],
         )
         .await
@@ -1211,14 +1284,15 @@ pub async fn update_curriculum(
     scope_end: &str,
     progress_pct: i16,
     status: &str,
+    book_id: Option<i64>,
 ) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
         .execute(
             "UPDATE curriculum SET title = $2, description = $3, scope_start = $4, \
-                scope_end = $5, progress_pct = $6, status = $7, updated_at = NOW() \
+                scope_end = $5, progress_pct = $6, status = $7, book_id = $8, updated_at = NOW() \
              WHERE id = $1",
-            &[&id, &title, &description, &scope_start, &scope_end, &progress_pct, &status],
+            &[&id, &title, &description, &scope_start, &scope_end, &progress_pct, &status, &book_id],
         )
         .await
         .context("update_curriculum")?;

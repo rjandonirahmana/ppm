@@ -65,6 +65,26 @@ body{font-family:'Work Sans',sans-serif;background-color:#f9f9ff;}
 
 /* ── Interaktivitas global ──────────────────────────────────────────────── */
 button,a{-webkit-tap-highlight-color:transparent}
+/* Tailwind v4 Preflight TIDAK lagi memberi `cursor:pointer` pada <button>
+   (beda dari v3) → SEMUA tombol/elemen klik tampil kursor panah, terkesan tak
+   bisa diklik. Kembalikan pointer utk elemen interaktif (audit ui-ux-pro-max:
+   "cursor-pointer on all clickable elements"). role=button menutup elemen klik
+   kustom. Disabled → not-allowed. */
+button:not(:disabled),[role="button"]:not([aria-disabled="true"]),a[href],
+label[for],select,summary{cursor:pointer}
+button:disabled,[aria-disabled="true"]{cursor:not-allowed}
+
+/* Fokus keyboard TERLIHAT (a11y, checklist: "Focus states visible for keyboard
+   nav"). Form control → :focus (mouse+keyboard, input border-0 kini punya
+   penanda aktif). Tombol/link → :focus-visible (hanya navigasi keyboard, tak
+   muncul saat klik mouse → tak mengganggu desain). Outline mengikuti
+   border-radius elemen di browser modern. */
+input:focus-visible,select:focus-visible,textarea:focus-visible{
+  outline:2px solid #064e3b;outline-offset:1px}
+a:focus-visible,button:focus-visible,[role="button"]:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible{
+  outline:2px solid #064e3b;outline-offset:2px}
+
 button{transition:transform .15s ease,background-color .15s ease,border-color .15s ease,
   box-shadow .15s ease,opacity .15s ease}
 button:active{transform:scale(.96)}
@@ -148,7 +168,18 @@ button:active{transform:scale(.96)}
      sampai di-rework (kartu mobile melar tanpa grid = jelek). */
   body:has(.ppm-sidebar[data-open="1"]) .ppm-stage>div.ppm-wide{
     max-width:72rem;
-    padding-inline:1.5rem;
+    padding-inline:2rem;
+    padding-bottom:2.5rem;
+  }
+  /* Selaraskan wrapper konten dgn header di kanvas desktop. MobileHeader sudah
+     `md:px-0` (rata ke padding kanvas), TAPI wrapper konten `<div class="px-5">`
+     tak punya override desktop → judul halaman menggantung ~20px di kiri semua
+     kartu. Nol-kan padding-inline wrapper konten (bukan .fixed: bottom-sheet/
+     AudioDock punya padding sendiri) agar rata dgn header. Padding kanvas kini
+     dari `.ppm-wide` (2rem) — satu sumber, konsisten seluruh halaman. */
+  body:has(.ppm-sidebar[data-open="1"]) .ppm-stage>div.ppm-wide>div:not(.fixed){
+    padding-left:0;
+    padding-right:0;
   }
   /* Bilah fixed dlm halaman (chat sesi, AudioDock): di kanvas lebar dibatasi
      36rem terpusat → jadi bilah kontrol melayang, bukan membentang penuh. */

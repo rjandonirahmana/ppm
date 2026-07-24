@@ -3,6 +3,17 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Perangkat RFID = "ruang" (dropdown jadwal + manajemen di User Control).
+/// api_key dipakai firmware ESP8266 utk autentikasi POST /api/rfid/scan.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RfidDeviceItem {
+    pub id: i64,
+    pub device_name: String,
+    pub serial_number: String,
+    pub location: String,
+    pub api_key: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserRow {
     pub id: i64,

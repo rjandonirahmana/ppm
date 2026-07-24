@@ -620,6 +620,7 @@ fn JadwalTab(
     let schedules = d.schedules.clone();
     let weekly = d.weekly_sessions;
     let avg = d.avg_duration_min;
+    let room_opts = StoredValue::new(d.room_options.clone());
     let status = if schedules.is_empty() {
         "Belum diatur"
     } else {
@@ -628,7 +629,7 @@ fn JadwalTab(
     view! {
         <div class="space-y-3 stagger">
             <div class="md:max-w-md">
-                <BuatJadwalForm class_id=class_id refetch=refetch />
+                <BuatJadwalForm class_id=class_id room_options=room_opts refetch=refetch />
             </div>
 
             // ── Statistik jadwal (mockup Jadwal Kelas) ──────────────────────
@@ -670,7 +671,7 @@ fn JadwalTab(
                     <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
                         {schedules
                             .into_iter()
-                            .map(|s| view! { <JadwalCard s=s refetch=refetch /> })
+                            .map(|s| view! { <JadwalCard s=s room_options=room_opts refetch=refetch /> })
                             .collect_view()}
                     </div>
                 }
@@ -681,7 +682,11 @@ fn JadwalTab(
 }
 
 #[component]
-fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
+fn JadwalCard(
+    s: ScheduleItem,
+    room_options: StoredValue<Vec<crate::models::RoomOption>>,
+    refetch: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
     let sid = s.id;
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
@@ -696,9 +701,17 @@ fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> im
     let e_sd = RwSignal::new(s.start_date.clone());
     let e_ed = RwSignal::new(s.end_date.clone());
     let e_cat = RwSignal::new(s.category.clone());
+    let e_present = RwSignal::new(s.present_points.clone());
     let e_late = RwSignal::new(s.late_points.clone());
     let e_absent = RwSignal::new(s.absent_points.clone());
-    let e_room = RwSignal::new(s.room.clone());
+    let e_room = RwSignal::new(s.room_id);
+    let e_custom = RwSignal::new(
+        s.custom_dates
+            .split(',')
+            .filter(|x| !x.trim().is_empty())
+            .map(|x| x.trim().to_string())
+            .collect::<Vec<_>>(),
+    );
 
     let save = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -716,13 +729,15 @@ fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> im
             e_sd.get_untracked(),
             e_ed.get_untracked(),
             e_cat.get_untracked(),
+            e_present.get_untracked(),
             e_late.get_untracked(),
             e_absent.get_untracked(),
             e_room.get_untracked(),
+            e_custom.get_untracked().join(","),
         );
         leptos::task::spawn_local(async move {
             match update_schedule_action(
-                sid, a.0, a.1, a.2, a.3, a.4, a.5, a.6, a.7, a.8, a.9, a.10,
+                sid, a.0, a.1, a.2, a.3, a.4, a.5, a.6, a.7, a.8, a.9, a.10, a.11, a.12,
             )
             .await
             {
@@ -760,9 +775,10 @@ fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> im
     let time_label = s.time_label.clone();
     let date_label = s.date_label.clone();
     let category_ro = s.category.clone();
+    let present_ro = s.present_points.clone();
     let late_ro = s.late_points.clone();
     let absent_ro = s.absent_points.clone();
-    let room_ro = s.room.clone();
+    let room_ro = s.room_label.clone();
     let field =
         "w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface";
     view! {
@@ -826,28 +842,61 @@ fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> im
                                 prop:value=move || e_cat.get()
                                 on:input=move |ev| e_cat.set(event_target_value(&ev))
                             />
-                            <input
-                                type="text"
-                                class=field
-                                placeholder="Ruang (mis. Room 302 (Al-Azhar))"
-                                prop:value=move || e_room.get()
-                                on:input=move |ev| e_room.set(event_target_value(&ev))
-                            />
+                            <label class="space-y-1 block">
+                                <span class="text-[11px] text-on-surface-variant">"Ruang (perangkat RFID)"</span>
+                                <select
+                                    class=field
+                                    on:change=move |ev| e_room.set(event_target_value(&ev).parse().unwrap_or(0))
+                                >
+                                    <option value="0" selected=move || e_room.get() == 0>
+                                        "— Tanpa ruang —"
+                                    </option>
+                                    {room_options
+                                        .get_value()
+                                        .into_iter()
+                                        .map(|r| {
+                                            let val = r.id.to_string();
+                                            let sel = move || e_room.get() == r.id;
+                                            view! {
+                                                <option value=val selected=sel>
+                                                    {r.name}
+                                                </option>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </select>
+                            </label>
+                            // Poin kehadiran: semua positif (tepat waktu ditambah,
+                            // telat & alpa dikurangi).
                             <label class="space-y-1 block">
                                 <span class="text-[11px] text-on-surface-variant">
-                                    "Poin jika telat di jadwal ini (kosongkan = default +2)"
+                                    "Bonus tepat waktu — ditambah (kosong = 10)"
                                 </span>
                                 <input
                                     type="number"
+                                    min="0"
                                     class=field
-                                    placeholder="mis. -5 utk sholat"
+                                    placeholder="mis. 10"
+                                    prop:value=move || e_present.get()
+                                    on:input=move |ev| e_present.set(event_target_value(&ev))
+                                />
+                            </label>
+                            <label class="space-y-1 block">
+                                <span class="text-[11px] text-on-surface-variant">
+                                    "Potongan jika telat — dikurangi (kosong = 0)"
+                                </span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    class=field
+                                    placeholder="mis. 5"
                                     prop:value=move || e_late.get()
                                     on:input=move |ev| e_late.set(event_target_value(&ev))
                                 />
                             </label>
                             <label class="space-y-1 block">
                                 <span class="text-[11px] text-on-surface-variant">
-                                    "Poin dipotong jika alpa di jadwal ini (kosongkan = default 15, isi angka positif)"
+                                    "Potongan jika alpa — dikurangi (kosong = 15)"
                                 </span>
                                 <input
                                     type="number"
@@ -900,30 +949,41 @@ fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> im
                                         <option value="weekly" selected=move || e_rec.get() == "weekly">"Mingguan"</option>
                                         <option value="monthly" selected=move || e_rec.get() == "monthly">"Bulanan"</option>
                                         <option value="once" selected=move || e_rec.get() == "once">"Sekali"</option>
+                                        <option value="custom" selected=move || e_rec.get() == "custom">"Tanggal tertentu"</option>
                                     </select>
                                 </label>
                             </div>
-                            <div class="grid grid-cols-2 gap-2">
-                                <label class="space-y-1">
-                                    <span class="text-[11px] text-on-surface-variant">"Mulai tanggal"</span>
-                                    <input
-                                        type="date"
-                                        class=field
-                                        prop:value=move || e_sd.get()
-                                        on:input=move |ev| e_sd.set(event_target_value(&ev))
-                                        required=true
-                                    />
-                                </label>
-                                <label class="space-y-1">
-                                    <span class="text-[11px] text-on-surface-variant">"Selesai (opsional)"</span>
-                                    <input
-                                        type="date"
-                                        class=field
-                                        prop:value=move || e_ed.get()
-                                        on:input=move |ev| e_ed.set(event_target_value(&ev))
-                                    />
-                                </label>
-                            </div>
+                            {move || {
+                                if e_rec.get() == "custom" {
+                                    view! { <CustomDatePicker dates=e_custom /> }
+                                        .into_any()
+                                } else {
+                                    view! {
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <label class="space-y-1">
+                                                <span class="text-[11px] text-on-surface-variant">"Mulai tanggal"</span>
+                                                <input
+                                                    type="date"
+                                                    class=field
+                                                    prop:value=move || e_sd.get()
+                                                    on:input=move |ev| e_sd.set(event_target_value(&ev))
+                                                    required=true
+                                                />
+                                            </label>
+                                            <label class="space-y-1">
+                                                <span class="text-[11px] text-on-surface-variant">"Selesai (opsional)"</span>
+                                                <input
+                                                    type="date"
+                                                    class=field
+                                                    prop:value=move || e_ed.get()
+                                                    on:input=move |ev| e_ed.set(event_target_value(&ev))
+                                                />
+                                            </label>
+                                        </div>
+                                    }
+                                        .into_any()
+                                }
+                            }}
                             <div class="grid grid-cols-2 gap-2 pt-1">
                                 <button
                                     type="button"
@@ -963,12 +1023,21 @@ fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> im
                                     </p>
                                 }
                             })}
+                        {(!present_ro.is_empty())
+                            .then(|| {
+                                view! {
+                                    <p class="text-body-sm text-success flex items-center gap-1">
+                                        <span class="material-symbols-outlined text-[15px]">"check_circle"</span>
+                                        "Tepat waktu: +" {present_ro.clone()} " poin"
+                                    </p>
+                                }
+                            })}
                         {(!late_ro.is_empty())
                             .then(|| {
                                 view! {
                                     <p class="text-body-sm text-on-surface-variant flex items-center gap-1">
                                         <span class="material-symbols-outlined text-[15px]">"bolt"</span>
-                                        "Telat: " {late_ro.clone()} " poin"
+                                        "Telat: -" {late_ro.clone()} " poin"
                                     </p>
                                 }
                             })}
@@ -999,8 +1068,145 @@ fn JadwalCard(s: ScheduleItem, refetch: impl Fn() + Copy + Send + 'static) -> im
     }
 }
 
+/// Picker tanggal manual (recurrence 'custom') = KALENDER bulanan ala kalender
+/// akademik: klik hari untuk pilih/batal (loncat-loncat), navigasi bulan ‹ ›.
+/// Grid dihitung di klien (chrono wasmbind). Dipakai form Buat & Edit jadwal.
 #[component]
-fn BuatJadwalForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
+fn CustomDatePicker(dates: RwSignal<Vec<String>>) -> impl IntoView {
+    use chrono::{Datelike, NaiveDate, Utc};
+    const HARI: [&str; 7] = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
+    const BULAN: [&str; 12] = [
+        "Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September",
+        "Oktober", "November", "Desember",
+    ];
+    let today = Utc::now().date_naive();
+    // Awal tampilan = bulan tanggal terpilih paling awal, else bulan berjalan.
+    let init = dates
+        .get_untracked()
+        .first()
+        .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+        .map(|d| (d.year(), d.month()))
+        .unwrap_or((today.year(), today.month()));
+    let ym = RwSignal::new(init);
+    let prev = move |_| {
+        ym.update(|(y, m)| {
+            if *m == 1 {
+                *y -= 1;
+                *m = 12;
+            } else {
+                *m -= 1;
+            }
+        })
+    };
+    let next = move |_| {
+        ym.update(|(y, m)| {
+            if *m == 12 {
+                *y += 1;
+                *m = 1;
+            } else {
+                *m += 1;
+            }
+        })
+    };
+    let btn = "w-8 h-8 rounded-lg bg-surface-container text-on-surface flex items-center justify-center press";
+
+    view! {
+        <div class="rounded-xl bg-surface-container/60 p-3 space-y-2">
+            <div class="flex items-center justify-between">
+                <button type="button" class=btn on:click=prev aria-label="Bulan sebelumnya">
+                    <span class="material-symbols-outlined text-[18px]">"chevron_left"</span>
+                </button>
+                <p class="text-body-sm font-bold text-on-background">
+                    {move || {
+                        let (y, m) = ym.get();
+                        format!("{} {}", BULAN[(m - 1) as usize], y)
+                    }}
+                </p>
+                <button type="button" class=btn on:click=next aria-label="Bulan berikutnya">
+                    <span class="material-symbols-outlined text-[18px]">"chevron_right"</span>
+                </button>
+            </div>
+            <div class="grid grid-cols-7 gap-1">
+                {HARI
+                    .iter()
+                    .map(|h| {
+                        view! {
+                            <div class="text-center text-[10px] font-bold text-on-surface-variant py-0.5">
+                                {*h}
+                            </div>
+                        }
+                    })
+                    .collect_view()}
+            </div>
+            {move || {
+                let (y, m) = ym.get();
+                let first = NaiveDate::from_ymd_opt(y, m, 1).expect("tgl 1 valid");
+                let lead = first.weekday().num_days_from_monday();
+                let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+                let days = NaiveDate::from_ymd_opt(ny, nm, 1)
+                    .and_then(|d| d.pred_opt())
+                    .map(|d| d.day())
+                    .unwrap_or(30);
+                view! {
+                    <div class="grid grid-cols-7 gap-1">
+                        {(0..lead).map(|_| view! { <div></div> }).collect_view()}
+                        {(1..=days)
+                            .map(|day| {
+                                let iso = format!("{y:04}-{m:02}-{day:02}");
+                                let is_today = NaiveDate::from_ymd_opt(y, m, day) == Some(today);
+                                let iso_cls = iso.clone();
+                                let cls = move || {
+                                    let sel = dates.with(|v| v.iter().any(|d| d == &iso_cls));
+                                    if sel {
+                                        "aspect-square rounded-lg text-body-sm bg-primary text-on-primary font-bold press flex items-center justify-center"
+                                    } else if is_today {
+                                        "aspect-square rounded-lg text-body-sm ring-1 ring-primary text-primary font-bold press flex items-center justify-center"
+                                    } else {
+                                        "aspect-square rounded-lg text-body-sm text-on-surface hover:bg-surface-container press flex items-center justify-center"
+                                    }
+                                };
+                                let iso_tog = iso.clone();
+                                let toggle = move |_| {
+                                    dates
+                                        .update(|v| match v.iter().position(|x| x == &iso_tog) {
+                                            Some(p) => {
+                                                v.remove(p);
+                                            }
+                                            None => {
+                                                v.push(iso_tog.clone());
+                                                v.sort();
+                                            }
+                                        })
+                                };
+                                view! {
+                                    <button type="button" class=cls on:click=toggle>
+                                        {day}
+                                    </button>
+                                }
+                            })
+                            .collect_view()}
+                    </div>
+                }
+            }}
+            {move || {
+                let n = dates.get().len();
+                let t = if n == 0 {
+                    "Klik tanggal di kalender untuk memilih (boleh loncat-loncat).".to_string()
+                } else {
+                    format!("{n} tanggal dipilih")
+                };
+                view! { <p class="text-[11px] text-on-surface-variant">{t}</p> }
+            }}
+        </div>
+    }
+}
+
+#[component]
+fn BuatJadwalForm(
+    class_id: i64,
+    room_options: StoredValue<Vec<crate::models::RoomOption>>,
+    refetch: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
     let open = RwSignal::new(false);
     let title = RwSignal::new(String::new());
     let start_t = RwSignal::new(String::new());
@@ -1010,9 +1216,12 @@ fn BuatJadwalForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) -> 
     let start_d = RwSignal::new(String::new());
     let end_d = RwSignal::new(String::new());
     let category = RwSignal::new(String::new());
+    let present_point = RwSignal::new(String::new());
     let point = RwSignal::new(String::new());
     let absent_point = RwSignal::new(String::new());
-    let room = RwSignal::new(String::new());
+    let room = RwSignal::new(0i64);
+    // Recurrence 'custom' = daftar tanggal manual (loncat-loncat).
+    let custom_dates = RwSignal::new(Vec::<String>::new());
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
 
@@ -1032,14 +1241,16 @@ fn BuatJadwalForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) -> 
             start_d.get_untracked(),
             end_d.get_untracked(),
             category.get_untracked(),
+            present_point.get_untracked(),
             point.get_untracked(),
             absent_point.get_untracked(),
             room.get_untracked(),
+            custom_dates.get_untracked().join(","),
         );
         leptos::task::spawn_local(async move {
             match create_schedule_action(
                 class_id, args.0, args.1, args.2, args.3, args.4, args.5, args.6, args.7, args.8,
-                args.9, args.10,
+                args.9, args.10, args.11, args.12,
             )
             .await
             {
@@ -1052,9 +1263,11 @@ fn BuatJadwalForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) -> 
                     start_d.set(String::new());
                     end_d.set(String::new());
                     category.set(String::new());
+                    present_point.set(String::new());
                     point.set(String::new());
                     absent_point.set(String::new());
-                    room.set(String::new());
+                    room.set(0);
+                    custom_dates.set(Vec::new());
                     refetch();
                 }
                 Err(e) => {
@@ -1119,38 +1332,71 @@ fn BuatJadwalForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) -> 
                         prop:value=move || category.get()
                         on:input=move |ev| category.set(event_target_value(&ev))
                     />
-                    <input
-                        type="text"
-                        class=field
-                        placeholder="Ruang (mis. Room 302 (Al-Azhar)) — opsional"
-                        prop:value=move || room.get()
-                        on:input=move |ev| room.set(event_target_value(&ev))
-                    />
                     <label class="space-y-1 block">
                         <span class="text-label-md text-on-surface-variant">
-                            "Poin jika telat (kosongkan = default +2)"
+                            "Ruang = perangkat RFID (opsional — daftarkan dulu di User Control)"
                         </span>
-                        <input
-                            type="number"
+                        <select
                             class=field
-                            placeholder="mis. -5 utk sholat"
-                            prop:value=move || point.get()
-                            on:input=move |ev| point.set(event_target_value(&ev))
-                        />
+                            on:change=move |ev| room.set(event_target_value(&ev).parse().unwrap_or(0))
+                        >
+                            <option value="0">"— Tanpa ruang —"</option>
+                            {room_options
+                                .get_value()
+                                .into_iter()
+                                .map(|r| {
+                                    let val = r.id.to_string();
+                                    view! { <option value=val>{r.name}</option> }
+                                })
+                                .collect_view()}
+                        </select>
                     </label>
-                    <label class="space-y-1 block">
-                        <span class="text-label-md text-on-surface-variant">
-                            "Poin dipotong jika alpa (kosongkan = default 15, isi angka positif)"
-                        </span>
-                        <input
-                            type="number"
-                            min="0"
-                            class=field
-                            placeholder="mis. 20"
-                            prop:value=move || absent_point.get()
-                            on:input=move |ev| absent_point.set(event_target_value(&ev))
-                        />
-                    </label>
+                    // Poin: SEMUA angka positif. Tepat waktu DITAMBAH; telat &
+                    // alpa DIKURANGI (arah sudah jelas dari label, tak perlu minus).
+                    <div class="rounded-xl bg-surface-container/60 p-3 space-y-2">
+                        <p class="text-[11px] font-bold tracking-wider text-on-surface-variant">
+                            "POIN KEHADIRAN (semua angka positif)"
+                        </p>
+                        <label class="space-y-1 block">
+                            <span class="text-label-md text-on-surface-variant">
+                                "Bonus jika tepat waktu — ditambah (kosong = default 10)"
+                            </span>
+                            <input
+                                type="number"
+                                min="0"
+                                class=field
+                                placeholder="mis. 10"
+                                prop:value=move || present_point.get()
+                                on:input=move |ev| present_point.set(event_target_value(&ev))
+                            />
+                        </label>
+                        <label class="space-y-1 block">
+                            <span class="text-label-md text-on-surface-variant">
+                                "Potongan jika telat — dikurangi (kosong = default 0)"
+                            </span>
+                            <input
+                                type="number"
+                                min="0"
+                                class=field
+                                placeholder="mis. 5"
+                                prop:value=move || point.get()
+                                on:input=move |ev| point.set(event_target_value(&ev))
+                            />
+                        </label>
+                        <label class="space-y-1 block">
+                            <span class="text-label-md text-on-surface-variant">
+                                "Potongan jika alpa — dikurangi (kosong = default 15)"
+                            </span>
+                            <input
+                                type="number"
+                                min="0"
+                                class=field
+                                placeholder="mis. 20"
+                                prop:value=move || absent_point.get()
+                                on:input=move |ev| absent_point.set(event_target_value(&ev))
+                            />
+                        </label>
+                    </div>
                     <div class="grid grid-cols-2 gap-2">
                         <label class="space-y-1">
                             <span class="text-label-md text-on-surface-variant">"Jam mulai"</span>
@@ -1193,30 +1439,43 @@ fn BuatJadwalForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) -> 
                                 <option value="weekly">"Mingguan"</option>
                                 <option value="monthly">"Bulanan"</option>
                                 <option value="once">"Sekali"</option>
+                                <option value="custom">"Tanggal tertentu"</option>
                             </select>
                         </label>
                     </div>
-                    <div class="grid grid-cols-2 gap-2">
-                        <label class="space-y-1">
-                            <span class="text-label-md text-on-surface-variant">"Mulai tanggal"</span>
-                            <input
-                                type="date"
-                                class=field
-                                prop:value=move || start_d.get()
-                                on:input=move |ev| start_d.set(event_target_value(&ev))
-                                required=true
-                            />
-                        </label>
-                        <label class="space-y-1">
-                            <span class="text-label-md text-on-surface-variant">"Selesai (opsional)"</span>
-                            <input
-                                type="date"
-                                class=field
-                                prop:value=move || end_d.get()
-                                on:input=move |ev| end_d.set(event_target_value(&ev))
-                            />
-                        </label>
-                    </div>
+                    // Pola biasa → rentang mulai/selesai. 'Tanggal tertentu' →
+                    // picker tanggal manual (loncat-loncat) via kalender native.
+                    {move || {
+                        if recurrence.get() == "custom" {
+                            view! { <CustomDatePicker dates=custom_dates /> }
+                                .into_any()
+                        } else {
+                            view! {
+                                <div class="grid grid-cols-2 gap-2">
+                                    <label class="space-y-1">
+                                        <span class="text-label-md text-on-surface-variant">"Mulai tanggal"</span>
+                                        <input
+                                            type="date"
+                                            class=field
+                                            prop:value=move || start_d.get()
+                                            on:input=move |ev| start_d.set(event_target_value(&ev))
+                                            required=true
+                                        />
+                                    </label>
+                                    <label class="space-y-1">
+                                        <span class="text-label-md text-on-surface-variant">"Selesai (opsional)"</span>
+                                        <input
+                                            type="date"
+                                            class=field
+                                            prop:value=move || end_d.get()
+                                            on:input=move |ev| end_d.set(event_target_value(&ev))
+                                        />
+                                    </label>
+                                </div>
+                            }
+                                .into_any()
+                        }
+                    }}
                     <div class="grid grid-cols-2 gap-3">
                         <button
                             type="button"
@@ -1251,6 +1510,7 @@ fn SesiTab(
     let sessions = d.sessions.clone();
     let sched_opts = StoredValue::new(d.schedule_options.clone());
     let teacher_opts = StoredValue::new(d.teacher_options.clone());
+    let book_opts = StoredValue::new(d.book_options.clone());
 
     view! {
         <div class="space-y-3 stagger">
@@ -1259,6 +1519,7 @@ fn SesiTab(
                     class_id=class_id
                     schedule_options=sched_opts
                     teacher_options=teacher_opts
+                    book_options=book_opts
                     refetch=refetch
                 />
             </div>
@@ -1418,6 +1679,7 @@ fn BuatSesiForm(
     class_id: i64,
     schedule_options: StoredValue<Vec<ScheduleOption>>,
     teacher_options: StoredValue<Vec<TeacherOption>>,
+    book_options: StoredValue<Vec<crate::models::BookItem>>,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
     let open = RwSignal::new(false);
@@ -1425,6 +1687,8 @@ fn BuatSesiForm(
     let date = RwSignal::new(String::new());
     let sched = RwSignal::new(0i64);
     let teacher = RwSignal::new(0i64);
+    let book = RwSignal::new(0i64);
+    let book_pages = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
 
@@ -1435,18 +1699,22 @@ fn BuatSesiForm(
         }
         busy.set(true);
         msg.set(None);
-        let (t, dt, sc, tc) = (
+        let (t, dt, sc, tc, bk, bp) = (
             title.get_untracked(),
             date.get_untracked(),
             sched.get_untracked(),
             teacher.get_untracked(),
+            book.get_untracked(),
+            book_pages.get_untracked(),
         );
         leptos::task::spawn_local(async move {
-            match create_session_action(class_id, sc, tc, t, dt).await {
+            match create_session_action(class_id, sc, tc, t, dt, bk, bp).await {
                 Ok(_) => {
                     msg.set(Some((true, "Sesi dibuat.".into())));
                     title.set(String::new());
                     date.set(String::new());
+                    book.set(0);
+                    book_pages.set(String::new());
                     refetch();
                 }
                 Err(e) => {
@@ -1541,6 +1809,42 @@ fn BuatSesiForm(
                                 .collect_view()}
                         </select>
                     </label>
+                    <label class="space-y-1 block">
+                        <span class="text-label-md text-on-surface-variant">"Materi (opsional)"</span>
+                        <select
+                            class=field
+                            on:change=move |ev| book.set(event_target_value(&ev).parse().unwrap_or(0))
+                        >
+                            <option value="0">"— Tanpa materi —"</option>
+                            {book_options
+                                .get_value()
+                                .into_iter()
+                                .map(|o| {
+                                    let val = o.id.to_string();
+                                    view! { <option value=val>{o.title}</option> }
+                                })
+                                .collect_view()}
+                        </select>
+                    </label>
+                    {move || {
+                        (book.get() > 0)
+                            .then(|| {
+                                view! {
+                                    <label class="space-y-1 block anim-in">
+                                        <span class="text-label-md text-on-surface-variant">
+                                            "Halaman yang dibahas (mis. 11-20, 45-50)"
+                                        </span>
+                                        <input
+                                            type="text"
+                                            class=field
+                                            placeholder="11-20, 45-50"
+                                            prop:value=move || book_pages.get()
+                                            on:input=move |ev| book_pages.set(event_target_value(&ev))
+                                        />
+                                    </label>
+                                }
+                            })
+                    }}
                     <div class="grid grid-cols-2 gap-3">
                         <button
                             type="button"
@@ -1573,11 +1877,12 @@ fn KurikulumTab(
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
     let items = d.curriculum.clone();
+    let book_opts = StoredValue::new(d.book_options.clone());
 
     view! {
         <div class="space-y-3 stagger">
             <div class="md:max-w-md">
-                <BuatKurikulumForm class_id=class_id refetch=refetch />
+                <BuatKurikulumForm class_id=class_id book_options=book_opts refetch=refetch />
             </div>
 
             {if items.is_empty() {
@@ -1594,7 +1899,7 @@ fn KurikulumTab(
                     <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
                         {items
                             .into_iter()
-                            .map(|c| view! { <KurikulumCard c=c refetch=refetch /> })
+                            .map(|c| view! { <KurikulumCard c=c book_options=book_opts refetch=refetch /> })
                             .collect_view()}
                     </div>
                 }
@@ -1605,7 +1910,11 @@ fn KurikulumTab(
 }
 
 #[component]
-fn KurikulumCard(c: CurriculumItem, refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
+fn KurikulumCard(
+    c: CurriculumItem,
+    book_options: StoredValue<Vec<crate::models::BookItem>>,
+    refetch: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
     let cid = c.id;
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
@@ -1617,6 +1926,7 @@ fn KurikulumCard(c: CurriculumItem, refetch: impl Fn() + Copy + Send + 'static) 
     let e_end = RwSignal::new(c.scope_end.clone());
     let e_pct = RwSignal::new(c.progress_pct.to_string());
     let e_status = RwSignal::new(c.status.clone());
+    let e_book = RwSignal::new(c.book_id);
 
     let save = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -1632,9 +1942,10 @@ fn KurikulumCard(c: CurriculumItem, refetch: impl Fn() + Copy + Send + 'static) 
             e_end.get_untracked(),
             e_pct.get_untracked(),
             e_status.get_untracked(),
+            e_book.get_untracked(),
         );
         leptos::task::spawn_local(async move {
-            match update_curriculum_action(cid, a.0, a.1, a.2, a.3, a.4, a.5).await {
+            match update_curriculum_action(cid, a.0, a.1, a.2, a.3, a.4, a.5, a.6).await {
                 Ok(_) => {
                     editing.set(false);
                     refetch();
@@ -1663,6 +1974,7 @@ fn KurikulumCard(c: CurriculumItem, refetch: impl Fn() + Copy + Send + 'static) 
     let title_ro = c.title.clone();
     let status_label = c.status_label.clone();
     let pct = c.progress_pct;
+    let book_ro = c.book_title.clone();
     let scope_label = if c.scope_start.is_empty() && c.scope_end.is_empty() {
         String::new()
     } else {
@@ -1758,6 +2070,32 @@ fn KurikulumCard(c: CurriculumItem, refetch: impl Fn() + Copy + Send + 'static) 
                                     </select>
                                 </label>
                             </div>
+                            <label class="space-y-1 block">
+                                <span class="text-[11px] text-on-surface-variant">
+                                    "Tautkan ke materi terdaftar (opsional)"
+                                </span>
+                                <select
+                                    class=field
+                                    on:change=move |ev| e_book.set(event_target_value(&ev).parse().unwrap_or(0))
+                                >
+                                    <option value="0" selected=move || e_book.get() == 0>
+                                        "— Tanpa tautan —"
+                                    </option>
+                                    {book_options
+                                        .get_value()
+                                        .into_iter()
+                                        .map(|b| {
+                                            let val = b.id.to_string();
+                                            let sel = move || e_book.get() == b.id;
+                                            view! {
+                                                <option value=val selected=sel>
+                                                    {b.title}
+                                                </option>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </select>
+                            </label>
                             <div class="grid grid-cols-2 gap-2 pt-1">
                                 <button
                                     type="button"
@@ -1789,6 +2127,15 @@ fn KurikulumCard(c: CurriculumItem, refetch: impl Fn() + Copy + Send + 'static) 
                 } else {
                     view! {
                         <div class="mt-2">
+                            {(!book_ro.is_empty())
+                                .then(|| {
+                                    view! {
+                                        <p class="text-body-sm text-primary flex items-center gap-1">
+                                            <span class="material-symbols-outlined text-[15px]">"menu_book"</span>
+                                            "Materi: " {book_ro.clone()}
+                                        </p>
+                                    }
+                                })}
                             {(!scope_label.is_empty())
                                 .then(|| {
                                     view! {
@@ -1812,7 +2159,11 @@ fn KurikulumCard(c: CurriculumItem, refetch: impl Fn() + Copy + Send + 'static) 
 }
 
 #[component]
-fn BuatKurikulumForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
+fn BuatKurikulumForm(
+    class_id: i64,
+    book_options: StoredValue<Vec<crate::models::BookItem>>,
+    refetch: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
     let open = RwSignal::new(false);
     let title = RwSignal::new(String::new());
     let desc = RwSignal::new(String::new());
@@ -1820,6 +2171,7 @@ fn BuatKurikulumForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) 
     let scope_end = RwSignal::new(String::new());
     let pct = RwSignal::new(String::new());
     let status = RwSignal::new("active".to_string());
+    let book = RwSignal::new(0i64);
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
 
@@ -1837,9 +2189,10 @@ fn BuatKurikulumForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) 
             scope_end.get_untracked(),
             pct.get_untracked(),
             status.get_untracked(),
+            book.get_untracked(),
         );
         leptos::task::spawn_local(async move {
-            match create_curriculum_action(class_id, a.0, a.1, a.2, a.3, a.4, a.5).await {
+            match create_curriculum_action(class_id, a.0, a.1, a.2, a.3, a.4, a.5, a.6).await {
                 Ok(_) => {
                     msg.set(Some((true, "Materi ditambahkan.".into())));
                     title.set(String::new());
@@ -1847,6 +2200,7 @@ fn BuatKurikulumForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) 
                     scope_start.set(String::new());
                     scope_end.set(String::new());
                     pct.set(String::new());
+                    book.set(0);
                     refetch();
                 }
                 Err(e) => {
@@ -1903,6 +2257,26 @@ fn BuatKurikulumForm(class_id: i64, refetch: impl Fn() + Copy + Send + 'static) 
                         prop:value=move || desc.get()
                         on:input=move |ev| desc.set(event_target_value(&ev))
                     />
+                    // Tautkan ke materi terdaftar (opsional) — konsisten dgn daftar materi.
+                    <label class="space-y-1 block">
+                        <span class="text-label-md text-on-surface-variant">
+                            "Tautkan ke materi terdaftar (opsional)"
+                        </span>
+                        <select
+                            class=field
+                            on:change=move |ev| book.set(event_target_value(&ev).parse().unwrap_or(0))
+                        >
+                            <option value="0">"— Tanpa tautan (judul manual) —"</option>
+                            {book_options
+                                .get_value()
+                                .into_iter()
+                                .map(|b| {
+                                    let val = b.id.to_string();
+                                    view! { <option value=val>{b.title}</option> }
+                                })
+                                .collect_view()}
+                        </select>
+                    </label>
                     <div class="grid grid-cols-2 gap-2">
                         <input
                             type="text"

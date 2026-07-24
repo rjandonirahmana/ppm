@@ -14,7 +14,7 @@ use leptos_router::hooks::use_params_map;
 use crate::models::{is_mengaji_category, HafalanItem, SessionAttRow, SessionChatItem, SessionDetailData};
 use crate::web::api::{
     hafalan_of_class_action, log_hafalan_action, mark_session_present, session_detail_data,
-    set_session_live, set_session_teacher_action,
+    set_session_book_action, set_session_live, set_session_teacher_action,
 };
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 
@@ -115,6 +115,39 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
         });
     };
 
+    // ── Materi buku (migrasi 20) ─────────────────────────────────────────
+    let book_options = StoredValue::new(d.book_options.clone());
+    let book_sel = RwSignal::new(d.book_id.unwrap_or(0));
+    let book_pages_sel = RwSignal::new(d.book_pages_label.clone());
+    let book_meta = d
+        .book_title
+        .clone()
+        .map(|t| if d.book_pages_label.is_empty() { t } else { format!("{t} · hal {}", d.book_pages_label) });
+    let busy_book = RwSignal::new(false);
+    let book_msg = RwSignal::new(Option::<(bool, String)>::None);
+    let save_book = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        if busy_book.get_untracked() {
+            return;
+        }
+        busy_book.set(true);
+        book_msg.set(None);
+        let (bk, bp) = (book_sel.get_untracked(), book_pages_sel.get_untracked());
+        leptos::task::spawn_local(async move {
+            match set_session_book_action(session_id, bk, bp).await {
+                Ok(_) => {
+                    book_msg.set(Some((true, "Materi tersimpan.".into())));
+                    refetch();
+                }
+                Err(e) => {
+                    let m = e.to_string();
+                    book_msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                }
+            }
+            busy_book.set(false);
+        });
+    };
+
     view! {
         // ── Hero info sesi ──────────────────────────────────────────────────
         <div class="spiritual-gradient rounded-2xl p-5 text-on-primary shadow-lg shadow-primary/20 anim-in">
@@ -129,6 +162,16 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                 <span class="material-symbols-outlined text-[15px]">"schedule"</span>
                 {when}
             </p>
+            {book_meta
+                .clone()
+                .map(|m| {
+                    view! {
+                        <p class="text-body-sm opacity-85 flex items-center gap-1 mt-1">
+                            <span class="material-symbols-outlined text-[15px]">"menu_book"</span>
+                            {m}
+                        </p>
+                    }
+                })}
             <div class="mt-3 flex items-center justify-between gap-2">
                 <span class="px-3 py-1.5 rounded-lg bg-white/10 inline-flex items-center gap-1.5 text-body-sm font-semibold">
                     <span class="material-symbols-outlined text-[16px]">"how_to_reg"</span>
@@ -159,11 +202,16 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
             <TabBtn tab=tab value="lainnya" icon="more_horiz" label="Lainnya" />
         </div>
 
-        <div class="md:max-w-2xl">
+        // Absensi (default) diisi full-width ppm-wide (daftar baris skala baik
+        // di layar lebar); panel lain (form/chat) tetap dibatasi md:max-w-* per
+        // arm — dulu SEMUA tab dibatasi md:max-w-2xl termasuk absensi, hasilnya
+        // ruang kosong besar di kanan pada layar lebar (audit UI user).
+        <div>
             {move || {
                 match tab.get().as_str() {
                     "kelola" => {
                         view! {
+                            <div class="md:max-w-md space-y-3">
                             // ── Kelola sesi: mulai/akhiri + pengajar ──────
                             <div class="ppm-card p-4 anim-in">
                                 <label class="text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
@@ -249,18 +297,85 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                                     }
                                 }
                             </div>
+
+                            // ── Materi buku (migrasi 20) ──────────────────
+                            <form class="ppm-card p-4 space-y-2 anim-in" method="post" on:submit=save_book>
+                                <label class="text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
+                                    "Materi"
+                                </label>
+                                <select
+                                    class="w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-60"
+                                    disabled=move || busy_book.get()
+                                    on:change=move |ev| {
+                                        book_sel.set(event_target_value(&ev).parse().unwrap_or(0))
+                                    }
+                                >
+                                    <option value="0" selected=move || book_sel.get() == 0>
+                                        "— Tanpa materi —"
+                                    </option>
+                                    {book_options
+                                        .get_value()
+                                        .into_iter()
+                                        .map(|o| {
+                                            let val = o.id.to_string();
+                                            let sel = move || book_sel.get() == o.id;
+                                            view! {
+                                                <option value=val selected=sel>
+                                                    {o.title}
+                                                </option>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </select>
+                                {move || {
+                                    (book_sel.get() > 0)
+                                        .then(|| {
+                                            view! {
+                                                <input
+                                                    type="text"
+                                                    class="w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface"
+                                                    placeholder="Halaman yang dibahas (mis. 11-20, 45-50)"
+                                                    prop:value=move || book_pages_sel.get()
+                                                    on:input=move |ev| book_pages_sel.set(event_target_value(&ev))
+                                                />
+                                            }
+                                        })
+                                }}
+                                {move || {
+                                    book_msg
+                                        .get()
+                                        .map(|(ok, t)| {
+                                            let cls = if ok {
+                                                "p-2 bg-secondary-container text-on-secondary-container rounded-lg text-[11px]"
+                                            } else {
+                                                "p-2 bg-error-container text-on-error-container rounded-lg text-[11px]"
+                                            };
+                                            view! { <div class=cls>{t}</div> }
+                                        })
+                                }}
+                                <button
+                                    type="submit"
+                                    class="w-full py-2.5 rounded-lg bg-primary text-on-primary font-semibold text-body-sm disabled:opacity-60"
+                                    disabled=move || busy_book.get()
+                                >
+                                    {move || if busy_book.get() { "Menyimpan…" } else { "Simpan Materi" }}
+                                </button>
+                            </form>
+                            </div>
                         }
                             .into_any()
                     }
                     "hafalan" if show_hafalan => {
                         view! {
-                            <HafalanPanel class_id=class_id students=hafalan_students.clone() />
+                            <div class="md:max-w-xl">
+                                <HafalanPanel class_id=class_id students=hafalan_students.clone() />
+                            </div>
                         }
                             .into_any()
                     }
                     "lainnya" => {
                         view! {
-                            <div class="space-y-5">
+                            <div class="space-y-5 md:max-w-2xl">
                                 // ── Chat sesi ──────────────────────────────
                                 <div class="ppm-card p-4 anim-in">
                                     <div class="flex items-center gap-2 mb-3">

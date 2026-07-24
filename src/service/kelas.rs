@@ -23,9 +23,12 @@ fn dates_in_range(rec: &str, start_date: NaiveDate, from: NaiveDate, to: NaiveDa
         if d >= start_date {
             let hit = match rec {
                 "daily" => true,
-                "weekly" | "custom" => d.weekday() == start_date.weekday(),
+                "weekly" => d.weekday() == start_date.weekday(),
                 "monthly" => d.day() == start_date.day(),
                 "once" => d == start_date,
+                // 'custom' = daftar tanggal manual → dimaterialisasi LANGSUNG dari
+                // custom_dates saat buat/ubah (bukan lewat pola), jadi tak cocok
+                // apa pun di sini.
                 _ => false,
             };
             if hit {
@@ -94,38 +97,47 @@ fn validate_end_date(ed: Option<NaiveDate>, today: NaiveDate) -> Result<()> {
     Ok(())
 }
 
-/// Parse input form "Poin jika telat" (kosong = None → pakai default global
-/// point_rule("late")). Boleh negatif (mis. "-5" utk jadwal sholat) atau
-/// positif; dibatasi wajar (-100..=100) agar tak salah ketik jadi ribuan.
-fn parse_late_points(s: &str) -> Result<Option<i16>> {
+/// Parse input poin (kosong = None → pakai default). SEMUA poin kini MAGNITUDO
+/// POSITIF & konsisten (migrasi 21): present ditambah, late/absent dikurangi —
+/// arah operasi ditentukan di models::attendance_delta, bukan tandanya. Nilai
+/// minus ditolak (menghilangkan kebingungan lama saat late_points bertanda).
+fn parse_point_magnitude(s: &str, field: &str) -> Result<Option<i16>> {
     let s = s.trim();
     if s.is_empty() {
         return Ok(None);
     }
     let n: i16 = s
         .parse()
-        .map_err(|_| anyhow::anyhow!("Poin telat harus berupa angka (mis. -5 atau 2)."))?;
-    if !(-100..=100).contains(&n) {
-        bail!("Poin telat harus di antara -100 sampai 100.");
+        .map_err(|_| anyhow::anyhow!("Poin {field} harus berupa angka positif (mis. 10)."))?;
+    if !(0..=100).contains(&n) {
+        bail!("Poin {field} harus di antara 0 sampai 100 (tanpa minus).");
     }
     Ok(Some(n))
 }
 
-/// Parse input form "Poin jika alpa" (kosong = None → pakai default global 15).
-/// SELALU magnitude POSITIF (dihitung sebagai `points - absent_points` —
-/// beda dgn late_points yang delta bertanda langsung, lihat migrasi 15).
-fn parse_absent_points(s: &str) -> Result<Option<i16>> {
-    let s = s.trim();
-    if s.is_empty() {
-        return Ok(None);
+/// Parse daftar tanggal manual "2026-07-24,2026-08-01" → Vec<NaiveDate> unik &
+/// terurut. Untuk recurrence 'custom'. Toleran spasi & pemisah baris/koma.
+fn parse_custom_dates(s: &str) -> Result<Vec<NaiveDate>> {
+    let mut out = Vec::new();
+    for part in s.split([',', '\n', ' ']) {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+        let d = NaiveDate::parse_from_str(p, "%Y-%m-%d")
+            .map_err(|_| anyhow::anyhow!("Tanggal tidak valid: \"{p}\" (format YYYY-MM-DD)."))?;
+        out.push(d);
     }
-    let n: i16 = s
-        .parse()
-        .map_err(|_| anyhow::anyhow!("Poin alpa harus berupa angka positif (mis. 15 atau 20)."))?;
-    if !(0..=100).contains(&n) {
-        bail!("Poin alpa harus di antara 0 sampai 100 (magnitude, jangan minus).");
-    }
-    Ok(Some(n))
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// JSONB array ISO dari Vec<NaiveDate> (disimpan di class_schedules.custom_dates).
+fn custom_dates_json(dates: &[NaiveDate]) -> serde_json::Value {
+    serde_json::Value::Array(
+        dates.iter().map(|d| serde_json::Value::String(d.format("%Y-%m-%d").to_string())).collect(),
+    )
 }
 
 fn recurrence_label(t: &str) -> &'static str {
@@ -133,7 +145,7 @@ fn recurrence_label(t: &str) -> &'static str {
         "daily" => "Harian",
         "weekly" => "Mingguan",
         "monthly" => "Bulanan",
-        "custom" => "Kustom",
+        "custom" => "Tanggal tertentu",
         _ => "Sekali",
     }
 }
@@ -176,7 +188,7 @@ fn initial_of(name: &str) -> String {
 fn weekly_of(rec: &str) -> i64 {
     match rec {
         "daily" => 7,
-        "weekly" | "custom" => 1,
+        "weekly" => 1,
         _ => 0,
     }
 }
@@ -214,7 +226,7 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
     // kelas) di main.rs. Halaman detail = murni baca (5 query paralel).
     // Sesi yang DITAMPILKAN hanya MULAI hari ini ke depan (yang lewat dibuang).
     let today = Utc::now().with_timezone(&wib()).date_naive();
-    let (members, scheds, sessions, teachers, cats, golongans, curriculum) = tokio::join!(
+    let (members, scheds, sessions, teachers, cats, golongans, curriculum, books, rooms) = tokio::join!(
         repo::class_members(pool, class_id),
         repo::class_schedules(pool, class_id),
         repo::sessions_of_class(pool, class_id, today, 50),
@@ -222,6 +234,8 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
         repo::distinct_categories(pool),
         repo::distinct_golongan(pool),
         repo::class_curriculum(pool, class_id),
+        repo::list_books(pool),
+        repo::device_options(pool),
     );
 
     let members = members?
@@ -288,9 +302,12 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
             recurrence: s.recurrence_type,
             id: s.id,
             category: s.category.clone().unwrap_or_default(),
+            present_points: s.present_points.map(|n| n.to_string()).unwrap_or_default(),
             late_points: s.late_points.map(|n| n.to_string()).unwrap_or_default(),
             absent_points: s.absent_points.map(|n| n.to_string()).unwrap_or_default(),
-            room: s.room.clone().unwrap_or_default(),
+            room_id: s.room_id.unwrap_or(0),
+            room_label: s.room_name.clone().unwrap_or_default(),
+            custom_dates: s.custom_dates.join(","),
         })
         .collect();
 
@@ -336,7 +353,18 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
             order_index: c.order_index,
             status_label: curriculum_status_label(&c.status).into(),
             status: c.status,
+            book_id: c.book_id.unwrap_or(0),
+            book_title: c.book_title.unwrap_or_default(),
         })
+        .collect();
+
+    let book_options = books?
+        .into_iter()
+        .map(|b| crate::models::BookItem { id: b.id, title: b.title, total_pages: b.total_pages })
+        .collect();
+    let room_options = rooms?
+        .into_iter()
+        .map(|(id, name)| crate::models::RoomOption { id, name })
         .collect();
 
     Ok(KelasDetail {
@@ -352,6 +380,8 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
         schedules,
         schedule_options,
         teacher_options,
+        room_options,
+        book_options,
         sessions,
         weekly_sessions,
         avg_duration_min,
@@ -475,26 +505,53 @@ pub async fn create_schedule(
     start_date: &str,
     end_date: &str,
     category: &str,
+    present_points: &str,
     late_points: &str,
     absent_points: &str,
-    room: &str,
+    room_id: i64,
+    custom_dates: &str,
 ) -> Result<i64> {
+    let today = Utc::now().with_timezone(&wib()).date_naive();
+    // Recurrence 'custom' = tanggal manual (loncat-loncat): start/end jadwal
+    // diturunkan dari min/max tanggal, bukan dari form.
+    let custom = if recurrence == "custom" { parse_custom_dates(custom_dates)? } else { Vec::new() };
+    if recurrence == "custom" && custom.is_empty() {
+        bail!("Pilih minimal satu tanggal untuk jadwal tanggal-tertentu.");
+    }
+    let (sd_str, ed_str) = if recurrence == "custom" {
+        (
+            custom.first().unwrap().format("%Y-%m-%d").to_string(),
+            custom.last().unwrap().format("%Y-%m-%d").to_string(),
+        )
+    } else {
+        (start_date.to_string(), end_date.to_string())
+    };
     let (st, et, lt, rec, sd, ed) =
-        parse_schedule_fields(start_time, end_time, limit_time, recurrence, start_date, end_date)?;
-    validate_end_date(ed, Utc::now().with_timezone(&wib()).date_naive())?;
+        parse_schedule_fields(start_time, end_time, limit_time, recurrence, &sd_str, &ed_str)?;
+    if rec != "custom" {
+        validate_end_date(ed, today)?;
+    }
     let cat = category.trim();
     let cat = (!cat.is_empty()).then_some(cat);
-    let lp = parse_late_points(late_points)?;
-    let ap = parse_absent_points(absent_points)?;
-    let room = room.trim();
-    let room = (!room.is_empty()).then_some(room);
+    let pp = parse_point_magnitude(present_points, "tepat waktu")?;
+    let lp = parse_point_magnitude(late_points, "telat")?;
+    let ap = parse_point_magnitude(absent_points, "alpa")?;
+    let room = (room_id > 0).then_some(room_id);
+    let cd_json = custom_dates_json(&custom);
     let id = repo::create_schedule(
-        pool, class_id, title.trim(), st, et, lt, rec, sd, ed, cat, lp, ap, room,
+        pool, class_id, title.trim(), st, et, lt, rec, sd, ed, cat, pp, lp, ap, room, &cd_json,
     )
     .await?;
-    // Jadwal baru → langsung materialisasi sesi mendatang (sekali, di jalur
-    // WRITE), agar sesi siap tanpa memperlambat GET detail kelas.
-    let _ = ensure_upcoming_sessions(pool, class_id).await;
+    // Materialisasi sesi. 'custom' → langsung SEMUA tanggal ≥ hari ini (tak
+    // dibatasi jendela 7 hari, agar tanggal jauh langsung muncul); pola biasa →
+    // rolling 7 hari via ensure_upcoming_sessions.
+    if rec == "custom" {
+        let future: Vec<NaiveDate> = custom.into_iter().filter(|d| *d >= today).collect();
+        let t = if title.trim().is_empty() { "Sesi Kelas".to_string() } else { title.trim().to_string() };
+        let _ = repo::insert_sessions(pool, class_id, id, &t, &future).await;
+    } else {
+        let _ = ensure_upcoming_sessions(pool, class_id).await;
+    }
     Ok(id)
 }
 
@@ -510,41 +567,66 @@ pub async fn update_schedule(
     start_date: &str,
     end_date: &str,
     category: &str,
+    present_points: &str,
     late_points: &str,
     absent_points: &str,
-    room: &str,
+    room_id: i64,
+    custom_dates: &str,
 ) -> Result<()> {
-    let (st, et, lt, rec, sd, ed) =
-        parse_schedule_fields(start_time, end_time, limit_time, recurrence, start_date, end_date)?;
     let today = Utc::now().with_timezone(&wib()).date_naive();
-    validate_end_date(ed, today)?;
+    let custom = if recurrence == "custom" { parse_custom_dates(custom_dates)? } else { Vec::new() };
+    if recurrence == "custom" && custom.is_empty() {
+        bail!("Pilih minimal satu tanggal untuk jadwal tanggal-tertentu.");
+    }
+    let (sd_str, ed_str) = if recurrence == "custom" {
+        (
+            custom.first().unwrap().format("%Y-%m-%d").to_string(),
+            custom.last().unwrap().format("%Y-%m-%d").to_string(),
+        )
+    } else {
+        (start_date.to_string(), end_date.to_string())
+    };
+    let (st, et, lt, rec, sd, ed) =
+        parse_schedule_fields(start_time, end_time, limit_time, recurrence, &sd_str, &ed_str)?;
+    if rec != "custom" {
+        validate_end_date(ed, today)?;
+    }
     let cat = category.trim();
     let cat = (!cat.is_empty()).then_some(cat);
-    let lp = parse_late_points(late_points)?;
-    let ap = parse_absent_points(absent_points)?;
-    let room = room.trim();
-    let room = (!room.is_empty()).then_some(room);
+    let pp = parse_point_magnitude(present_points, "tepat waktu")?;
+    let lp = parse_point_magnitude(late_points, "telat")?;
+    let ap = parse_point_magnitude(absent_points, "alpa")?;
+    let room = (room_id > 0).then_some(room_id);
+    let cd_json = custom_dates_json(&custom);
     if !repo::update_schedule(
-        pool, schedule_id, title.trim(), st, et, lt, rec, sd, ed, cat, lp, ap, room,
+        pool, schedule_id, title.trim(), st, et, lt, rec, sd, ed, cat, pp, lp, ap, room, &cd_json,
     )
     .await?
     {
         bail!("Jadwal tidak ditemukan.");
     }
 
-    // Sinkronkan SESI MENDATANG dengan jadwal baru (mis. rentang 1 bulan → 2
-    // minggu): hapus sesi mendatang yang kini DI LUAR rentang/pola baru & belum
-    // dipakai (tanpa absensi/chat). Sesi dalam rentang (termasuk yang sudah
-    // diberi pengajar / ditandai libur) DIPERTAHANKAN. Lalu materialisasi ulang
-    // (rolling 7 hari) agar penambahan rentang/pola juga terisi.
-    let upper = ed.unwrap_or(today + Duration::days(400));
-    let valid = dates_in_range(&rec, sd, today.max(sd), upper);
+    // Sinkronkan SESI MENDATANG: hapus sesi mendatang yang kini DI LUAR
+    // rentang/pola/daftar-tanggal baru & belum dipakai (tanpa absensi/chat),
+    // pertahankan yang masih valid, lalu materialisasi ulang. Untuk 'custom',
+    // himpunan valid = semua tanggal manual ≥ hari ini.
+    let valid: Vec<NaiveDate> = if rec == "custom" {
+        custom.iter().cloned().filter(|d| *d >= today).collect()
+    } else {
+        let upper = ed.unwrap_or(today + Duration::days(400));
+        dates_in_range(&rec, sd, today.max(sd), upper)
+    };
     match repo::delete_future_sessions_not_in(pool, schedule_id, today, &valid).await {
         Ok(n) => tracing::info!(schedule_id, valid = valid.len(), "sync sesi: {n} sesi mendatang dihapus (di luar rentang/pola)"),
         Err(e) => tracing::warn!(schedule_id, "sync sesi GAGAL: {e}"),
     }
-    if let Some((class_id, ..)) = repo::schedule_info(pool, schedule_id).await? {
-        let _ = ensure_upcoming_sessions(pool, class_id).await;
+    if let Some((class_id, title_db, ..)) = repo::schedule_info(pool, schedule_id).await? {
+        if rec == "custom" {
+            let t = if title_db.trim().is_empty() { "Sesi Kelas".to_string() } else { title_db };
+            let _ = repo::insert_sessions(pool, class_id, schedule_id, &t, &valid).await;
+        } else {
+            let _ = ensure_upcoming_sessions(pool, class_id).await;
+        }
     }
     Ok(())
 }
@@ -590,6 +672,10 @@ pub async fn generate_month_sessions(
     repo::insert_sessions(pool, class_id, schedule_id, &title, &dates).await
 }
 
+/// `book_id` opsional (0/None = tanpa materi buku); `book_pages_text` kotak
+/// teks "11-20, 45-50" divalidasi terhadap total_pages buku terpilih (kosong
+/// bila book_id tak diisi — reuse parse_page_ranges, service/books.rs).
+#[allow(clippy::too_many_arguments)]
 pub async fn create_session(
     pool: &Pool,
     class_id: i64,
@@ -597,11 +683,49 @@ pub async fn create_session(
     teacher_id: Option<i64>,
     title: &str,
     session_date: &str,
+    book_id: Option<i64>,
+    book_pages_text: &str,
 ) -> Result<i64> {
     let date = parse_date(session_date, "sesi")?;
     let sched = schedule_id.filter(|v| *v > 0);
     let teacher = teacher_id.filter(|v| *v > 0);
-    repo::create_session(pool, class_id, sched, teacher, title.trim(), date).await
+    let book = book_id.filter(|v| *v > 0);
+    let pages = book_pages_value(pool, book, book_pages_text).await?;
+    repo::create_session(pool, class_id, sched, teacher, title.trim(), date, book, &pages).await
+}
+
+/// Validasi rentang halaman terhadap `books.total_pages` bila `book_id`
+/// terisi; kosong (`[]`) bila tidak ada buku dipilih.
+async fn book_pages_value(
+    pool: &Pool,
+    book_id: Option<i64>,
+    pages_text: &str,
+) -> Result<serde_json::Value> {
+    match book_id {
+        Some(id) => {
+            let Some(book) = repo::get_book(pool, id).await? else {
+                bail!("Buku tidak ditemukan.");
+            };
+            super::books::parse_page_ranges(pages_text, book.total_pages)
+        }
+        None => Ok(serde_json::Value::Array(Vec::new())),
+    }
+}
+
+/// Ubah materi buku sesi yang SUDAH ada (tab "Kelola" /sesi/:id) — sama pola
+/// dgn `set_session_teacher`.
+pub async fn set_session_book(
+    pool: &Pool,
+    session_id: i64,
+    book_id: i64,
+    book_pages_text: &str,
+) -> Result<()> {
+    let book = Some(book_id).filter(|v| *v > 0);
+    let pages = book_pages_value(pool, book, book_pages_text).await?;
+    if !repo::set_session_book(pool, session_id, book, &pages).await? {
+        bail!("Sesi tidak ditemukan.");
+    }
+    Ok(())
 }
 
 pub async fn add_member(pool: &Pool, class_id: i64, schedule_id: i64, student_id: i64) -> Result<()> {
@@ -748,6 +872,7 @@ pub async fn create_curriculum(
     scope_end: &str,
     progress_pct: &str,
     status: &str,
+    book_id: i64,
 ) -> Result<i64> {
     let title = title.trim();
     if title.is_empty() {
@@ -763,6 +888,7 @@ pub async fn create_curriculum(
         scope_end.trim(),
         pct,
         norm_status(status),
+        (book_id > 0).then_some(book_id),
     )
     .await
 }
@@ -777,6 +903,7 @@ pub async fn update_curriculum(
     scope_end: &str,
     progress_pct: &str,
     status: &str,
+    book_id: i64,
 ) -> Result<()> {
     let title = title.trim();
     if title.is_empty() {
@@ -792,6 +919,7 @@ pub async fn update_curriculum(
         scope_end.trim(),
         pct,
         norm_status(status),
+        (book_id > 0).then_some(book_id),
     )
     .await?
     {

@@ -141,10 +141,11 @@ pub async fn detail_for(
         anyhow::bail!("Sesi tidak ditemukan.");
     };
 
-    let (att_rows, chat_rows, teachers) = tokio::join!(
+    let (att_rows, chat_rows, teachers, books) = tokio::join!(
         repo::session_attendance(pool, session_id, d.class_id),
         repo::session_chats(pool, session_id, 200),
         repo::teacher_options(pool),
+        repo::list_books(pool),
     );
 
     let wib_tz = crate::service::fmt::wib();
@@ -213,6 +214,13 @@ pub async fn detail_for(
             .collect(),
         category: d.category.clone().filter(|c| !c.is_empty()).unwrap_or_else(|| "-".into()),
         start_blocked_reason: start_window_reason(d.session_date, d.start_time, d.end_time),
+        book_id: d.book_id,
+        book_title: d.book_title,
+        book_pages_label: crate::service::books::format_page_ranges(&d.book_pages),
+        book_options: books?
+            .into_iter()
+            .map(|b| crate::models::BookItem { id: b.id, title: b.title, total_pages: b.total_pages })
+            .collect(),
     })
 }
 

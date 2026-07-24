@@ -35,7 +35,7 @@ pub fn AkademikSantriPage() -> impl IntoView {
 
                 <div class="px-5 pt-5 space-y-4 stagger">
                     <p class="text-body-sm text-on-surface-variant">
-                        "Tandai halaman yang masih perlu diulang/belum lancar pada tiap buku. Data ini membantu ustadz melihat bagian mana yang paling banyak kosong di kelas."
+                        "Tandai halaman yang masih perlu diulang/belum lancar pada tiap materi. Data ini membantu ustadz melihat bagian mana yang paling banyak kosong di kelas."
                     </p>
                     <Suspense fallback=|| {
                         view! {
@@ -56,10 +56,10 @@ pub fn AkademikSantriPage() -> impl IntoView {
                                                         "menu_book"
                                                     </span>
                                                     <p class="text-body-md font-semibold text-on-background">
-                                                        "Belum ada buku terdaftar"
+                                                        "Belum ada materi terdaftar"
                                                     </p>
                                                     <p class="text-body-sm text-on-surface-variant">
-                                                        "Tunggu admin/ustadz menambahkan buku terlebih dahulu."
+                                                        "Tunggu admin/ustadz menambahkan materi terlebih dahulu."
                                                     </p>
                                                 </div>
                                             }

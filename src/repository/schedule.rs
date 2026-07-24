@@ -160,6 +160,32 @@ pub async fn sessions_for_student(
     Ok(rows.into_iter().map(row_to_session).collect())
 }
 
+/// Sesi kelas-kelas yang diikuti ANAK-ANAK terhubung dari satu orang tua,
+/// dalam rentang [since, until] (kalender akademik sisi ortu).
+pub async fn sessions_for_parent(
+    pool: &Pool,
+    parent_id: i64,
+    since: chrono::NaiveDate,
+    until: chrono::NaiveDate,
+    limit: i64,
+) -> Result<Vec<SessionRow>> {
+    let c = pool.get().await?;
+    let sql = format!(
+        "{SESSION_COLS} \
+         WHERE s.class_id IN ( \
+             SELECT cp.class_id FROM class_participants cp \
+             JOIN parent_connections pc ON pc.student_id = cp.user_id \
+                  AND pc.parent_id = $1 AND pc.status = 'connected') \
+           AND s.session_date >= $2 AND s.session_date <= $3 \
+         ORDER BY s.session_date ASC, s.id ASC LIMIT $4"
+    );
+    let rows = c
+        .query(&sql, &[&parent_id, &since, &until, &limit])
+        .await
+        .context("sessions_for_parent")?;
+    Ok(rows.into_iter().map(row_to_session).collect())
+}
+
 /// Sesi milik satu kelas (untuk halaman detail kelas).
 /// Sesi kelas MULAI hari ini (`from`) ke depan — sesi yang sudah lewat TIDAK
 /// ditampilkan. Urut menaik (terdekat dulu). `from` = tanggal WIB dari service.
@@ -199,6 +225,10 @@ pub struct SessionDetailRow {
     pub recording_size: Option<i64>,
     pub teacher_id: Option<i64>,
     pub category: Option<String>,
+    /// Materi buku sesi ini (migrasi 20) — None bila tak ada buku dipilih.
+    pub book_id: Option<i64>,
+    pub book_title: Option<String>,
+    pub book_pages: serde_json::Value,
 }
 
 /// Kategori kelas dari sebuah sesi — query ringan (dipakai guard server-side
@@ -224,11 +254,13 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
         .query_opt(
             "SELECT s.id, s.class_id, COALESCE(s.title, cs.title), c.name, s.session_date, \
                     cs.start_time, cs.end_time, s.status, t.full_name, s.recording_path, \
-                    s.recording_size, s.teacher_id, COALESCE(cs.category, c.category) \
+                    s.recording_size, s.teacher_id, COALESCE(cs.category, c.category), \
+                    s.book_id, b.title, s.book_pages \
              FROM class_sessions s \
              JOIN classes c ON c.id = s.class_id \
              LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
              LEFT JOIN users t ON t.id = s.teacher_id \
+             LEFT JOIN books b ON b.id = s.book_id \
              WHERE s.id = $1",
             &[&id],
         )
@@ -248,6 +280,9 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
         recording_size: r.get(10),
         teacher_id: r.get(11),
         category: r.get(12),
+        book_id: r.get(13),
+        book_title: r.get(14),
+        book_pages: r.get(15),
     }))
 }
 

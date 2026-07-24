@@ -298,6 +298,21 @@ pub async fn profil_data() -> Result<ProfilData, ServerFnError> {
         .map_err(err)
 }
 
+/// Kalender akademik satu bulan (semua peran login). Staf → semua kelas;
+/// santri → kelasnya; ortu → kelas anak terhubung. Scope ditentukan di service
+/// dari peran sesi (bukan parameter klien).
+#[server(GetAcademicCalendar, "/api-fn")]
+pub async fn academic_calendar_data(
+    year: i32,
+    month: u32,
+) -> Result<crate::models::CalendarData, ServerFnError> {
+    let sess = require_session().await?;
+    let state = app_state().await?;
+    crate::service::calendar::calendar_data(&state.pool, &sess, year, month)
+        .await
+        .map_err(err)
+}
+
 /// Daftar sesi kelas. Santri → sesi kelasnya sendiri; admin/pamong/dewan guru →
 /// SEMUA sesi. Orang tua tidak punya akses.
 #[server(GetSessions, "/api-fn")]
@@ -597,21 +612,24 @@ pub async fn create_schedule_action(
     start_date: String,
     end_date: String,
     category: String,
+    present_points: String,
     late_points: String,
     absent_points: String,
-    room: String,
+    room_id: i64,
+    custom_dates: String,
 ) -> Result<i64, ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
     crate::service::kelas::create_schedule(
         &state.pool, class_id, &title, &start_time, &end_time, &limit_time, &recurrence,
-        &start_date, &end_date, &category, &late_points, &absent_points, &room,
+        &start_date, &end_date, &category, &present_points, &late_points, &absent_points, room_id,
+        &custom_dates,
     )
     .await
     .map_err(err)
 }
 
-/// Buat sesi baru untuk sebuah kelas.
+/// Buat sesi baru untuk sebuah kelas. `book_id` 0 = tanpa materi buku.
 #[server(CreateSession, "/api-fn")]
 pub async fn create_session_action(
     class_id: i64,
@@ -619,6 +637,8 @@ pub async fn create_session_action(
     teacher_id: i64,
     title: String,
     session_date: String,
+    book_id: i64,
+    book_pages: String,
 ) -> Result<i64, ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
@@ -629,9 +649,25 @@ pub async fn create_session_action(
         Some(teacher_id),
         &title,
         &session_date,
+        Some(book_id),
+        &book_pages,
     )
     .await
     .map_err(err)
+}
+
+/// Ubah materi buku sesi yang sudah ada (tab "Kelola" /sesi/:id).
+#[server(SetSessionBook, "/api-fn")]
+pub async fn set_session_book_action(
+    session_id: i64,
+    book_id: i64,
+    book_pages: String,
+) -> Result<(), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::set_session_book(&state.pool, session_id, book_id, &book_pages)
+        .await
+        .map_err(err)
 }
 
 /// Tambah santri ke kelas (pada jadwal terpilih).
@@ -660,15 +696,18 @@ pub async fn update_schedule_action(
     start_date: String,
     end_date: String,
     category: String,
+    present_points: String,
     late_points: String,
     absent_points: String,
-    room: String,
+    room_id: i64,
+    custom_dates: String,
 ) -> Result<(), ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
     crate::service::kelas::update_schedule(
         &state.pool, schedule_id, &title, &start_time, &end_time, &limit_time, &recurrence,
-        &start_date, &end_date, &category, &late_points, &absent_points, &room,
+        &start_date, &end_date, &category, &present_points, &late_points, &absent_points, room_id,
+        &custom_dates,
     )
     .await
     .map_err(err)
@@ -748,12 +787,13 @@ pub async fn create_curriculum_action(
     scope_end: String,
     progress_pct: String,
     status: String,
+    book_id: i64,
 ) -> Result<i64, ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
     crate::service::kelas::create_curriculum(
         &state.pool, class_id, &title, &description, &scope_start, &scope_end, &progress_pct,
-        &status,
+        &status, book_id,
     )
     .await
     .map_err(err)
@@ -769,11 +809,13 @@ pub async fn update_curriculum_action(
     scope_end: String,
     progress_pct: String,
     status: String,
+    book_id: i64,
 ) -> Result<(), ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
     crate::service::kelas::update_curriculum(
         &state.pool, id, &title, &description, &scope_start, &scope_end, &progress_pct, &status,
+        book_id,
     )
     .await
     .map_err(err)
@@ -832,13 +874,13 @@ pub async fn students_data() -> Result<StudentsData, ServerFnError> {
 }
 
 // ── Buku materi hafalan + progres santri (migrasi 18) ─────────────────────────
-// Lihat/pilih buku: semua peran staf. Kelola buku + isi progres: admin/pamong
-// saja (`BOOKS_MANAGE_ROLES`) — sesuai permintaan user.
+// Lihat/pilih buku: semua peran staf. Kelola buku + isi progres: admin/pamong/
+// guru/dewan guru (`BOOKS_MANAGE_ROLES`) — sama dgn admin, sesuai permintaan user.
 
 #[cfg(feature = "ssr")]
 const BOOKS_VIEW_ROLES: &[&str] = &["admin", "dewan_guru", "supervisor", "teacher"];
 #[cfg(feature = "ssr")]
-const BOOKS_MANAGE_ROLES: &[&str] = &["admin", "supervisor"];
+const BOOKS_MANAGE_ROLES: &[&str] = &["admin", "supervisor", "teacher", "dewan_guru"];
 
 /// Daftar buku aktif (dropdown/panel progres).
 #[server(GetBooks, "/api-fn")]
@@ -1114,4 +1156,63 @@ pub async fn change_user_role_action(user_id: i64, new_role: String) -> Result<(
     crate::service::admin::change_role(&state.pool, sess.id, user_id, &new_role)
         .await
         .map_err(err)
+}
+
+// ── Perangkat RFID (ruang) — manajemen admin ─────────────────────────────────
+
+/// Daftar perangkat RFID. Admin (User Control) + KELAS_ROLES (dropdown ruang
+/// saat buat/ubah jadwal).
+#[server(GetRfidDevices, "/api-fn")]
+pub async fn rfid_devices_list() -> Result<Vec<crate::models::RfidDeviceItem>, ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::admin::rfid_devices(&state.pool).await.map_err(err)
+}
+
+/// Buat perangkat RFID (admin). api_key kosong → di-generate otomatis.
+#[server(CreateRfidDevice, "/api-fn")]
+pub async fn create_rfid_device_action(
+    device_name: String,
+    serial_number: String,
+    location: String,
+    api_key: String,
+) -> Result<i64, ServerFnError> {
+    require_roles(&["admin"]).await?;
+    let state = app_state().await?;
+    crate::service::admin::create_rfid_device(
+        &state.pool, &device_name, &serial_number, &location, &api_key,
+    )
+    .await
+    .map_err(err)
+}
+
+/// Ubah perangkat RFID (admin).
+#[server(UpdateRfidDevice, "/api-fn")]
+pub async fn update_rfid_device_action(
+    id: i64,
+    device_name: String,
+    serial_number: String,
+    location: String,
+) -> Result<(), ServerFnError> {
+    require_roles(&["admin"]).await?;
+    let state = app_state().await?;
+    crate::service::admin::update_rfid_device(&state.pool, id, &device_name, &serial_number, &location)
+        .await
+        .map_err(err)
+}
+
+/// Ganti api_key perangkat (admin) → return key baru.
+#[server(RegenRfidKey, "/api-fn")]
+pub async fn regenerate_rfid_key_action(id: i64) -> Result<String, ServerFnError> {
+    require_roles(&["admin"]).await?;
+    let state = app_state().await?;
+    crate::service::admin::regenerate_rfid_key(&state.pool, id).await.map_err(err)
+}
+
+/// Hapus perangkat RFID (admin).
+#[server(DeleteRfidDevice, "/api-fn")]
+pub async fn delete_rfid_device_action(id: i64) -> Result<(), ServerFnError> {
+    require_roles(&["admin"]).await?;
+    let state = app_state().await?;
+    crate::service::admin::delete_rfid_device(&state.pool, id).await.map_err(err)
 }

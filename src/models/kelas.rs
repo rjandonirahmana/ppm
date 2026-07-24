@@ -181,17 +181,23 @@ pub struct ScheduleItem {
     /// Kategori jadwal (mis. "Pengajian"/"Sholat") — kosong bila belum diisi;
     /// override kategori kelas utk sesi lahir dari jadwal ini (migrasi 10).
     pub category: String,
-    /// Poin custom saat TERLAMBAT di jadwal ini (migrasi 13). "" di form edit
-    /// = pakai default global (+2); diisi (mis. "-5") = override.
+    /// Poin BONUS saat TEPAT WAKTU (present) di jadwal ini (migrasi 21). ""
+    /// = default (+10); DITAMBAHKAN ke poin santri. Magnitude positif.
+    pub present_points: String,
+    /// Poin DIPOTONG saat TERLAMBAT (migrasi 13, semantik disederhanakan migrasi
+    /// 21). "" = default (0 = tak dipotong); DIKURANGKAN. Magnitude positif.
     pub late_points: String,
-    /// Poin custom saat ALPA (absent) di jadwal ini (migrasi 15). "" di form
-    /// edit = pakai default global (15); diisi (mis. "20") = override. SELALU
-    /// magnitude positif (dihitung sebagai `points - absent_points`), beda
-    /// dgn late_points yang delta bertanda langsung.
+    /// Poin DIPOTONG saat ALPA (absent) (migrasi 15). "" = default (15);
+    /// DIKURANGKAN. Magnitude positif. Semua poin kini positif & konsisten:
+    /// present ditambah, late/absent dikurangi (tak ada nilai minus di UI/DB).
     pub absent_points: String,
-    /// Ruang/lokasi pertemuan (migrasi 17), mis. "Room 302 (Al-Azhar)". Teks
-    /// bebas, kosong = belum diisi.
-    pub room: String,
+    /// Ruang = perangkat RFID (migrasi 24). 0 = belum diset; >0 = rfid_devices.id.
+    /// room_label = nama perangkat utk tampilan.
+    pub room_id: i64,
+    pub room_label: String,
+    /// Tanggal manual (migrasi 23) utk recurrence 'custom', ISO dipisah koma
+    /// ("2026-07-24,2026-08-01") — prefill picker tanggal di form edit.
+    pub custom_dates: String,
 }
 
 /// Opsi jadwal (dropdown tambah santri / buat sesi).
@@ -204,6 +210,14 @@ pub struct ScheduleOption {
 /// Opsi pengajar (dropdown buat sesi).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TeacherOption {
+    pub id: i64,
+    pub name: String,
+}
+
+/// Opsi ruang = perangkat RFID (migrasi 24, dropdown jadwal). Hanya id+nama
+/// (tanpa api_key).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoomOption {
     pub id: i64,
     pub name: String,
 }
@@ -226,6 +240,10 @@ pub struct KelasDetail {
     pub schedules: Vec<ScheduleItem>,
     pub schedule_options: Vec<ScheduleOption>,
     pub teacher_options: Vec<TeacherOption>,
+    /// Opsi ruang = perangkat RFID (migrasi 24, dropdown "Ruang" saat buat jadwal).
+    pub room_options: Vec<RoomOption>,
+    /// Daftar buku aktif (migrasi 20, dropdown "materi buku" saat buat sesi).
+    pub book_options: Vec<super::books::BookItem>,
     pub sessions: Vec<super::schedule::SessionItem>,
     /// Statistik jadwal (untuk kartu "Jadwal Kelas").
     pub weekly_sessions: i64,
@@ -250,6 +268,10 @@ pub struct CurriculumItem {
     pub status: String,
     /// "Berjalan" / "Selesai" / "Akan Datang".
     pub status_label: String,
+    /// Tautan materi terdaftar (migrasi 22). 0 = tak tertaut (materi bebas-teks);
+    /// >0 = id `books`. `book_title` untuk tampilan.
+    pub book_id: i64,
+    pub book_title: String,
 }
 
 /// Satu kelas yang diikuti santri, berlabel golongan (migrasi 16) — santri

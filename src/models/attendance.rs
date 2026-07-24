@@ -2,21 +2,44 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Aturan poin kehadiran GLOBAL — SATU sumber untuk tampilan & pemberian poin
-/// saat verifikasi disetujui: (delta, label tampilan, kategori point_logs).
-/// present +10 Kedisiplinan · late +2 Kedisiplinan · permit/sick 0 Keterangan ·
-/// absent -15 Pelanggaran. Bisa di-override PER JADWAL (class_schedules) di
-/// repository: `late_points` (migrasi 13, delta bertanda langsung) untuk
-/// 'late', `absent_points` (migrasi 15, magnitude positif, `points - absent_points`)
-/// untuk 'absent' — lihat repository::run_auto_absent & run_auto_verify_pamong.
+/// Default MAGNITUDO poin (semua POSITIF) bila jadwal tak mengisi. Semantik
+/// seragam (migrasi 21): present DITAMBAH, late & absent DIKURANGI — TAK ADA
+/// nilai minus di DB/UI, hanya arah operasinya yang beda.
+pub const DEFAULT_PRESENT_BONUS: i32 = 10;
+pub const DEFAULT_LATE_PENALTY: i32 = 0;
+pub const DEFAULT_ABSENT_PENALTY: i32 = 15;
+
+/// Aturan poin kehadiran GLOBAL (fallback tampilan tanpa konteks jadwal): delta
+/// bertanda, label, kategori point_logs. Pemberian poin sesungguhnya memakai
+/// `attendance_delta` dgn override per-jadwal — lihat repository::decide_pamong,
+/// run_auto_verify_pamong, run_auto_absent.
 pub fn point_rule(status: &str) -> (i32, &'static str, &'static str) {
     match status {
-        "present" => (10, "Kedisiplinan", "attendance"),
-        "late" => (2, "Kedisiplinan", "attendance"),
+        "present" => (DEFAULT_PRESENT_BONUS, "Kedisiplinan", "attendance"),
+        "late" => (-DEFAULT_LATE_PENALTY, "Kedisiplinan", "discipline"),
         // Hadir tapi di luar jadwal: netral (pamong/dewan guru yang menilai).
         "outside_schedule" => (0, "Di luar jadwal", "attendance"),
         "permit" | "sick" => (0, "Keterangan", "attendance"),
-        _ => (-15, "Pelanggaran", "discipline"),
+        _ => (-DEFAULT_ABSENT_PENALTY, "Pelanggaran", "discipline"),
+    }
+}
+
+/// Delta poin akhir dari status + konfigurasi jadwal (semua param MAGNITUDO
+/// POSITIF; None = pakai default). present → +present; late → −late; absent →
+/// −absent; lainnya → 0. Mengembalikan (delta bertanda, label, kategori).
+pub fn attendance_delta(
+    status: &str,
+    present: Option<i16>,
+    late: Option<i16>,
+    absent: Option<i16>,
+) -> (i32, &'static str, &'static str) {
+    let m = |v: Option<i16>, d: i32| v.map(|x| (x as i32).abs()).unwrap_or(d);
+    match status {
+        "present" => (m(present, DEFAULT_PRESENT_BONUS), "Kedisiplinan", "attendance"),
+        "late" => (-m(late, DEFAULT_LATE_PENALTY), "Kedisiplinan", "discipline"),
+        "absent" => (-m(absent, DEFAULT_ABSENT_PENALTY), "Pelanggaran", "discipline"),
+        "outside_schedule" => (0, "Di luar jadwal", "attendance"),
+        _ => (0, "Keterangan", "attendance"),
     }
 }
 

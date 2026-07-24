@@ -129,23 +129,26 @@ pub async fn decide_pamong(pool: &Pool, att_id: i64, approver: i64, approve: boo
         let user_id: i64 = row.get(0);
         let att_status: String = row.get(1);
         let schedule_id: Option<i64> = row.get(2);
-        let (mut delta, mut note, category) = crate::models::point_rule(&att_status);
-        // Poin TERLAMBAT bisa dikustomisasi per jadwal (mis. sholat = -5,
-        // pengajian = tetap default) — lihat migrasi 13. Hanya berlaku utk
-        // status 'late'; status lain tetap pakai aturan global.
-        if att_status == "late" {
-            if let Some(sid) = schedule_id {
-                let custom: Option<i16> = tx
-                    .query_opt("SELECT late_points FROM class_schedules WHERE id = $1", &[&sid])
-                    .await
-                    .context("decide_pamong late_points")?
-                    .and_then(|r| r.get(0));
-                if let Some(lp) = custom {
-                    delta = lp as i32;
-                    note = "Kedisiplinan (kustom jadwal)";
-                }
+        // Poin per-jadwal (magnitudo positif): present ditambah, late/absent
+        // dikurangi (migrasi 21). Ambil ketiga override; None = default global.
+        let (mut present_p, mut late_p, mut absent_p) = (None, None, None);
+        if let Some(sid) = schedule_id {
+            if let Some(r) = tx
+                .query_opt(
+                    "SELECT present_points, late_points, absent_points \
+                     FROM class_schedules WHERE id = $1",
+                    &[&sid],
+                )
+                .await
+                .context("decide_pamong schedule points")?
+            {
+                present_p = r.get(0);
+                late_p = r.get(1);
+                absent_p = r.get(2);
             }
         }
+        let (delta, note, category) =
+            crate::models::attendance_delta(&att_status, present_p, late_p, absent_p);
         if delta != 0 {
             let reason = format!("Kehadiran ({att_status}) — {note}");
             tx.execute(
@@ -501,11 +504,10 @@ pub async fn run_auto_verify_pamong(pool: &Pool) -> Result<i64> {
              pts AS ( \
                 SELECT upd.user_id, upd.status, \
                        CASE \
-                         WHEN upd.status = 'late' AND sch.late_points IS NOT NULL THEN sch.late_points::int \
-                         WHEN upd.status = 'late' THEN 2 \
-                         WHEN upd.status = 'present' THEN 10 \
+                         WHEN upd.status = 'present' THEN COALESCE(sch.present_points, 10)::int \
+                         WHEN upd.status = 'late' THEN -COALESCE(sch.late_points, 0)::int \
                          WHEN upd.status IN ('permit','sick','outside_schedule') THEN 0 \
-                         ELSE -15 \
+                         ELSE -COALESCE(sch.absent_points, 15)::int \
                        END AS delta \
                 FROM upd \
                 LEFT JOIN class_schedules sch ON sch.id = upd.class_schedule_id \

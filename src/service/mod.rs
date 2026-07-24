@@ -5,6 +5,7 @@ pub mod admin;
 pub mod attendance;
 pub mod auth;
 pub mod books;
+pub mod calendar;
 pub mod dashboard;
 pub mod export;
 pub mod fmt;
