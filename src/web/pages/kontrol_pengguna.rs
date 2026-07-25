@@ -9,9 +9,9 @@ use leptos_meta::Title;
 
 use crate::models::{ActivityLogItem, RfidDeviceItem, UserControlData, UserRow};
 use crate::web::api::{
-    activity_log_data, change_user_role_action, create_rfid_device_action, delete_rfid_device_action,
-    regenerate_rfid_key_action, rfid_devices_list, toggle_user_active_action,
-    update_rfid_device_action, user_control_data,
+    activity_log_data, change_user_role_action, create_invite_action, create_rfid_device_action,
+    delete_rfid_device_action, regenerate_rfid_key_action, rfid_devices_list,
+    toggle_user_active_action, update_rfid_device_action, user_control_data,
 };
 use crate::web::components::{DeviceFrame, EmptyState, MobileHeader};
 
@@ -91,6 +91,9 @@ pub fn KontrolPenggunaPage() -> impl IntoView {
                                 })
                         }}
                     </Suspense>
+
+                    // ── Buat link registrasi (undangan admin) ────────────────
+                    <InvitePanel />
 
                     // ── Perangkat RFID / Ruang ───────────────────────────────
                     <RfidPanel />
@@ -289,6 +292,165 @@ fn UserRowView(u: UserRow, refetch: impl Fn() + Copy + Send + 'static) -> impl I
             >
                 <span class="material-symbols-outlined text-[20px]">{toggle_icon}</span>
             </button>
+        </div>
+    }
+}
+
+/// Buat LINK REGISTRASI: hanya orang dgn link ini (key dari admin) yang boleh
+/// mendaftar. Pilih peran → generate → salin link `/register?key=…` (TTL 24 jam),
+/// bagikan ke calon pengguna. Mereka daftar (nama+HP) → OTP+password via WhatsApp.
+#[component]
+fn InvitePanel() -> impl IntoView {
+    // Peran yang boleh diundang (admin TIDAK termasuk — dibuat manual).
+    const ROLES: &[(&str, &str)] = &[
+        ("santri", "Santri"),
+        ("parent", "Orang Tua"),
+        ("teacher", "Guru"),
+        ("dewan_guru", "Dewan Guru"),
+        ("supervisor", "Pamong"),
+    ];
+    let role = RwSignal::new("santri".to_string());
+    let code = RwSignal::new(String::new());
+    let link = RwSignal::new(String::new());
+    let busy = RwSignal::new(false);
+    let msg = RwSignal::new(Option::<String>::None);
+    // 0 = belum, 1 = kode tersalin, 2 = link tersalin.
+    let copied = RwSignal::new(0u8);
+
+    let generate = move |_| {
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        msg.set(None);
+        copied.set(0);
+        let r = role.get_untracked();
+        leptos::task::spawn_local(async move {
+            match create_invite_action(r).await {
+                Ok(token) => {
+                    // Rangkai URL penuh dari origin browser (klien).
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let origin = web_sys::window()
+                            .and_then(|w| w.location().origin().ok())
+                            .unwrap_or_default();
+                        link.set(format!("{origin}/register?key={token}"));
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    link.set(format!("/register?key={token}"));
+                    code.set(token);
+                }
+                Err(e) => {
+                    let s = e.to_string();
+                    msg.set(Some(s.rsplit(": ").next().unwrap_or(&s).to_string()));
+                }
+            }
+            busy.set(false);
+        });
+    };
+
+    let copy_to_clipboard = |text: String| {
+        if text.is_empty() {
+            return;
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(w) = web_sys::window() {
+            let _ = w.navigator().clipboard().write_text(&text);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = text;
+    };
+    let copy_code = move |_| {
+        copy_to_clipboard(code.get_untracked());
+        copied.set(1);
+    };
+    let copy_link = move |_| {
+        copy_to_clipboard(link.get_untracked());
+        copied.set(2);
+    };
+
+    let field = "w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface";
+    view! {
+        <div class="ppm-card p-4 space-y-3">
+            <h3 class="text-body-md font-bold text-on-background flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary">"person_add"</span>
+                "Buat Link Registrasi"
+            </h3>
+            <p class="text-[11px] text-on-surface-variant">
+                "Hanya yang punya link ini yang bisa mendaftar. Pilih peran → buat link → bagikan. Link berlaku 24 jam."
+            </p>
+            {move || {
+                msg.get()
+                    .map(|t| {
+                        view! {
+                            <div class="p-2 bg-error-container text-on-error-container rounded-lg text-[11px]">
+                                {t}
+                            </div>
+                        }
+                    })
+            }}
+            <div class="flex gap-2">
+                <select
+                    class=field
+                    on:change=move |ev| role.set(event_target_value(&ev))
+                >
+                    {ROLES
+                        .iter()
+                        .map(|(v, l)| {
+                            let val = v.to_string();
+                            view! { <option value=val>{*l}</option> }
+                        })
+                        .collect_view()}
+                </select>
+                <button
+                    class="px-4 rounded-lg bg-primary text-on-primary font-semibold text-body-sm shrink-0 press disabled:opacity-60"
+                    disabled=move || busy.get()
+                    on:click=generate
+                >
+                    {move || if busy.get() { "…" } else { "Buat Link" }}
+                </button>
+            </div>
+            {move || {
+                let c = code.get();
+                (!c.is_empty())
+                    .then(|| {
+                        view! {
+                            // Kode referal (utama — bisa dibagikan langsung, calon
+                            // pengguna tempel di halaman /register).
+                            <div class="rounded-lg bg-secondary-container/50 p-2.5 space-y-1.5">
+                                <p class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">
+                                    "Kode Referal (sekali pakai · 24 jam)"
+                                </p>
+                                <div class="flex items-center gap-2">
+                                    <code class="flex-1 min-w-0 text-body-sm font-bold text-primary truncate">
+                                        {c}
+                                    </code>
+                                    <button
+                                        class="px-2.5 py-1 rounded-lg bg-primary text-on-primary text-[11px] font-semibold shrink-0 press"
+                                        on:click=copy_code
+                                    >
+                                        {move || if copied.get() == 1 { "Tersalin ✓" } else { "Salin kode" }}
+                                    </button>
+                                </div>
+                                // Alternatif: link langsung (kode sudah di dalamnya).
+                                <div class="flex items-center gap-2 pt-1">
+                                    <span class="material-symbols-outlined text-[14px] text-on-surface-variant">
+                                        "link"
+                                    </span>
+                                    <code class="flex-1 min-w-0 text-[10px] text-on-surface-variant truncate">
+                                        {move || link.get()}
+                                    </code>
+                                    <button
+                                        class="text-[11px] font-semibold text-primary shrink-0"
+                                        on:click=copy_link
+                                    >
+                                        {move || if copied.get() == 2 { "Tersalin ✓" } else { "Salin link" }}
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                    })
+            }}
         </div>
     }
 }

@@ -145,6 +145,7 @@ pub fn App() -> impl IntoView {
                 // Publik: beranda profil pesantren untuk pengunjung.
                 <Route path=path!("/") view=BerandaPage />
                 <Route path=path!("/login") view=LoginPage />
+                <Route path=path!("/register") view=RegisterPage />
                 <Route path=path!("/menu") view=MenuPage />
 
                 // Santri (dinamis — data DB)

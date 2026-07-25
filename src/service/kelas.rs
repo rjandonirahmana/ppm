@@ -360,7 +360,7 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
 
     let book_options = books?
         .into_iter()
-        .map(|b| crate::models::BookItem { id: b.id, title: b.title, total_pages: b.total_pages })
+        .map(|b| crate::models::BookItem { id: b.id, title: b.title, category: b.category, total_pages: b.total_pages, surahs: Vec::new() })
         .collect();
     let room_options = rooms?
         .into_iter()

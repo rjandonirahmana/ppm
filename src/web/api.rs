@@ -890,12 +890,34 @@ pub async fn books_list() -> Result<Vec<crate::models::BookItem>, ServerFnError>
     crate::service::books::list_books(&state.pool).await.map_err(err)
 }
 
-/// Tambah buku baru (admin/pamong).
+/// Tambah materi baru. `category` = "quran" | "hadist". Hadist → total_pages;
+/// quran → surahs (JSON `[{"name","ayat"}]`).
 #[server(CreateBookAction, "/api-fn")]
-pub async fn create_book_action(title: String, total_pages: String) -> Result<i64, ServerFnError> {
+pub async fn create_book_action(
+    title: String,
+    category: String,
+    total_pages: String,
+    surahs: String,
+) -> Result<i64, ServerFnError> {
     require_roles(BOOKS_MANAGE_ROLES).await?;
     let state = app_state().await?;
-    crate::service::books::create_book(&state.pool, &title, &total_pages)
+    crate::service::books::create_book(&state.pool, &title, &category, &total_pages, &surahs)
+        .await
+        .map_err(err)
+}
+
+/// Ubah materi (admin/pamong/guru). Sama parameter dgn create.
+#[server(UpdateBookAction, "/api-fn")]
+pub async fn update_book_action(
+    id: i64,
+    title: String,
+    category: String,
+    total_pages: String,
+    surahs: String,
+) -> Result<(), ServerFnError> {
+    require_roles(BOOKS_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::books::update_book(&state.pool, id, &title, &category, &total_pages, &surahs)
         .await
         .map_err(err)
 }
@@ -929,22 +951,19 @@ pub async fn student_book_progress_data(
         .map_err(err)
 }
 
-/// Simpan progres santri pada satu buku (persentase + halaman kosong,
-/// admin/pamong).
+/// Simpan progres per-unit satu santri pada satu materi (peta unit→status JSON,
+/// admin/pamong/guru).
 #[server(SetStudentBookProgressAction, "/api-fn")]
 pub async fn set_student_book_progress_action(
     user_id: i64,
     book_id: i64,
-    percentage: String,
-    missing_pages: String,
+    unit_status: String,
 ) -> Result<(), ServerFnError> {
     let sess = require_roles(BOOKS_MANAGE_ROLES).await?;
     let state = app_state().await?;
-    crate::service::books::set_progress(
-        &state.pool, sess.id, user_id, book_id, &percentage, &missing_pages,
-    )
-    .await
-    .map_err(err)
+    crate::service::books::set_unit_status(&state.pool, sess.id, user_id, book_id, &unit_status)
+        .await
+        .map_err(err)
 }
 
 /// Progres akademik SANTRI SENDIRI (buku yang sudah didaftarkan admin) —
@@ -960,22 +979,18 @@ pub async fn own_book_progress_data() -> Result<Vec<crate::models::BookProgressI
         .map_err(err)
 }
 
-/// Santri mengisi SENDIRI progres bukunya ("yang masih bolong") — halaman
-/// /akademik. `actor_id` & `user_id` SAMA (sess.id) → santri hanya bisa
-/// mengubah datanya sendiri, tak menerima user_id dari klien.
+/// Santri mengisi SENDIRI progres per-unit materinya (grid penuh/setengah/
+/// kosong) — halaman /akademik. `user_id` = sess.id (tak terima dari klien).
 #[server(SetOwnBookProgressAction, "/api-fn")]
 pub async fn set_own_book_progress_action(
     book_id: i64,
-    percentage: String,
-    missing_pages: String,
+    unit_status: String,
 ) -> Result<(), ServerFnError> {
     let sess = require_roles(&["santri"]).await?;
     let state = app_state().await?;
-    crate::service::books::set_progress(
-        &state.pool, sess.id, sess.id, book_id, &percentage, &missing_pages,
-    )
-    .await
-    .map_err(err)
+    crate::service::books::set_unit_status(&state.pool, sess.id, sess.id, book_id, &unit_status)
+        .await
+        .map_err(err)
 }
 
 // ── Sisi STAF / GURU / DEWAN GURU ────────────────────────────────────────────────

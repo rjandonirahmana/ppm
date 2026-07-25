@@ -10,7 +10,7 @@ use leptos_meta::Title;
 use crate::models::{BookItem, KelasItem, SessionUser, StudentAcademicItem};
 use crate::web::api::{
     academic_audit_data, books_list, create_book_action, create_class_action, delete_book_action,
-    kelas_list,
+    kelas_list, update_book_action,
 };
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 use crate::web::pages::SesiContent;
@@ -470,8 +470,20 @@ fn BooksTab(can_manage: bool) -> impl IntoView {
             {can_manage
                 .then(|| {
                     view! {
-                        <div class="md:max-w-md">
-                            <AddBookForm refetch=move || data.refetch() />
+                        <div class="ppm-card p-4 space-y-3 md:max-w-md">
+                            <h3 class="text-body-md font-bold text-on-background flex items-center gap-2">
+                                <span class="material-symbols-outlined text-primary">"add_circle"</span>
+                                "Tambah Materi"
+                            </h3>
+                            <BookForm
+                                edit_id=None
+                                init_title=String::new()
+                                init_category="hadist".into()
+                                init_pages=String::new()
+                                init_surahs=Vec::new()
+                                refetch=move || data.refetch()
+                                on_done=|| ()
+                            />
                         </div>
                     }
                 })}
@@ -521,6 +533,7 @@ fn BooksTab(can_manage: bool) -> impl IntoView {
 fn BookRow(b: BookItem, can_manage: bool, refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
     let id = b.id;
     let busy = RwSignal::new(false);
+    let editing = RwSignal::new(false);
     let del = move |_| {
         if busy.get_untracked() {
             return;
@@ -532,38 +545,108 @@ fn BookRow(b: BookItem, can_manage: bool, refetch: impl Fn() + Copy + Send + 'st
             refetch();
         });
     };
+
+    // Nilai awal utk form edit (di-clone tiap render branch editing).
+    let init_title = b.title.clone();
+    let init_category = b.category.clone();
+    let init_pages = if b.category != "quran" { b.total_pages.to_string() } else { String::new() };
+    let init_surahs: Vec<(String, i32)> =
+        b.surahs.iter().map(|s| (s.name.clone(), s.ayat)).collect();
+    let title_ro = b.title.clone();
+    let meta = if b.category == "quran" {
+        format!("Qur'an · {} surat · {} ayat", b.surahs.len(), b.total_pages)
+    } else {
+        format!("Hadist · {} halaman", b.total_pages)
+    };
+
     view! {
-        <div class="p-3.5 flex items-center gap-3">
-            <div class="w-9 h-9 rounded-lg bg-secondary-container flex items-center justify-center text-primary shrink-0">
-                <span class="material-symbols-outlined text-[18px]">"menu_book"</span>
-            </div>
-            <div class="flex-1 min-w-0">
-                <p class="text-body-sm font-semibold text-on-background truncate">{b.title}</p>
-                <p class="text-[11px] text-on-surface-variant">{format!("{} halaman", b.total_pages)}</p>
-            </div>
-            {can_manage
-                .then(|| {
+        <div class="p-3.5">
+            {move || {
+                if editing.get() {
                     view! {
-                        <button
-                            class="w-8 h-8 rounded-lg bg-error-container/60 text-error flex items-center justify-center shrink-0 disabled:opacity-50"
-                            disabled=move || busy.get()
-                            on:click=del
-                            aria-label="Hapus materi"
-                        >
-                            <span class="material-symbols-outlined text-[18px]">"delete"</span>
-                        </button>
+                        <BookForm
+                            edit_id=Some(id)
+                            init_title=init_title.clone()
+                            init_category=init_category.clone()
+                            init_pages=init_pages.clone()
+                            init_surahs=init_surahs.clone()
+                            refetch=refetch
+                            on_done=move || editing.set(false)
+                        />
                     }
-                })}
+                        .into_any()
+                } else {
+                    view! {
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-lg bg-secondary-container flex items-center justify-center text-primary shrink-0">
+                                <span class="material-symbols-outlined text-[18px]">"menu_book"</span>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <p class="text-body-sm font-semibold text-on-background truncate">
+                                    {title_ro.clone()}
+                                </p>
+                                <p class="text-[11px] text-on-surface-variant">{meta.clone()}</p>
+                            </div>
+                            {can_manage
+                                .then(|| {
+                                    view! {
+                                        <button
+                                            class="w-8 h-8 rounded-lg bg-surface-container text-primary flex items-center justify-center shrink-0 press"
+                                            on:click=move |_| editing.set(true)
+                                            aria-label="Edit materi"
+                                        >
+                                            <span class="material-symbols-outlined text-[18px]">"edit"</span>
+                                        </button>
+                                        <button
+                                            class="w-8 h-8 rounded-lg bg-error-container/60 text-error flex items-center justify-center shrink-0 disabled:opacity-50"
+                                            disabled=move || busy.get()
+                                            on:click=del
+                                            aria-label="Hapus materi"
+                                        >
+                                            <span class="material-symbols-outlined text-[18px]">"delete"</span>
+                                        </button>
+                                    }
+                                })}
+                        </div>
+                    }
+                        .into_any()
+                }
+            }}
         </div>
     }
 }
 
 #[component]
-fn AddBookForm(refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
-    let title = RwSignal::new(String::new());
-    let pages = RwSignal::new(String::new());
+fn BookForm(
+    edit_id: Option<i64>,
+    init_title: String,
+    init_category: String,
+    init_pages: String,
+    init_surahs: Vec<(String, i32)>,
+    refetch: impl Fn() + Copy + Send + 'static,
+    on_done: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
+    let is_edit = edit_id.is_some();
+    let title = RwSignal::new(init_title);
+    let category =
+        RwSignal::new(if init_category.is_empty() { "hadist".to_string() } else { init_category });
+    let pages = RwSignal::new(init_pages);
+    let surahs = RwSignal::new(init_surahs);
+    let s_name = RwSignal::new(String::new());
+    let s_ayat = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
+
+    let add_surah = move |_| {
+        let n = s_name.get_untracked().trim().to_string();
+        let a: i32 = s_ayat.get_untracked().trim().parse().unwrap_or(0);
+        if n.is_empty() || a <= 0 {
+            return;
+        }
+        surahs.update(|v| v.push((n, a)));
+        s_name.set(String::new());
+        s_ayat.set(String::new());
+    };
 
     let submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -572,13 +655,32 @@ fn AddBookForm(refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
         }
         busy.set(true);
         msg.set(None);
-        let (t, p) = (title.get_untracked(), pages.get_untracked());
+        let (t, cat, p) = (title.get_untracked(), category.get_untracked(), pages.get_untracked());
+        let surahs_json = if cat == "quran" {
+            let arr: Vec<_> = surahs
+                .get_untracked()
+                .iter()
+                .map(|(n, a)| serde_json::json!({"name": n, "ayat": a}))
+                .collect();
+            serde_json::to_string(&arr).unwrap_or_else(|_| "[]".into())
+        } else {
+            String::new()
+        };
         leptos::task::spawn_local(async move {
-            match create_book_action(t, p).await {
+            let res = match edit_id {
+                Some(id) => update_book_action(id, t, cat, p, surahs_json).await.map(|_| ()),
+                None => create_book_action(t, cat, p, surahs_json).await.map(|_| ()),
+            };
+            match res {
                 Ok(_) => {
-                    title.set(String::new());
-                    pages.set(String::new());
                     refetch();
+                    if is_edit {
+                        on_done();
+                    } else {
+                        title.set(String::new());
+                        pages.set(String::new());
+                        surahs.set(Vec::new());
+                    }
                 }
                 Err(e) => {
                     let m = e.to_string();
@@ -592,11 +694,7 @@ fn AddBookForm(refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
     let field =
         "w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface";
     view! {
-        <form class="ppm-card p-4 space-y-3" method="post" on:submit=submit>
-            <h3 class="text-body-md font-bold text-on-background flex items-center gap-2">
-                <span class="material-symbols-outlined text-primary">"add_circle"</span>
-                "Tambah Materi"
-            </h3>
+        <form class="space-y-3" method="post" on:submit=submit>
             {move || {
                 msg.get()
                     .map(|(_, t)| {
@@ -614,26 +712,122 @@ fn AddBookForm(refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
                 prop:value=move || title.get()
                 on:input=move |ev| title.set(event_target_value(&ev))
             />
-            <input
-                type="number"
-                min="1"
-                class=field
-                placeholder="Jumlah halaman"
-                prop:value=move || pages.get()
-                on:input=move |ev| pages.set(event_target_value(&ev))
-            />
-            <button
-                type="submit"
-                class="w-full py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-body-sm disabled:opacity-60"
-                disabled=move || busy.get()
-            >
-                {move || if busy.get() { "Menyimpan…" } else { "Simpan Materi" }}
-            </button>
+            <label class="space-y-1 block">
+                <span class="text-label-md text-on-surface-variant">"Kategori"</span>
+                <select class=field on:change=move |ev| category.set(event_target_value(&ev))>
+                    <option value="hadist" selected=move || category.get() == "hadist">"Hadist (per halaman)"</option>
+                    <option value="quran" selected=move || category.get() == "quran">"Qur'an (per ayat, isi surat)"</option>
+                </select>
+            </label>
+            {move || {
+                if category.get() == "quran" {
+                    view! {
+                        <div class="rounded-xl bg-surface-container/60 p-3 space-y-2">
+                            <span class="text-label-md text-on-surface-variant">
+                                "Daftar surat — tambah nama + jumlah ayat satu per satu"
+                            </span>
+                            <div class="flex gap-2">
+                                <input
+                                    type="text"
+                                    class=field
+                                    placeholder="Nama surat (mis. Al-Fatihah)"
+                                    prop:value=move || s_name.get()
+                                    on:input=move |ev| s_name.set(event_target_value(&ev))
+                                />
+                                <input
+                                    type="number"
+                                    min="1"
+                                    class="w-24 bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface shrink-0"
+                                    placeholder="Ayat"
+                                    prop:value=move || s_ayat.get()
+                                    on:input=move |ev| s_ayat.set(event_target_value(&ev))
+                                />
+                                <button
+                                    type="button"
+                                    class="px-3 rounded-xl bg-secondary-container text-primary font-semibold text-body-sm shrink-0 press"
+                                    on:click=add_surah
+                                >
+                                    "+"
+                                </button>
+                            </div>
+                            {move || {
+                                let list = surahs.get();
+                                (!list.is_empty())
+                                    .then(|| {
+                                        view! {
+                                            <div class="flex flex-wrap gap-1.5">
+                                                {list
+                                                    .into_iter()
+                                                    .enumerate()
+                                                    .map(|(i, (n, a))| {
+                                                        view! {
+                                                            <span class="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-full bg-surface-container-highest text-[11px] text-on-surface">
+                                                                {format!("{n} ({a})")}
+                                                                <button
+                                                                    type="button"
+                                                                    class="w-4 h-4 flex items-center justify-center text-on-surface-variant hover:text-error"
+                                                                    on:click=move |_| surahs.update(|v| { v.remove(i); })
+                                                                    aria-label="Hapus surat"
+                                                                >
+                                                                    <span class="material-symbols-outlined text-[14px]">"close"</span>
+                                                                </button>
+                                                            </span>
+                                                        }
+                                                    })
+                                                    .collect_view()}
+                                            </div>
+                                        }
+                                    })
+                            }}
+                        </div>
+                    }
+                        .into_any()
+                } else {
+                    view! {
+                        <input
+                            type="number"
+                            min="1"
+                            class=field
+                            placeholder="Jumlah halaman"
+                            prop:value=move || pages.get()
+                            on:input=move |ev| pages.set(event_target_value(&ev))
+                        />
+                    }
+                        .into_any()
+                }
+            }}
+            <div class="flex gap-2">
+                {is_edit
+                    .then(|| {
+                        view! {
+                            <button
+                                type="button"
+                                class="flex-1 py-2.5 rounded-xl border border-outline-variant text-on-surface font-semibold text-body-sm"
+                                on:click=move |_| on_done()
+                            >
+                                "Batal"
+                            </button>
+                        }
+                    })}
+                <button
+                    type="submit"
+                    class="flex-1 py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-body-sm disabled:opacity-60"
+                    disabled=move || busy.get()
+                >
+                    {move || {
+                        if busy.get() {
+                            "Menyimpan…"
+                        } else if is_edit {
+                            "Simpan Perubahan"
+                        } else {
+                            "Simpan Materi"
+                        }
+                    }}
+                </button>
+            </div>
         </form>
     }
 }
-
-// ── Tab AKADEMIK: audit progres hadist/quran semua santri ───────────────────
 
 #[component]
 fn AcademicAuditTab() -> impl IntoView {

@@ -219,7 +219,7 @@ pub async fn detail_for(
         book_pages_label: crate::service::books::format_page_ranges(&d.book_pages),
         book_options: books?
             .into_iter()
-            .map(|b| crate::models::BookItem { id: b.id, title: b.title, total_pages: b.total_pages })
+            .map(|b| crate::models::BookItem { id: b.id, title: b.title, category: b.category, total_pages: b.total_pages, surahs: Vec::new() })
             .collect(),
     })
 }

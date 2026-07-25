@@ -14,7 +14,7 @@ use leptos_router::hooks::use_query_map;
 
 use crate::models::{BookProgressItem, PendingAtt, StudentRowItem};
 use crate::web::api::{
-    decide_pamong, decide_verify, set_student_book_progress_action, student_book_progress_data,
+    decide_pamong, decide_verify, student_book_progress_data,
     students_data,
 };
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
@@ -100,11 +100,6 @@ pub fn StudentsPage() -> impl IntoView {
                                         let total = d.students.len();
                                         let pending = StoredValue::new(d.pending.clone());
                                         let verified_today = d.verified_today;
-                                        // Kelola buku + isi progres: admin/pamong/guru/dewan guru.
-                                        let can_manage_books = matches!(
-                                            d.role.as_str(),
-                                            "admin" | "supervisor" | "teacher" | "dewan_guru"
-                                        );
 
                                         // Aksi verifikasi: cabang sesuai tahap peran.
                                         // `is_t1` bool (Copy) agar closure tetap Copy.
@@ -161,7 +156,6 @@ pub fn StudentsPage() -> impl IntoView {
                                                             students=students.get_value()
                                                             total=total
                                                             query=query
-                                                            can_manage_books=can_manage_books
                                                             expanded=expanded
                                                         />
                                                     }
@@ -211,7 +205,6 @@ fn StudentList(
     students: Vec<StudentRowItem>,
     total: usize,
     query: RwSignal<String>,
-    can_manage_books: bool,
     expanded: RwSignal<Option<i64>>,
 ) -> impl IntoView {
     let students = StoredValue::new(students);
@@ -321,7 +314,6 @@ fn StudentList(
                                                 <StudentBookPanel
                                                     student_id=sid
                                                     student_name=sname.clone()
-                                                    can_manage=can_manage_books
                                                 />
                                             </div>
                                         }
@@ -339,7 +331,7 @@ fn StudentList(
 // ── Progres Buku (migrasi 18) ────────────────────────────────────────────────
 
 #[component]
-fn StudentBookPanel(student_id: i64, student_name: String, can_manage: bool) -> impl IntoView {
+fn StudentBookPanel(student_id: i64, student_name: String) -> impl IntoView {
     let data = Resource::new(
         move || student_id,
         |id| async move { student_book_progress_data(id).await },
@@ -371,14 +363,7 @@ fn StudentBookPanel(student_id: i64, student_name: String, can_manage: bool) -> 
                                             {items
                                                 .into_iter()
                                                 .map(|b| {
-                                                    view! {
-                                                        <BookProgressRow
-                                                            student_id=student_id
-                                                            b=b
-                                                            can_manage=can_manage
-                                                            refetch=move || data.refetch()
-                                                        />
-                                                    }
+                                                    view! { <BookProgressRow b=b /> }
                                                 })
                                                 .collect_view()}
                                         </div>
@@ -395,134 +380,25 @@ fn StudentBookPanel(student_id: i64, student_name: String, can_manage: bool) -> 
 }
 
 #[component]
-fn BookProgressRow(
-    student_id: i64,
-    b: BookProgressItem,
-    can_manage: bool,
-    refetch: impl Fn() + Copy + Send + 'static,
-) -> impl IntoView {
-    let book_id = b.book_id;
-    let editing = RwSignal::new(false);
-    let pct_v = RwSignal::new(b.percentage.to_string());
-    let missing_v = RwSignal::new(b.missing_pages_label.clone());
-    let busy = RwSignal::new(false);
-    let msg = RwSignal::new(Option::<String>::None);
-
-    let save = move |ev: leptos::ev::SubmitEvent| {
-        ev.prevent_default();
-        if busy.get_untracked() {
-            return;
-        }
-        busy.set(true);
-        msg.set(None);
-        let (pct, missing) = (pct_v.get_untracked(), missing_v.get_untracked());
-        leptos::task::spawn_local(async move {
-            match set_student_book_progress_action(student_id, book_id, pct, missing).await {
-                Ok(_) => {
-                    editing.set(false);
-                    refetch();
-                }
-                Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some(m.rsplit(": ").next().unwrap_or(&m).to_string()));
-                }
-            }
-            busy.set(false);
-        });
-    };
-
+fn BookProgressRow(b: BookProgressItem) -> impl IntoView {
+    // Read-only: progres diisi SENDIRI oleh santri via grid /akademik (migrasi 25).
     let title = b.book_title.clone();
     let pct = b.percentage;
-    let missing_label = b.missing_pages_label.clone();
-    let field =
-        "w-full bg-surface-container border-0 rounded-lg px-3 py-2 text-body-sm text-on-surface";
-
+    let meta = if b.category == "quran" {
+        format!("Qur'an · {} surat · {} ayat", b.surahs.len(), b.total_pages)
+    } else {
+        format!("Hadist · {} halaman", b.total_pages)
+    };
     view! {
         <div class="bg-surface-container-lowest rounded-xl p-3 border border-outline-variant/30">
             <div class="flex items-center justify-between gap-2">
                 <p class="text-body-sm font-semibold text-on-background truncate">{title}</p>
-                {can_manage
-                    .then(|| {
-                        view! {
-                            <button
-                                class="w-7 h-7 rounded-lg bg-surface-container text-primary flex items-center justify-center shrink-0"
-                                on:click=move |_| editing.update(|e| *e = !*e)
-                                aria-label="Edit progres"
-                            >
-                                <span class="material-symbols-outlined text-[16px]">"edit"</span>
-                            </button>
-                        }
-                    })}
+                <span class="text-body-sm font-bold text-primary shrink-0">{format!("{pct}%")}</span>
             </div>
+            <p class="text-[11px] text-on-surface-variant">{meta}</p>
             <div class="h-1.5 bg-surface-container rounded-full overflow-hidden mt-2">
                 <div class="h-full bg-primary" style=format!("width: {pct}%")></div>
             </div>
-            <div class="flex items-center justify-between mt-1 text-[11px] text-on-surface-variant">
-                <span>{format!("{pct}% selesai")}</span>
-                {(!missing_label.is_empty())
-                    .then(|| view! { <span>{format!("Kosong: {missing_label}")}</span> })}
-            </div>
-
-            {move || {
-                msg.get()
-                    .map(|t| {
-                        view! {
-                            <div class="mt-2 p-2 bg-error-container text-on-error-container rounded-lg text-[11px]">
-                                {t}
-                            </div>
-                        }
-                    })
-            }}
-
-            {move || {
-                editing
-                    .get()
-                    .then(|| {
-                        view! {
-                            <form class="mt-2 space-y-2 anim-in" method="post" on:submit=save>
-                                <label class="space-y-1 block">
-                                    <span class="text-[11px] text-on-surface-variant">"Persentase (0-100)"</span>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        max="100"
-                                        class=field
-                                        prop:value=move || pct_v.get()
-                                        on:input=move |ev| pct_v.set(event_target_value(&ev))
-                                    />
-                                </label>
-                                <label class="space-y-1 block">
-                                    <span class="text-[11px] text-on-surface-variant">
-                                        "Halaman kosong (mis. 11-20, 45-50) — kosongkan bila tak ada"
-                                    </span>
-                                    <input
-                                        type="text"
-                                        class=field
-                                        placeholder="11-20, 45-50"
-                                        prop:value=move || missing_v.get()
-                                        on:input=move |ev| missing_v.set(event_target_value(&ev))
-                                    />
-                                </label>
-                                <div class="grid grid-cols-2 gap-2">
-                                    <button
-                                        type="button"
-                                        class="py-2 rounded-lg border border-outline-variant text-on-surface font-semibold text-[11px]"
-                                        on:click=move |_| editing.set(false)
-                                    >
-                                        "Batal"
-                                    </button>
-                                    <button
-                                        type="submit"
-                                        class="py-2 rounded-lg bg-primary text-on-primary font-semibold text-[11px] disabled:opacity-60"
-                                        disabled=move || busy.get()
-                                    >
-                                        {move || if busy.get() { "Menyimpan…" } else { "Simpan" }}
-                                    </button>
-                                </div>
-                            </form>
-                        }
-                    })
-            }}
         </div>
     }
 }

@@ -73,6 +73,7 @@ web-sys = { version = "0.3", features = [
     # Siaran suara sesi (web/live_audio_ui.rs): mic → MediaRecorder (guru),
     # MediaSource playback (santri).
     "Navigator",
+    "Clipboard",
     "MediaDevices",
     "MediaStream",
     "MediaStreamTrack",

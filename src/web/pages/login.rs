@@ -233,8 +233,8 @@ pub fn LoginPage() -> impl IntoView {
 
                         <footer class="mt-12 text-center">
                             <p class="text-body-sm text-on-surface-variant">
-                                "Belum punya akun? "
-                                <a class="text-primary font-bold hover:underline" href="#">"Hubungi Admin IT"</a>
+                                "Punya kode referal dari admin? "
+                                <a class="text-primary font-bold hover:underline" href="/register">"Daftar di sini"</a>
                             </p>
                             <div class="mt-8 flex justify-center gap-8 opacity-50">
                                 <a class="text-label-md hover:text-primary transition-colors" href="#">"Bantuan"</a>
