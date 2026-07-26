@@ -183,6 +183,8 @@ pub struct ParentPermitRow {
     pub reason: String,
     pub parent_status: String,
     pub pamong_status: String,
+    pub guru_status: String,
+    pub require_pamong: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -192,11 +194,14 @@ pub async fn permits_of_children(pool: &Pool, parent_id: i64, limit: i64) -> Res
     let rows = c
         .query(
             "SELECT u.full_name, p.type, p.start_date, p.end_date, p.reason, \
-                    p.parent_status, p.pamong_status, p.created_at \
+                    p.parent_status, p.pamong_status, p.guru_status, \
+                    COALESCE(cl.require_pamong, TRUE), p.created_at \
              FROM permit_requests p \
              JOIN parent_connections pc ON pc.student_id = p.user_id \
                   AND pc.parent_id = $1 AND pc.status = 'connected' \
              JOIN users u ON u.id = p.user_id \
+             LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
+             LEFT JOIN classes cl ON cl.id = cp.class_id \
              ORDER BY p.created_at DESC LIMIT $2",
             &[&parent_id, &limit],
         )
@@ -212,7 +217,9 @@ pub async fn permits_of_children(pool: &Pool, parent_id: i64, limit: i64) -> Res
             reason: r.get(4),
             parent_status: r.get(5),
             pamong_status: r.get(6),
-            created_at: r.get(7),
+            guru_status: r.get(7),
+            require_pamong: r.get(8),
+            created_at: r.get(9),
         })
         .collect())
 }

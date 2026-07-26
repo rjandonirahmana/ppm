@@ -43,7 +43,10 @@ pub async fn rfid_scan(
         Ok(resp) => (StatusCode::OK, Json(resp)),
         Err(ScanError::BadApiKey) => fail(StatusCode::UNAUTHORIZED, "api_key tidak dikenal"),
         Err(ScanError::UnknownCard) => fail(StatusCode::NOT_FOUND, "kartu tidak terdaftar"),
-        Err(ScanError::Db(e)) => fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(ScanError::Db(e)) => {
+            crate::service::telegram::report_error(500, "RFID scan", e.to_string());
+            fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        }
     }
 }
 
@@ -56,6 +59,9 @@ pub async fn rfid_gate(
         Ok(resp) => (StatusCode::OK, Json(resp)),
         Err(ScanError::BadApiKey) => fail_gate(StatusCode::UNAUTHORIZED, "api_key tidak dikenal"),
         Err(ScanError::UnknownCard) => fail_gate(StatusCode::NOT_FOUND, "kartu tidak terdaftar"),
-        Err(ScanError::Db(e)) => fail_gate(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(ScanError::Db(e)) => {
+            crate::service::telegram::report_error(500, "RFID gate", e.to_string());
+            fail_gate(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        }
     }
 }

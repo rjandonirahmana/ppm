@@ -4,6 +4,56 @@ use anyhow::{Context, Result};
 use chrono::{NaiveDate, NaiveTime};
 use deadpool_postgres::Pool;
 
+/// Satu sesi yang jatuh tempo pengingat WA pamong (~1 jam sebelum mulai).
+pub struct DueReminder {
+    pub session_id: i64,
+    pub session_title: String,
+    pub class_name: String,
+    /// "HH:MM" jam mulai (dari jadwal).
+    pub start_hm: String,
+    pub pamong_phone: String,
+    pub pamong_name: String,
+    /// Nama dewan guru pengisi saat ini (None = belum diatur).
+    pub teacher_name: Option<String>,
+}
+
+/// Klaim + tandai (idempotent) sesi yang mulai dalam ≤60 menit ke depan & belum
+/// dinotifikasi, milik kelas ber-pamong (punya HP). UPDATE...RETURNING
+/// menandai pamong_notified_at SEKALIGUS mengambil baris → aman dari kirim
+/// ganda (race/loop). Sesi tanpa jadwal (tak ada jam) dilewati. Migrasi 30.
+pub async fn claim_due_pamong_reminders(pool: &Pool) -> Result<Vec<DueReminder>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "UPDATE class_sessions s SET pamong_notified_at = NOW() \
+             FROM class_schedules sch, classes cl, users pm \
+             WHERE s.class_schedule_id = sch.id AND cl.id = s.class_id \
+                AND pm.id = cl.pamong_id \
+                AND s.status = 'scheduled' AND s.pamong_notified_at IS NULL \
+                AND pm.phone_number IS NOT NULL AND pm.phone_number <> '' \
+                AND (s.session_date + sch.start_time) AT TIME ZONE 'Asia/Jakarta' \
+                    BETWEEN NOW() AND NOW() + INTERVAL '60 minutes' \
+             RETURNING s.id, COALESCE(NULLIF(s.title, ''), cl.name), cl.name, \
+                       to_char(sch.start_time, 'HH24:MI'), pm.phone_number, pm.full_name, \
+                       (SELECT full_name FROM users t WHERE t.id = s.teacher_id)",
+            &[],
+        )
+        .await
+        .context("claim_due_pamong_reminders")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| DueReminder {
+            session_id: r.get(0),
+            session_title: r.get(1),
+            class_name: r.get(2),
+            start_hm: r.get(3),
+            pamong_phone: r.get(4),
+            pamong_name: r.get(5),
+            teacher_name: r.get(6),
+        })
+        .collect())
+}
+
 pub struct ScheduleRow {
     pub title: Option<String>,
     pub class_name: String,

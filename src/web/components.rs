@@ -144,7 +144,7 @@ fn nav_visible(path: &str) -> bool {
         "/santri", "/izin", "/riwayat", "/sesi", "/profil", "/laporan", "/staf", "/guru",
         "/dewan-guru", "/poin", "/poin-dewan", "/verifikasi-pamong",
         "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua", "/kontrol-pengguna",
-        "/akademik", "/kalender",
+        "/akademik", "/kalender", "/izin-staf", "/materi", "/rekap-mingguan", "/setelan",
     ];
     PREFIXES
         .iter()

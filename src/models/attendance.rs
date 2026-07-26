@@ -24,20 +24,65 @@ pub fn point_rule(status: &str) -> (i32, &'static str, &'static str) {
     }
 }
 
-/// Delta poin akhir dari status + konfigurasi jadwal (semua param MAGNITUDO
-/// POSITIF; None = pakai default). present → +present; late → −late; absent →
-/// −absent; lainnya → 0. Mengembalikan (delta bertanda, label, kategori).
+/// Preset poin PRD "Sistem Poin 2.0" per JENIS kegiatan (magnitudo positif).
+/// MENCERMINKAN fungsi SQL `cat_default_points()` (migrasi 28) — ubah keduanya
+/// bersama. present ditambah; late/alfa/izin dikurangi. Sakit/Cuti = 0 (ditangani
+/// di `attendance_delta`, bukan di sini).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CatPoints {
+    pub present: i32,
+    pub telat: i32,
+    pub alfa: i32,
+    pub izin: i32,
+}
+
+/// Jenis kegiatan valid (PRD). Selain ini → preset "legacy".
+pub const ACTIVITY_TYPES: &[(&str, &str)] = &[
+    ("kbm", "KBM (Ngaji/Sambung)"),
+    ("non_kbm", "Non-KBM (Apel, dll)"),
+    ("piket", "Piket Harian"),
+    ("apel_kepulangan", "Apel Kepulangan"),
+];
+
+/// Preset poin PRD per `activity_type`. Nilai TAK dikenal → legacy (10/0/15/0).
+pub fn category_points(activity_type: &str) -> CatPoints {
+    match activity_type {
+        "kbm" => CatPoints { present: 4, telat: 1, alfa: 10, izin: 3 },
+        // PRD Non-KBM alfa "−5 s.d −10 tergantung kegiatan" → default 5, override per-jadwal.
+        "non_kbm" => CatPoints { present: 3, telat: 1, alfa: 5, izin: 2 },
+        "piket" => CatPoints { present: 1, telat: 0, alfa: 2, izin: 0 },
+        "apel_kepulangan" => CatPoints { present: 0, telat: 0, alfa: 20, izin: 5 },
+        _ => CatPoints {
+            present: DEFAULT_PRESENT_BONUS,
+            telat: DEFAULT_LATE_PENALTY,
+            alfa: DEFAULT_ABSENT_PENALTY,
+            izin: 0,
+        },
+    }
+}
+
+/// Delta poin akhir dari status + jenis kegiatan + override jadwal (semua param
+/// override MAGNITUDO POSITIF; None = pakai preset `category_points`). present →
+/// +present; late → −telat; absent → −alfa; permit (izin biasa) → −izin; sick
+/// (Sakit/Cuti) → 0 (PRD: tidak mengurangi poin). Mengembalikan (delta bertanda,
+/// label, kategori point_logs).
 pub fn attendance_delta(
     status: &str,
+    activity_type: &str,
     present: Option<i16>,
     late: Option<i16>,
     absent: Option<i16>,
+    izin: Option<i16>,
 ) -> (i32, &'static str, &'static str) {
+    let c = category_points(activity_type);
     let m = |v: Option<i16>, d: i32| v.map(|x| (x as i32).abs()).unwrap_or(d);
     match status {
-        "present" => (m(present, DEFAULT_PRESENT_BONUS), "Kedisiplinan", "attendance"),
-        "late" => (-m(late, DEFAULT_LATE_PENALTY), "Kedisiplinan", "discipline"),
-        "absent" => (-m(absent, DEFAULT_ABSENT_PENALTY), "Pelanggaran", "discipline"),
+        "present" => (m(present, c.present), "Kedisiplinan", "attendance"),
+        "late" => (-m(late, c.telat), "Kedisiplinan", "discipline"),
+        "absent" => (-m(absent, c.alfa), "Pelanggaran", "discipline"),
+        "permit" => (-m(izin, c.izin), "Izin", "discipline"),
+        // Sakit/Cuti (surat sah) TIDAK mengurangi poin (PRD hal. 7 NB).
+        "sick" => (0, "Sakit/Cuti", "attendance"),
         "outside_schedule" => (0, "Di luar jadwal", "attendance"),
         _ => (0, "Keterangan", "attendance"),
     }

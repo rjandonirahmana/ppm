@@ -14,8 +14,8 @@ use crate::models::{
 use crate::web::api::{
     add_member_action, create_curriculum_action, create_schedule_action, create_session_action,
     delete_curriculum_action, delete_schedule_action, kelas_detail, remove_member_action,
-    set_session_libur_action, set_session_teacher_action, staff_search_students,
-    update_class_action, update_curriculum_action, update_schedule_action,
+    set_class_staff_action, set_session_libur_action, set_session_teacher_action,
+    staff_search_students, update_class_action, update_curriculum_action, update_schedule_action,
 };
 use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
 
@@ -270,6 +270,9 @@ fn DetailBody(
             }}
         </div>
 
+        // ── Wali kelas & rute perizinan (migrasi 29) ────────────────────────
+        <WaliKelasCard class_id=class_id d=d.clone() refetch=refetch />
+
         // ── Tab ─────────────────────────────────────────────────────────────
         <div class="flex gap-1 bg-surface-container rounded-xl p-1">
             <TabBtn tab=tab value="santri" label="Santri" />
@@ -312,6 +315,133 @@ fn TabBtn(tab: RwSignal<String>, value: &'static str, label: &'static str) -> im
         <button class=cls on:click=move |_| tab.set(value.to_string())>
             {label}
         </button>
+    }
+}
+
+// ── Wali kelas & rute perizinan ───────────────────────────────────────────────
+
+#[component]
+fn WaliKelasCard(
+    class_id: i64,
+    d: KelasDetail,
+    refetch: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
+    let teacher_opts = StoredValue::new(d.teacher_options.clone());
+    let pamong_opts = StoredValue::new(d.pamong_options.clone());
+    let wali = RwSignal::new(d.wali_kelas_id);
+    let pamong = RwSignal::new(d.pamong_id);
+    let req_pamong = RwSignal::new(d.require_pamong);
+    let busy = RwSignal::new(false);
+    let msg = RwSignal::new(Option::<(bool, String)>::None);
+
+    let save = move |_| {
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        msg.set(None);
+        let (w, pm, rp) = (wali.get_untracked(), pamong.get_untracked(), req_pamong.get_untracked());
+        leptos::task::spawn_local(async move {
+            match set_class_staff_action(class_id, w, pm, rp).await {
+                Ok(_) => {
+                    msg.set(Some((true, "Tersimpan.".into())));
+                    refetch();
+                }
+                Err(e) => {
+                    let m = e.to_string();
+                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                }
+            }
+            busy.set(false);
+        });
+    };
+
+    view! {
+        <div class="ppm-card p-4 space-y-3 anim-in">
+            <div class="flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary">"badge"</span>
+                <h3 class="text-body-lg font-bold text-on-background">"Wali Kelas & Perizinan"</h3>
+            </div>
+            <p class="text-body-sm text-on-surface-variant">
+                "Wali kelas menyetujui izin/sakit/keluar santri kelas ini. Atur juga apakah izin lewat Pamong dulu atau langsung ke wali kelas."
+            </p>
+
+            <label class="space-y-1 block">
+                <span class="text-[11px] font-bold tracking-wider text-on-surface-variant">"WALI KELAS"</span>
+                <select
+                    class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface cursor-pointer"
+                    on:change=move |ev| wali.set(event_target_value(&ev).parse().unwrap_or(0))
+                >
+                    <option value="0" selected=move || wali.get() == 0>"— Belum ada wali kelas"</option>
+                    {teacher_opts
+                        .get_value()
+                        .into_iter()
+                        .map(|t| {
+                            let tid = t.id;
+                            view! {
+                                <option value=t.id.to_string() selected=move || wali.get() == tid>
+                                    {t.name}
+                                </option>
+                            }
+                        })
+                        .collect_view()}
+                </select>
+            </label>
+
+            <label class="space-y-1 block">
+                <span class="text-[11px] font-bold tracking-wider text-on-surface-variant">"PAMONG KELAS"</span>
+                <select
+                    class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface cursor-pointer"
+                    on:change=move |ev| pamong.set(event_target_value(&ev).parse().unwrap_or(0))
+                >
+                    <option value="0" selected=move || pamong.get() == 0>"— Belum ada pamong"</option>
+                    {pamong_opts
+                        .get_value()
+                        .into_iter()
+                        .map(|t| {
+                            let pid = t.id;
+                            view! {
+                                <option value=t.id.to_string() selected=move || pamong.get() == pid>
+                                    {t.name}
+                                </option>
+                            }
+                        })
+                        .collect_view()}
+                </select>
+            </label>
+            <p class="text-[11px] text-on-surface-variant">
+                "Pamong kelas memverifikasi kehadiran gate santri kelas ini, jadi tahap-1 persetujuan izin, & menerima WA ~1 jam sebelum sesi untuk mengatur dewan guru pengisi."
+            </p>
+
+            <label class="flex items-center gap-3 cursor-pointer py-1">
+                <input
+                    type="checkbox"
+                    class="w-5 h-5 accent-primary cursor-pointer"
+                    prop:checked=move || req_pamong.get()
+                    on:change=move |ev| req_pamong.set(event_target_checked(&ev))
+                />
+                <span class="text-body-sm text-on-background">
+                    "Izin harus lewat Pamong dulu (2 tahap). Nonaktifkan = langsung ke wali kelas."
+                </span>
+            </label>
+
+            <div class="flex items-center gap-3">
+                <button
+                    class="px-5 py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-body-sm cursor-pointer press disabled:opacity-60"
+                    prop:disabled=move || busy.get()
+                    on:click=save
+                >
+                    {move || if busy.get() { "Menyimpan…" } else { "Simpan" }}
+                </button>
+                {move || {
+                    msg.get()
+                        .map(|(ok, m)| {
+                            let cls = if ok { "text-success" } else { "text-error" };
+                            view! { <span class=format!("text-body-sm {cls}")>{m}</span> }
+                        })
+                }}
+            </div>
+        </div>
     }
 }
 
@@ -704,6 +834,8 @@ fn JadwalCard(
     let e_present = RwSignal::new(s.present_points.clone());
     let e_late = RwSignal::new(s.late_points.clone());
     let e_absent = RwSignal::new(s.absent_points.clone());
+    let e_activity = RwSignal::new(s.activity_type.clone());
+    let e_izin = RwSignal::new(s.izin_points.clone());
     let e_room = RwSignal::new(s.room_id);
     let e_custom = RwSignal::new(
         s.custom_dates
@@ -734,10 +866,12 @@ fn JadwalCard(
             e_absent.get_untracked(),
             e_room.get_untracked(),
             e_custom.get_untracked().join(","),
+            e_activity.get_untracked(),
+            e_izin.get_untracked(),
         );
         leptos::task::spawn_local(async move {
             match update_schedule_action(
-                sid, a.0, a.1, a.2, a.3, a.4, a.5, a.6, a.7, a.8, a.9, a.10, a.11, a.12,
+                sid, a.0, a.1, a.2, a.3, a.4, a.5, a.6, a.7, a.8, a.9, a.10, a.11, a.12, a.13, a.14,
             )
             .await
             {
@@ -866,19 +1000,55 @@ fn JadwalCard(
                                         .collect_view()}
                                 </select>
                             </label>
+                            // Jenis kegiatan PRD (preset poin).
+                            <label class="space-y-1 block">
+                                <span class="text-[11px] text-on-surface-variant">"Jenis kegiatan (preset poin PRD)"</span>
+                                <select
+                                    class=field
+                                    on:change=move |ev| e_activity.set(event_target_value(&ev))
+                                >
+                                    <option value="" selected=move || e_activity.get().is_empty()>
+                                        "— (Lain / default)"
+                                    </option>
+                                    {crate::models::ACTIVITY_TYPES
+                                        .iter()
+                                        .map(|(k, label)| {
+                                            let k2 = *k;
+                                            view! {
+                                                <option value=*k selected=move || e_activity.get() == k2>
+                                                    {*label}
+                                                </option>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </select>
+                            </label>
                             // Poin kehadiran: semua positif (tepat waktu ditambah,
-                            // telat & alpa dikurangi).
+                            // telat/alpa/izin dikurangi). Kosong = preset kegiatan.
                             <label class="space-y-1 block">
                                 <span class="text-[11px] text-on-surface-variant">
-                                    "Bonus tepat waktu — ditambah (kosong = 10)"
+                                    "Bonus tepat waktu — ditambah (kosong = preset)"
                                 </span>
                                 <input
                                     type="number"
                                     min="0"
                                     class=field
-                                    placeholder="mis. 10"
+                                    placeholder="preset"
                                     prop:value=move || e_present.get()
                                     on:input=move |ev| e_present.set(event_target_value(&ev))
+                                />
+                            </label>
+                            <label class="space-y-1 block">
+                                <span class="text-[11px] text-on-surface-variant">
+                                    "Potongan jika izin — dikurangi (Sakit/Cuti = 0)"
+                                </span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    class=field
+                                    placeholder="preset"
+                                    prop:value=move || e_izin.get()
+                                    on:input=move |ev| e_izin.set(event_target_value(&ev))
                                 />
                             </label>
                             <label class="space-y-1 block">
@@ -1216,9 +1386,11 @@ fn BuatJadwalForm(
     let start_d = RwSignal::new(String::new());
     let end_d = RwSignal::new(String::new());
     let category = RwSignal::new(String::new());
+    let activity = RwSignal::new(String::new());
     let present_point = RwSignal::new(String::new());
     let point = RwSignal::new(String::new());
     let absent_point = RwSignal::new(String::new());
+    let izin_point = RwSignal::new(String::new());
     let room = RwSignal::new(0i64);
     // Recurrence 'custom' = daftar tanggal manual (loncat-loncat).
     let custom_dates = RwSignal::new(Vec::<String>::new());
@@ -1246,11 +1418,13 @@ fn BuatJadwalForm(
             absent_point.get_untracked(),
             room.get_untracked(),
             custom_dates.get_untracked().join(","),
+            activity.get_untracked(),
+            izin_point.get_untracked(),
         );
         leptos::task::spawn_local(async move {
             match create_schedule_action(
                 class_id, args.0, args.1, args.2, args.3, args.4, args.5, args.6, args.7, args.8,
-                args.9, args.10, args.11, args.12,
+                args.9, args.10, args.11, args.12, args.13, args.14,
             )
             .await
             {
@@ -1263,9 +1437,11 @@ fn BuatJadwalForm(
                     start_d.set(String::new());
                     end_d.set(String::new());
                     category.set(String::new());
+                    activity.set(String::new());
                     present_point.set(String::new());
                     point.set(String::new());
                     absent_point.set(String::new());
+                    izin_point.set(String::new());
                     room.set(0);
                     custom_dates.set(Vec::new());
                     refetch();
@@ -1351,23 +1527,51 @@ fn BuatJadwalForm(
                                 .collect_view()}
                         </select>
                     </label>
-                    // Poin: SEMUA angka positif. Tepat waktu DITAMBAH; telat &
-                    // alpa DIKURANGI (arah sudah jelas dari label, tak perlu minus).
+                    // Jenis kegiatan (PRD): menentukan PRESET poin default bila
+                    // input poin di bawah dikosongkan (KBM/Non-KBM/Piket/Apel).
+                    <label class="space-y-1 block">
+                        <span class="text-label-md text-on-surface-variant">"Jenis kegiatan (preset poin PRD)"</span>
+                        <select
+                            class=field
+                            on:change=move |ev| activity.set(event_target_value(&ev))
+                        >
+                            <option value="">"— (Lain / default 10·0·15)"</option>
+                            {crate::models::ACTIVITY_TYPES
+                                .iter()
+                                .map(|(k, label)| view! { <option value=*k>{*label}</option> })
+                                .collect_view()}
+                        </select>
+                    </label>
+                    // Poin: SEMUA angka positif. Tepat waktu DITAMBAH; telat/alpa/
+                    // izin DIKURANGI. Kosong = preset jenis kegiatan di atas.
                     <div class="rounded-xl bg-surface-container/60 p-3 space-y-2">
                         <p class="text-[11px] font-bold tracking-wider text-on-surface-variant">
-                            "POIN KEHADIRAN (semua angka positif)"
+                            "POIN KEHADIRAN (kosong = ikut preset jenis kegiatan)"
                         </p>
                         <label class="space-y-1 block">
                             <span class="text-label-md text-on-surface-variant">
-                                "Bonus jika tepat waktu — ditambah (kosong = default 10)"
+                                "Bonus jika tepat waktu — ditambah"
                             </span>
                             <input
                                 type="number"
                                 min="0"
                                 class=field
-                                placeholder="mis. 10"
+                                placeholder="preset"
                                 prop:value=move || present_point.get()
                                 on:input=move |ev| present_point.set(event_target_value(&ev))
+                            />
+                        </label>
+                        <label class="space-y-1 block">
+                            <span class="text-label-md text-on-surface-variant">
+                                "Potongan jika izin (biasa) — dikurangi (Sakit/Cuti = 0)"
+                            </span>
+                            <input
+                                type="number"
+                                min="0"
+                                class=field
+                                placeholder="preset"
+                                prop:value=move || izin_point.get()
+                                on:input=move |ev| izin_point.set(event_target_value(&ev))
                             />
                         </label>
                         <label class="space-y-1 block">

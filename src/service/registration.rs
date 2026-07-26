@@ -215,20 +215,60 @@ async fn send_wa_otp(
     otp: &str,
     password: &str,
 ) -> Result<()> {
+    let text = format!(
+        "Halo! Selamat datang di PPM AFM 🎉\n\n\
+         Kode OTP kamu: *{}*\n\
+         Password akun kamu: *{}*\n\n\
+         ⚠️ Simpan password ini baik-baik.\n\
+         OTP berlaku 10 menit. Jangan bagikan ke siapapun.",
+        otp, password
+    );
+    send_wa_text(http, waha, phone, &text).await
+}
+
+/// Cek kesehatan WAHA + status sesi. Ok(status) mis. "WORKING"; Err(reason) bila
+/// WAHA tak terjangkau / sesi bukan WORKING. Dipakai monitor Telegram (main.rs).
+pub async fn waha_status(http: &reqwest::Client, waha: &WahaConfig) -> Result<String, String> {
+    let url = format!("{}/api/sessions/{}", waha.base_url, waha.session);
+    let mut req = http.get(&url);
+    if !waha.api_key.is_empty() {
+        req = req.header("X-Api-Key", &waha.api_key);
+    }
+    let res = req
+        .send()
+        .await
+        .map_err(|e| format!("WAHA tak terjangkau ({url}): {e}"))?;
+    if !res.status().is_success() {
+        let code = res.status();
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("WAHA balas {code}: {body}"));
+    }
+    let v: serde_json::Value = res
+        .json()
+        .await
+        .map_err(|e| format!("WAHA respons tak valid: {e}"))?;
+    let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("UNKNOWN");
+    if status == "WORKING" {
+        Ok(status.to_string())
+    } else {
+        Err(format!("Sesi WAHA '{}' berstatus {status} (bukan WORKING)", waha.session))
+    }
+}
+
+/// Kirim pesan WhatsApp teks bebas via WAHA (`phone` = "62xxx" ternormalisasi).
+/// Dipakai OTP registrasi & pengingat sesi pamong (service::sessions).
+pub async fn send_wa_text(
+    http: &reqwest::Client,
+    waha: &WahaConfig,
+    phone: &str,
+    text: &str,
+) -> Result<()> {
     let chat_id = format!("{phone}@c.us");
     let body = serde_json::json!({
         "chatId": chat_id,
-        "text": format!(
-            "Halo! Selamat datang di PPM AFM 🎉\n\n\
-             Kode OTP kamu: *{}*\n\
-             Password akun kamu: *{}*\n\n\
-             ⚠️ Simpan password ini baik-baik.\n\
-             OTP berlaku 10 menit. Jangan bagikan ke siapapun.",
-            otp, password
-        ),
+        "text": text,
         "session": waha.session,
     });
-
     let url = format!("{}/api/sendText", waha.base_url);
     let mut req = http.post(&url).json(&body);
     if !waha.api_key.is_empty() {
@@ -237,8 +277,8 @@ async fn send_wa_otp(
     let res = req.send().await.map_err(|e| anyhow::anyhow!("Gagal menghubungi WAHA: {e}"))?;
     if !res.status().is_success() {
         let status = res.status();
-        let text = res.text().await.unwrap_or_default();
-        bail!("WAHA error {status}: {text}");
+        let body = res.text().await.unwrap_or_default();
+        bail!("WAHA error {status}: {body}");
     }
     Ok(())
 }

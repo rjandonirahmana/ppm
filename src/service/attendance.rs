@@ -96,9 +96,9 @@ pub async fn record_scan(
 
 /// Data halaman verifikasi pamong: antrean + statistik hari ini + sesi hari ini
 /// + kehadiran terbaru (dashboard pamong ala mockup).
-pub async fn pamong_data(pool: &Pool) -> Result<PamongData> {
+pub async fn pamong_data(pool: &Pool, pamong_id: Option<i64>) -> Result<PamongData> {
     let (pending, approved_today, stats, today, latest) = tokio::join!(
-        repo::pending_pamong(pool, 50),
+        repo::pending_pamong(pool, pamong_id, 50),
         repo::approved_today(pool),
         repo::staf_stats(pool),
         repo::today_sessions(pool, 5),
@@ -135,9 +135,16 @@ pub async fn pamong_data(pool: &Pool) -> Result<PamongData> {
     })
 }
 
-/// Setujui/tolak satu absensi (tahap pamong).
-pub async fn decide_pamong(pool: &Pool, att_id: i64, approver: i64, approve: bool) -> Result<bool> {
-    repo::decide_pamong(pool, att_id, approver, approve).await
+/// Setujui/tolak satu absensi (tahap pamong). `pamong_id` Some = guard hanya
+/// kelas yang diampu guru ini (migrasi 30).
+pub async fn decide_pamong(
+    pool: &Pool,
+    att_id: i64,
+    approver: i64,
+    approve: bool,
+    pamong_id: Option<i64>,
+) -> Result<bool> {
+    repo::decide_pamong(pool, att_id, approver, approve, pamong_id).await
 }
 
 // ── Verifikasi TAHAP 2 (dewan guru) ──────────────────────────────────────────────

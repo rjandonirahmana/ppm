@@ -93,8 +93,15 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
       document.querySelectorAll('[data-reveal]').forEach(function(el){el.classList.add('is-visible');});
     },5000);
   }
-  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',start); }
-  else { start(); }
+  /* JANGAN memutasi DOM sebelum HYDRATION Leptos selesai: count-up menimpa
+     textContent [data-count] & reveal menambah class — kalau menyentuh node
+     yang sedang dihidrasi, hydration mismatch → event delegation tak terpasang
+     → klik mati / section tersembunyi = blank (parah di Safari private karena
+     WASM dimuat fresh/lebih lambat). Rust memanggil __ppmStartFx() SETELAH
+     hydrate. Fallback: bila tak pernah dipanggil (hydrate absen/gagal), jalan
+     sendiri setelah load — di kasus itu tak ada hydration yang bisa dirusak. */
+  window.__ppmStartFx=function(){ if(window.__ppmFxStarted) return; window.__ppmFxStarted=true; start(); };
+  window.addEventListener('load',function(){ setTimeout(window.__ppmStartFx,1000); });
 })();
 "#></script>
 
@@ -138,6 +145,24 @@ pub fn App() -> impl IntoView {
     let session = Resource::new_blocking(|| (), |_| async move { get_session().await.ok().flatten() });
     provide_context(session);
 
+    // Nyalakan efek DOM (count-up + reveal) HANYA setelah hydration selesai —
+    // Effect cuma jalan di klien, pasca-mount. Ini mencegah skrip inline
+    // memutasi node yang sedang dihidrasi (hydration mismatch → klik mati /
+    // blank, terutama Safari private). Konten SPA baru ditangani MutationObserver.
+    #[cfg(target_arch = "wasm32")]
+    Effect::new(|_| {
+        use wasm_bindgen::JsCast;
+        if let Some(win) = web_sys::window() {
+            if let Ok(f) =
+                js_sys::Reflect::get(&win, &wasm_bindgen::JsValue::from_str("__ppmStartFx"))
+            {
+                if let Ok(func) = f.dyn_into::<js_sys::Function>() {
+                    let _ = func.call0(&win);
+                }
+            }
+        }
+    });
+
     view! {
         <Title text="PPM AFM — Portal Absensi Santri" />
         <Router>
@@ -171,6 +196,8 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/izin-staf") view=IzinStafPage />
                 <Route path=path!("/materi") view=MateriPage />
                 <Route path=path!("/kontrol-pengguna") view=KontrolPenggunaPage />
+                <Route path=path!("/setelan") view=SetelanPage />
+                <Route path=path!("/rekap-mingguan") view=RekapMingguanPage />
                 <Route path=path!("/students") view=StudentsPage />
                 <Route path=path!("/kelas") view=KelasPage />
                 <Route path=path!("/kelas/:id") view=KelasDetailPage />

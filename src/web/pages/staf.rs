@@ -170,6 +170,9 @@ fn StafBody(d: StafHome) -> impl IntoView {
                     ("groups", "Santri", "/students"),
                     ("stars", "Poin", "/poin"),
                     ("cast_for_education", "Sesi", "/sesi"),
+                    ("summarize", "Rekap", "/rekap-mingguan"),
+                    ("shield", "Kontrol", "/kontrol-pengguna"),
+                    ("settings", "Setelan", "/setelan"),
                 ]
                     .into_iter()
                     .map(|(icon, label, href)| {

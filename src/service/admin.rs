@@ -9,6 +9,15 @@ use super::fmt::fmt_ago;
 use crate::models::{ActivityLogItem, RfidDeviceItem, UserControlData, UserRow};
 use crate::repository as repo;
 
+/// Saldo poin awal semester (PRD "Sistem Poin 2.0": 300 poin).
+pub const SEMESTER_START_POINTS: i32 = 300;
+
+/// Reset saldo poin semua santri ke 300 (awal semester baru, PRD). Return
+/// jumlah santri ter-reset.
+pub async fn reset_semester_points(pool: &Pool) -> Result<i64> {
+    repo::reset_semester_points(pool, SEMESTER_START_POINTS).await
+}
+
 /// api_key acak (32 hex) untuk perangkat RFID baru.
 fn gen_api_key() -> String {
     use rand::RngExt;

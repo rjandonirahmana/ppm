@@ -87,7 +87,8 @@ async fn monitor_child(pool: &Pool, child_id: i64) -> Result<Option<ChildMonitor
     let permits = permits?
         .into_iter()
         .map(|p| {
-            let (status_label, status_kind) = permit_stage(&p.parent_status, &p.pamong_status);
+            let (status_label, status_kind) =
+                permit_stage(&p.parent_status, &p.pamong_status, &p.guru_status, p.require_pamong);
             PermitItem {
                 kind_label: permit_kind_label(&p.kind).into(),
                 range_label: fmt_range(p.start_date, p.end_date),
@@ -189,7 +190,8 @@ pub async fn children_permits(pool: &Pool, parent_id: i64) -> Result<Vec<ParentP
         .await?
         .into_iter()
         .map(|p| {
-            let (status_label, status_kind) = permit_stage(&p.parent_status, &p.pamong_status);
+            let (status_label, status_kind) =
+                permit_stage(&p.parent_status, &p.pamong_status, &p.guru_status, p.require_pamong);
             ParentPermitItem {
                 child_name: p.child_name,
                 kind_label: permit_kind_label(&p.kind).into(),

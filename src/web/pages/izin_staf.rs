@@ -42,7 +42,7 @@ pub fn IzinStafPage() -> impl IntoView {
         <Title text="Tinjau Izin — PPM AFM" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
-                <MobileHeader title="Tinjau Izin" subtitle="Izin yang sudah dikonfirmasi orang tua" back_href="/staf" />
+                <MobileHeader title="Tinjau Izin" subtitle="Antrean izin menunggu keputusan" back_href="/staf" />
 
                 <div class="px-5 pt-5 space-y-5 stagger">
                     <Suspense fallback=|| {
@@ -63,7 +63,12 @@ pub fn IzinStafPage() -> impl IntoView {
                             data.get()
                                 .map(|res| match res {
                                     Ok(d) => {
+                                        let stage = d.stage_label.clone();
                                         view! {
+                                            <div class="ppm-chip bg-secondary-container text-primary inline-flex items-center gap-1">
+                                                <span class="material-symbols-outlined text-[15px]">"how_to_reg"</span>
+                                                {format!("{} · rute per-kelas (via pamong diatur di tiap kelas)", stage.clone())}
+                                            </div>
                                             <div class="grid grid-cols-2 gap-3 md:max-w-lg">
                                                 <div class="ppm-card p-4">
                                                     <div class="flex items-center gap-2 text-warning">

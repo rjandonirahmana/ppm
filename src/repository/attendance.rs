@@ -11,6 +11,221 @@ pub struct AttRow {
     pub verify_status: String,
 }
 
+pub struct WeeklyRecapRawRow {
+    pub name: String,
+    pub nis: Option<String>,
+    pub class_name: Option<String>,
+    pub hadir: i64,
+    pub telat: i64,
+    pub izin: i64,
+    pub alpa: i64,
+    pub points: i32,
+}
+
+/// Satu santri dengan net poin mingguan ≤ ambang (pemanggilan PRD hal. 12).
+pub struct WeeklyNetRow {
+    pub name: String,
+    pub nis: Option<String>,
+    pub class_name: Option<String>,
+    pub net: i32,
+}
+
+/// Santri dengan TOTAL net poin (SUM point_logs.delta) pekan [start,end] WIB
+/// ≤ -9 (ambang pemanggilan terendah). Terurut paling minus dulu.
+pub async fn weekly_net_points(
+    pool: &Pool,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> Result<Vec<WeeklyNetRow>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT u.full_name, u.nis, cl.name, SUM(pl.delta)::int AS net \
+             FROM point_logs pl \
+             JOIN users u ON u.id = pl.user_id AND u.role = 'santri' \
+             LEFT JOIN class_participants cp ON cp.user_id = u.id AND cp.is_primary \
+             LEFT JOIN classes cl ON cl.id = cp.class_id \
+             WHERE (pl.created_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1 AND $2 \
+             GROUP BY u.id, u.full_name, u.nis, cl.name \
+             HAVING SUM(pl.delta) <= -9 \
+             ORDER BY net ASC",
+            &[&start, &end],
+        )
+        .await
+        .context("weekly_net_points")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| WeeklyNetRow {
+            name: r.get(0),
+            nis: r.get(1),
+            class_name: r.get(2),
+            net: r.get(3),
+        })
+        .collect())
+}
+
+/// Baris hitung kehadiran per (santri, jenis kegiatan) untuk satu pekan —
+/// dasar perhitungan reward mingguan (PRD).
+pub struct WeeklyCatCount {
+    pub user_id: i64,
+    pub name: String,
+    pub nis: Option<String>,
+    /// activity_type efektif: kbm|non_kbm|piket|other.
+    pub activity_type: String,
+    pub hadir: i64,
+    pub telat: i64,
+    pub izin: i64,
+    pub sakit: i64,
+    pub alfa: i64,
+}
+
+/// Hitung kehadiran per santri PER KATEGORI kegiatan (dari activity_type jadwal)
+/// dalam rentang [start,end] WIB. Hanya santri yang punya catatan (INNER JOIN).
+/// telat menyertakan 'outside_schedule'.
+pub async fn weekly_counts_by_category(
+    pool: &Pool,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> Result<Vec<WeeklyCatCount>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT u.id, u.full_name, u.nis, COALESCE(sch.activity_type, 'other'), \
+                COUNT(*) FILTER (WHERE a.status = 'present'), \
+                COUNT(*) FILTER (WHERE a.status IN ('late','outside_schedule')), \
+                COUNT(*) FILTER (WHERE a.status = 'permit'), \
+                COUNT(*) FILTER (WHERE a.status = 'sick'), \
+                COUNT(*) FILTER (WHERE a.status = 'absent') \
+             FROM users u \
+             JOIN attendances a ON a.user_id = u.id \
+                AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1 AND $2 \
+             LEFT JOIN class_schedules sch ON sch.id = a.class_schedule_id \
+             WHERE u.role = 'santri' AND u.is_active = TRUE \
+             GROUP BY u.id, u.full_name, u.nis, COALESCE(sch.activity_type, 'other') \
+             ORDER BY u.full_name",
+            &[&start, &end],
+        )
+        .await
+        .context("weekly_counts_by_category")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| WeeklyCatCount {
+            user_id: r.get(0),
+            name: r.get(1),
+            nis: r.get(2),
+            activity_type: r.get(3),
+            hadir: r.get(4),
+            telat: r.get(5),
+            izin: r.get(6),
+            sakit: r.get(7),
+            alfa: r.get(8),
+        })
+        .collect())
+}
+
+/// Kreditkan reward mingguan satu santri (idempotent: UNIQUE user_id,week_start).
+/// Return true bila BARU dikreditkan; false bila sudah pernah (skip). Menulis
+/// weekly_rewards + point_logs + menaikkan users.points dalam satu transaksi.
+pub async fn credit_weekly_reward(
+    pool: &Pool,
+    user_id: i64,
+    week_start: NaiveDate,
+    points: i32,
+    detail: &str,
+) -> Result<bool> {
+    if points <= 0 {
+        return Ok(false);
+    }
+    let mut c = pool.get().await?;
+    let tx = c.transaction().await.context("credit_weekly_reward tx")?;
+    let ins = tx
+        .query_opt(
+            "INSERT INTO weekly_rewards (user_id, week_start, points, detail) \
+             VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, week_start) DO NOTHING \
+             RETURNING id",
+            &[&user_id, &week_start, &points, &detail],
+        )
+        .await
+        .context("credit_weekly_reward insert")?;
+    if ins.is_none() {
+        tx.rollback().await.ok();
+        return Ok(false);
+    }
+    let reason = format!("Reward mingguan {week_start}");
+    tx.execute(
+        "INSERT INTO point_logs (user_id, delta, reason, category) \
+         VALUES ($1, $2, $3, 'achievement')",
+        &[&user_id, &points, &reason],
+    )
+    .await
+    .context("credit_weekly_reward point_logs")?;
+    tx.execute(
+        "UPDATE users SET points = points + $2 WHERE id = $1",
+        &[&user_id, &points],
+    )
+    .await
+    .context("credit_weekly_reward points")?;
+    tx.commit().await.context("credit_weekly_reward commit")?;
+    Ok(true)
+}
+
+/// Set user_id yang SUDAH menerima reward pekan `week_start` (agar UI tahu).
+pub async fn credited_users_for_week(pool: &Pool, week_start: NaiveDate) -> Result<Vec<i64>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT user_id FROM weekly_rewards WHERE week_start = $1",
+            &[&week_start],
+        )
+        .await
+        .context("credited_users_for_week")?;
+    Ok(rows.into_iter().map(|r| r.get(0)).collect())
+}
+
+/// Rekap kehadiran per-santri untuk rentang tanggal (WIB). Semua santri aktif
+/// dimasukkan (LEFT JOIN) walau tanpa catatan pekan itu (semua nol).
+/// telat menyertakan 'outside_schedule' (hadir di luar jadwal).
+pub async fn weekly_recap(
+    pool: &Pool,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> Result<Vec<WeeklyRecapRawRow>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT u.full_name, u.nis, \
+                (SELECT c.name FROM class_participants cp JOIN classes c ON c.id = cp.class_id \
+                    WHERE cp.user_id = u.id ORDER BY cp.is_primary DESC LIMIT 1), \
+                COUNT(*) FILTER (WHERE a.status = 'present'), \
+                COUNT(*) FILTER (WHERE a.status IN ('late','outside_schedule')), \
+                COUNT(*) FILTER (WHERE a.status IN ('permit','sick')), \
+                COUNT(*) FILTER (WHERE a.status = 'absent'), \
+                u.points \
+             FROM users u \
+             LEFT JOIN attendances a ON a.user_id = u.id \
+                AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1 AND $2 \
+             WHERE u.role = 'santri' AND u.is_active = TRUE \
+             GROUP BY u.id, u.full_name, u.nis, u.points \
+             ORDER BY u.full_name",
+            &[&start, &end],
+        )
+        .await
+        .context("weekly_recap")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| WeeklyRecapRawRow {
+            name: r.get(0),
+            nis: r.get(1),
+            class_name: r.get(2),
+            hadir: r.get(3),
+            telat: r.get(4),
+            izin: r.get(5),
+            alpa: r.get(6),
+            points: r.get(7),
+        })
+        .collect())
+}
+
 /// Riwayat kehadiran terakhir milik satu santri.
 pub async fn recent_attendances(pool: &Pool, user_id: i64, limit: i64) -> Result<Vec<AttRow>> {
     let c = pool.get().await?;
@@ -58,8 +273,14 @@ pub struct PendingRow {
     pub status: String,
 }
 
-/// Antrean verifikasi pamong (pamong_status = pending), tertua dulu.
-pub async fn pending_pamong(pool: &Pool, limit: i64) -> Result<Vec<PendingRow>> {
+/// Antrean verifikasi pamong (pamong_status = pending), tertua dulu. `pamong_id`
+/// Some = hanya kehadiran santri di KELAS yang pamongnya guru ini (migrasi 30);
+/// None = semua (admin/dewan oversight).
+pub async fn pending_pamong(
+    pool: &Pool,
+    pamong_id: Option<i64>,
+    limit: i64,
+) -> Result<Vec<PendingRow>> {
     let c = pool.get().await?;
     let rows = c
         .query(
@@ -69,8 +290,9 @@ pub async fn pending_pamong(pool: &Pool, limit: i64) -> Result<Vec<PendingRow>> 
              LEFT JOIN class_schedules cs ON cs.id = a.class_schedule_id \
              LEFT JOIN classes c ON c.id = cs.class_id \
              WHERE a.pamong_status = 'pending' \
+                AND ($2::bigint IS NULL OR c.pamong_id = $2) \
              ORDER BY a.scanned_at ASC LIMIT $1",
-            &[&limit],
+            &[&limit, &pamong_id],
         )
         .await
         .context("pending_pamong")?;
@@ -105,17 +327,29 @@ pub async fn approved_today(pool: &Pool) -> Result<i64> {
 /// Setujui/tolak (tahap pamong) DALAM SATU TRANSAKSI. Saat disetujui, poin
 /// kehadiran diberikan (models::attendance::point_rule): insert point_logs +
 /// update saldo users.points. Return true bila ada baris ter-update.
-pub async fn decide_pamong(pool: &Pool, att_id: i64, approver: i64, approve: bool) -> Result<bool> {
+pub async fn decide_pamong(
+    pool: &Pool,
+    att_id: i64,
+    approver: i64,
+    approve: bool,
+    pamong_id: Option<i64>,
+) -> Result<bool> {
     let mut c = pool.get().await?;
     let tx = c.transaction().await.context("decide_pamong tx")?;
 
     let status = if approve { "approved" } else { "rejected" };
+    // Guard (migrasi 30): pamong hanya boleh memverifikasi kehadiran di KELAS
+    // yang ia ampu (kelas dari jadwal absensi). $4 NULL = admin/dewan (bebas).
     let row = tx
         .query_opt(
-            "UPDATE attendances SET pamong_status = $2, pamong_by = $3, pamong_at = NOW() \
-             WHERE id = $1 AND pamong_status = 'pending' \
-             RETURNING user_id, status, class_schedule_id",
-            &[&att_id, &status, &approver],
+            "UPDATE attendances a SET pamong_status = $2, pamong_by = $3, pamong_at = NOW() \
+             WHERE a.id = $1 AND a.pamong_status = 'pending' \
+                AND ($4::bigint IS NULL OR \
+                    (SELECT cl.pamong_id FROM class_schedules cs \
+                        JOIN classes cl ON cl.id = cs.class_id \
+                        WHERE cs.id = a.class_schedule_id) = $4) \
+             RETURNING a.user_id, a.status, a.class_schedule_id",
+            &[&att_id, &status, &approver, &pamong_id],
         )
         .await
         .context("decide_pamong update")?;
@@ -131,11 +365,13 @@ pub async fn decide_pamong(pool: &Pool, att_id: i64, approver: i64, approve: boo
         let schedule_id: Option<i64> = row.get(2);
         // Poin per-jadwal (magnitudo positif): present ditambah, late/absent
         // dikurangi (migrasi 21). Ambil ketiga override; None = default global.
-        let (mut present_p, mut late_p, mut absent_p) = (None, None, None);
+        let (mut present_p, mut late_p, mut absent_p, mut izin_p) = (None, None, None, None);
+        let mut activity_type = String::new();
         if let Some(sid) = schedule_id {
             if let Some(r) = tx
                 .query_opt(
-                    "SELECT present_points, late_points, absent_points \
+                    "SELECT present_points, late_points, absent_points, izin_points, \
+                            COALESCE(activity_type, '') \
                      FROM class_schedules WHERE id = $1",
                     &[&sid],
                 )
@@ -145,10 +381,18 @@ pub async fn decide_pamong(pool: &Pool, att_id: i64, approver: i64, approve: boo
                 present_p = r.get(0);
                 late_p = r.get(1);
                 absent_p = r.get(2);
+                izin_p = r.get(3);
+                activity_type = r.get(4);
             }
         }
-        let (delta, note, category) =
-            crate::models::attendance_delta(&att_status, present_p, late_p, absent_p);
+        let (delta, note, category) = crate::models::attendance_delta(
+            &att_status,
+            &activity_type,
+            present_p,
+            late_p,
+            absent_p,
+            izin_p,
+        );
         if delta != 0 {
             let reason = format!("Kehadiran ({att_status}) — {note}");
             tx.execute(
@@ -450,21 +694,23 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
                           AND (a2.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = s.session_date) \
                   AND NOT EXISTS (SELECT 1 FROM permit_requests p \
                         WHERE p.user_id = cp.user_id \
-                          AND p.parent_status = 'approved' AND p.pamong_status = 'approved' \
+                          AND p.guru_status = 'approved' \
                           AND p.start_date <= s.session_date \
                           AND COALESCE(p.end_date, p.start_date) >= s.session_date) \
                 RETURNING id, user_id \
              ), \
              lg AS ( \
                 INSERT INTO point_logs (user_id, delta, reason, category) \
-                SELECT ins.user_id, -COALESCE(sch.absent_points, 15)::int, \
+                SELECT ins.user_id, \
+                       -COALESCE(sch.absent_points, cat_default_points(COALESCE(sch.activity_type,'other'),'absent'))::int, \
                        'Kehadiran (absent) — otomatis', 'discipline' \
                 FROM ins \
                 JOIN attendances att ON att.id = ins.id \
                 LEFT JOIN class_schedules sch ON sch.id = att.class_schedule_id \
              ), \
              agg AS ( \
-                SELECT ins.user_id, SUM(COALESCE(sch.absent_points, 15))::int AS total \
+                SELECT ins.user_id, \
+                       SUM(COALESCE(sch.absent_points, cat_default_points(COALESCE(sch.activity_type,'other'),'absent')))::int AS total \
                 FROM ins \
                 JOIN attendances att ON att.id = ins.id \
                 LEFT JOIN class_schedules sch ON sch.id = att.class_schedule_id \
@@ -504,10 +750,11 @@ pub async fn run_auto_verify_pamong(pool: &Pool) -> Result<i64> {
              pts AS ( \
                 SELECT upd.user_id, upd.status, \
                        CASE \
-                         WHEN upd.status = 'present' THEN COALESCE(sch.present_points, 10)::int \
-                         WHEN upd.status = 'late' THEN -COALESCE(sch.late_points, 0)::int \
-                         WHEN upd.status IN ('permit','sick','outside_schedule') THEN 0 \
-                         ELSE -COALESCE(sch.absent_points, 15)::int \
+                         WHEN upd.status = 'present' THEN COALESCE(sch.present_points, cat_default_points(COALESCE(sch.activity_type,'other'),'present'))::int \
+                         WHEN upd.status = 'late' THEN -COALESCE(sch.late_points, cat_default_points(COALESCE(sch.activity_type,'other'),'late'))::int \
+                         WHEN upd.status IN ('sick','outside_schedule') THEN 0 \
+                         WHEN upd.status = 'permit' THEN -COALESCE(sch.izin_points, cat_default_points(COALESCE(sch.activity_type,'other'),'izin'))::int \
+                         ELSE -COALESCE(sch.absent_points, cat_default_points(COALESCE(sch.activity_type,'other'),'absent'))::int \
                        END AS delta \
                 FROM upd \
                 LEFT JOIN class_schedules sch ON sch.id = upd.class_schedule_id \

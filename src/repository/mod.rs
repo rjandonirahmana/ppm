@@ -12,6 +12,7 @@ pub mod materials;
 pub mod parents;
 pub mod permits;
 pub mod schedule;
+pub mod settings;
 pub mod users;
 
 pub use activity_log::*;
@@ -25,4 +26,5 @@ pub use materials::*;
 pub use parents::*;
 pub use permits::*;
 pub use schedule::*;
+pub use settings::*;
 pub use users::*;

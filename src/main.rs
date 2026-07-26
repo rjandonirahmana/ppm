@@ -120,6 +120,49 @@ async fn main() -> Result<()> {
         waha,
     ));
 
+    // ── Telegram alert (error API + monitor WAHA) ────────────────────────────
+    // Aktif bila TELEGRAM_BOT_TOKEN & TELEGRAM_ADMIN_CHAT_ID di-set. Setelah
+    // di-init, service::telegram::report_error(...) dari mana pun akan kirim WA
+    // alert (dedup 60 dtk). Plus monitor WAHA (cek tiap 60 dtk).
+    if !cfg.telegram.bot_token.is_empty() && cfg.telegram.admin_chat_id != 0 {
+        ppm::service::telegram::init_telegram(ppm::service::telegram::TelegramService::new(
+            cfg.telegram.bot_token.clone(),
+            cfg.telegram.admin_chat_id,
+        ));
+        tracing::info!(chat_id = cfg.telegram.admin_chat_id, "Telegram alert aktif");
+
+        let http = state.http.clone();
+        let waha = state.waha.clone();
+        tokio::spawn(async move {
+            use ppm::service::{registration, telegram};
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut healthy = true; // asumsikan sehat di awal → alert hanya saat transisi
+            let mut down_ticks: u32 = 0;
+            loop {
+                tick.tick().await;
+                match registration::waha_status(&http, &waha).await {
+                    Ok(_) => {
+                        if !healthy {
+                            healthy = true;
+                            down_ticks = 0;
+                            if let Some(tg) = telegram::global() {
+                                tg.send_info("✅ <b>WAHA PULIH</b> — WhatsApp kembali WORKING.").await;
+                            }
+                        }
+                    }
+                    Err(reason) => {
+                        // Alert saat baru down, lalu ~tiap 30 menit selama masih down.
+                        if healthy || down_ticks % 30 == 0 {
+                            telegram::report_error(0, "WAHA down", reason);
+                        }
+                        healthy = false;
+                        down_ticks = down_ticks.saturating_add(1);
+                    }
+                }
+            }
+        });
+    }
+
     // ── Job AUTO-ABSENT / "Alpa" (task internal) ─────────────────────────────
     // Tiap 10 menit: tandai 'absent' utk santri tanpa kejelasan (bukan hadir/
     // izin) pada sesi yang sudah TUNTAS (termasuk sesi ad-hoc tanpa jadwal —
@@ -137,7 +180,10 @@ async fn main() -> Result<()> {
                         tracing::info!("Auto-absent: {n} santri ditandai tidak hadir")
                     }
                     Ok(_) => {}
-                    Err(e) => tracing::warn!("Auto-absent gagal: {e}"),
+                    Err(e) => {
+                        tracing::warn!("Auto-absent gagal: {e}");
+                        ppm::service::telegram::report_background_error("Auto-absent", e.to_string());
+                    }
                 }
                 // Materialisasi sesi mendatang SEMUA kelas di sini (di luar jalur
                 // request) — dulu dilakukan tiap GET /kelas/:id → lambat.
@@ -154,12 +200,47 @@ async fn main() -> Result<()> {
                 match ppm::repository::run_auto_verify_pamong(&pool).await {
                     Ok(n) if n > 0 => tracing::info!("Auto-verify pamong: {n} absensi disetujui"),
                     Ok(_) => {}
-                    Err(e) => tracing::warn!("Auto-verify pamong gagal: {e}"),
+                    Err(e) => {
+                        tracing::warn!("Auto-verify pamong gagal: {e}");
+                        ppm::service::telegram::report_background_error("Auto-verify pamong", e.to_string());
+                    }
                 }
                 match ppm::repository::run_auto_verify_final(&pool).await {
                     Ok(n) if n > 0 => tracing::info!("Auto-verify dewan guru: {n} absensi diverifikasi final"),
                     Ok(_) => {}
-                    Err(e) => tracing::warn!("Auto-verify dewan guru gagal: {e}"),
+                    Err(e) => {
+                        tracing::warn!("Auto-verify dewan guru gagal: {e}");
+                        ppm::service::telegram::report_background_error("Auto-verify final", e.to_string());
+                    }
+                }
+            }
+        });
+    }
+
+    // ── Job pengingat sesi ke PAMONG (WA, ~1 jam sebelum sesi) ───────────────
+    // Tiap 5 menit: kirim WA ke pamong kelas untuk sesi yang mulai ≤60 menit
+    // lagi (agar mengatur dewan guru pengisi). Idempotent (repo menandai
+    // pamong_notified_at saat klaim → tak kirim ganda). Migrasi 30.
+    {
+        let pool = state.pool.clone();
+        let http = state.http.clone();
+        let waha = state.waha.clone();
+        let base_url = std::env::var("APP_BASE_URL").unwrap_or_default();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                tick.tick().await;
+                match ppm::service::sessions::send_pamong_session_reminders(
+                    &pool, &http, &waha, &base_url,
+                )
+                .await
+                {
+                    Ok(n) if n > 0 => tracing::info!("Pengingat sesi pamong: {n} WA terkirim"),
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!("Pengingat sesi pamong gagal: {e}");
+                        ppm::service::telegram::report_background_error("Pengingat sesi pamong", e.to_string());
+                    }
                 }
             }
         });
@@ -215,7 +296,16 @@ async fn main() -> Result<()> {
         .fallback(leptos_axum::file_and_error_handler(shell))
         // AppState untuk server functions (diekstrak via Extension).
         .layer(axum::Extension(state.clone()))
-        .with_state(leptos_options);
+        .with_state(leptos_options)
+        // Dokumen HTML shell TAK boleh di-cache diam-diam: kalau Safari menyimpan
+        // HTML lama, ia menunjuk hash /pkg lama → aset 404 → blank putih setelah
+        // redeploy. `no-cache` = boleh disimpan tapi WAJIB revalidasi (304 murah).
+        // Aset /pkg ber-hash tetap `immutable` (router terpisah, tak terpengaruh).
+        // if_not_present → tak menimpa header yang mungkin diset leptos.
+        .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-cache, must-revalidate"),
+        ));
 
     // ── Endpoint perangkat RFID (gerbang) ────────────────────────────────────
     let device_routes: axum::Router = axum::Router::new()

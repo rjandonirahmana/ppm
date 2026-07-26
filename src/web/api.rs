@@ -93,8 +93,16 @@ mod ssr_helpers {
         }
     }
 
+    /// Map error service → ServerFnError. SEKALIGUS kirim alert Telegram
+    /// (service::telegram, no-op bila tak dikonfigurasi) untuk SEMUA error API,
+    /// KECUALI error rutin klien (unauth/forbidden) agar tak spam brute-force.
     pub fn err<E: std::fmt::Display>(e: E) -> ServerFnError {
-        ServerFnError::new(e.to_string())
+        let msg = e.to_string();
+        let low = msg.to_ascii_lowercase();
+        if !(low.contains("unauth") || low.contains("forbidden")) {
+            crate::service::telegram::report_error(500, "ServerFn", msg.clone());
+        }
+        ServerFnError::new(msg)
     }
 }
 
@@ -270,20 +278,75 @@ pub async fn submit_permit_action(
     .map_err(err)
 }
 
-/// Antrean izin (tahap 2, pamong/dewan guru/admin) — /izin-staf.
+/// Antrean izin sisi staf — /izin-staf. Antrean menyesuaikan peran (pamong →
+/// tahap 1; guru/dewan guru/admin → keputusan final).
 #[server(GetPermitQueue, "/api-fn")]
 pub async fn permit_queue_data() -> Result<PermitQueueData, ServerFnError> {
-    require_roles(&["supervisor", "dewan_guru", "admin"]).await?;
+    let sess = require_roles(&["supervisor", "teacher", "dewan_guru", "admin"]).await?;
     let state = app_state().await?;
-    crate::service::permits::permit_queue(&state.pool).await.map_err(err)
+    crate::service::permits::permit_queue(&state.pool, &sess.role, sess.id)
+        .await
+        .map_err(err)
 }
 
-/// Setujui/tolak izin (tahap 2).
+/// Setujui/tolak izin (tahap sesuai peran).
 #[server(DecidePermitAction, "/api-fn")]
 pub async fn decide_permit_action(permit_id: i64, approve: bool) -> Result<(), ServerFnError> {
-    let sess = require_roles(&["supervisor", "dewan_guru", "admin"]).await?;
+    let sess = require_roles(&["supervisor", "teacher", "dewan_guru", "admin"]).await?;
     let state = app_state().await?;
-    crate::service::permits::decide_permit(&state.pool, permit_id, approve, sess.id)
+    crate::service::permits::decide_permit(&state.pool, permit_id, approve, &sess.role, sess.id)
+        .await
+        .map_err(err)
+}
+
+/// Mode persetujuan izin saat ini (admin) — "two_stage" | "direct_guru".
+#[server(GetPermitMode, "/api-fn")]
+pub async fn permit_mode_get() -> Result<String, ServerFnError> {
+    require_roles(&["admin"]).await?;
+    let state = app_state().await?;
+    Ok(crate::service::permits::approval_mode(&state.pool).await)
+}
+
+/// Ubah mode persetujuan izin (admin).
+#[server(SetPermitMode, "/api-fn")]
+pub async fn permit_mode_set(mode: String) -> Result<(), ServerFnError> {
+    require_roles(&["admin"]).await?;
+    let state = app_state().await?;
+    crate::service::permits::set_approval_mode(&state.pool, &mode)
+        .await
+        .map_err(err)
+}
+
+/// Reset saldo poin semua santri ke 300 (awal semester, admin). Return jumlah
+/// santri ter-reset.
+#[server(ResetSemesterPoints, "/api-fn")]
+pub async fn reset_semester_points_action() -> Result<i64, ServerFnError> {
+    require_roles(&["admin"]).await?;
+    let state = app_state().await?;
+    crate::service::admin::reset_semester_points(&state.pool)
+        .await
+        .map_err(err)
+}
+
+/// Rekap kehadiran mingguan per-santri (staf) — /rekap-mingguan.
+#[server(GetWeeklyRecap, "/api-fn")]
+pub async fn weekly_recap_data(
+    offset: i32,
+) -> Result<crate::models::WeeklyRecapData, ServerFnError> {
+    require_roles(&["supervisor", "teacher", "dewan_guru", "admin"]).await?;
+    let state = app_state().await?;
+    crate::service::rekap::weekly_recap(&state.pool, offset)
+        .await
+        .map_err(err)
+}
+
+/// Kreditkan reward mingguan (admin) untuk pekan `offset`. Return (jumlah santri,
+/// total poin) dikreditkan.
+#[server(CreditWeeklyRewards, "/api-fn")]
+pub async fn credit_weekly_rewards_action(offset: i32) -> Result<(i64, i64), ServerFnError> {
+    require_roles(&["admin"]).await?;
+    let state = app_state().await?;
+    crate::service::rekap::credit_weekly_rewards(&state.pool, offset)
         .await
         .map_err(err)
 }
@@ -294,6 +357,41 @@ pub async fn profil_data() -> Result<ProfilData, ServerFnError> {
     let sess = require_session().await?;
     let state = app_state().await?;
     crate::service::santri::profil(&state.pool, sess.id)
+        .await
+        .map_err(err)
+}
+
+/// Ubah profil mahasiswa milik sendiri (kampus/jurusan/gender).
+#[server(UpdateProfileExtra, "/api-fn")]
+pub async fn update_profile_action(
+    campus: String,
+    major: String,
+    gender: String,
+) -> Result<(), ServerFnError> {
+    let sess = require_session().await?;
+    let state = app_state().await?;
+    crate::service::santri::update_profile_extra(&state.pool, sess.id, &campus, &major, &gender)
+        .await
+        .map_err(err)
+}
+
+/// Tambah entri riwayat IPK milik sendiri.
+#[server(AddIpk, "/api-fn")]
+pub async fn add_ipk_action(semester: String, ipk: String) -> Result<(), ServerFnError> {
+    let sess = require_session().await?;
+    let state = app_state().await?;
+    crate::service::santri::add_ipk(&state.pool, sess.id, &semester, &ipk)
+        .await
+        .map(|_| ())
+        .map_err(err)
+}
+
+/// Hapus entri riwayat IPK milik sendiri.
+#[server(DeleteIpk, "/api-fn")]
+pub async fn delete_ipk_action(id: i64) -> Result<(), ServerFnError> {
+    let sess = require_session().await?;
+    let state = app_state().await?;
+    crate::service::santri::delete_ipk(&state.pool, sess.id, id)
         .await
         .map_err(err)
 }
@@ -496,9 +594,11 @@ pub async fn respond_connection_action(conn_id: i64, approve: bool) -> Result<()
 /// Antrean verifikasi pamong (supervisor/teacher/admin).
 #[server(GetPamongData, "/api-fn")]
 pub async fn pamong_data() -> Result<PamongData, ServerFnError> {
-    require_roles(&["supervisor", "teacher", "admin"]).await?;
+    let sess = require_roles(&["supervisor", "teacher", "admin"]).await?;
     let state = app_state().await?;
-    crate::service::attendance::pamong_data(&state.pool)
+    // Pamong (supervisor) → hanya kelas yang ia ampu; admin/dewan → semua.
+    let pamong_id = (sess.role == "supervisor").then_some(sess.id);
+    crate::service::attendance::pamong_data(&state.pool, pamong_id)
         .await
         .map_err(err)
 }
@@ -508,7 +608,8 @@ pub async fn pamong_data() -> Result<PamongData, ServerFnError> {
 pub async fn decide_pamong(att_id: i64, approve: bool) -> Result<(), ServerFnError> {
     let sess = require_roles(&["supervisor", "teacher", "admin"]).await?;
     let state = app_state().await?;
-    crate::service::attendance::decide_pamong(&state.pool, att_id, sess.id, approve)
+    let pamong_id = (sess.role == "supervisor").then_some(sess.id);
+    crate::service::attendance::decide_pamong(&state.pool, att_id, sess.id, approve, pamong_id)
         .await
         .map_err(err)?;
     Ok(())
@@ -590,6 +691,27 @@ pub async fn update_class_action(
         .map_err(err)
 }
 
+/// Tetapkan wali kelas + pamong + rute persetujuan izin (perlu pamong?) satu kelas.
+#[server(SetClassStaff, "/api-fn")]
+pub async fn set_class_staff_action(
+    class_id: i64,
+    wali_kelas_id: i64,
+    pamong_id: i64,
+    require_pamong: bool,
+) -> Result<(), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::set_class_staff(
+        &state.pool,
+        class_id,
+        wali_kelas_id,
+        pamong_id,
+        require_pamong,
+    )
+    .await
+    .map_err(err)
+}
+
 /// Kategori kelas yang sudah dipakai (dropdown + boleh ketik baru).
 #[server(GetCategories, "/api-fn")]
 pub async fn class_categories() -> Result<Vec<String>, ServerFnError> {
@@ -617,13 +739,15 @@ pub async fn create_schedule_action(
     absent_points: String,
     room_id: i64,
     custom_dates: String,
+    activity_type: String,
+    izin_points: String,
 ) -> Result<i64, ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
     crate::service::kelas::create_schedule(
         &state.pool, class_id, &title, &start_time, &end_time, &limit_time, &recurrence,
         &start_date, &end_date, &category, &present_points, &late_points, &absent_points, room_id,
-        &custom_dates,
+        &custom_dates, &activity_type, &izin_points,
     )
     .await
     .map_err(err)
@@ -701,13 +825,15 @@ pub async fn update_schedule_action(
     absent_points: String,
     room_id: i64,
     custom_dates: String,
+    activity_type: String,
+    izin_points: String,
 ) -> Result<(), ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
     crate::service::kelas::update_schedule(
         &state.pool, schedule_id, &title, &start_time, &end_time, &limit_time, &recurrence,
         &start_date, &end_date, &category, &present_points, &late_points, &absent_points, room_id,
-        &custom_dates,
+        &custom_dates, &activity_type, &izin_points,
     )
     .await
     .map_err(err)

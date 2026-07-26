@@ -39,14 +39,21 @@ pub struct PermitRow {
     pub end_date: Option<NaiveDate>,
     pub parent_status: String,
     pub pamong_status: String,
+    pub guru_status: String,
+    /// Rute lewat pamong? Diturunkan dari kelas UTAMA santri (migrasi 29).
+    pub require_pamong: bool,
 }
 
 pub async fn list_my_permits(pool: &Pool, user_id: i64, limit: i64) -> Result<Vec<PermitRow>> {
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT type, start_date, end_date, parent_status, pamong_status \
-             FROM permit_requests WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+            "SELECT p.type, p.start_date, p.end_date, p.parent_status, p.pamong_status, \
+                    p.guru_status, COALESCE(cl.require_pamong, TRUE) \
+             FROM permit_requests p \
+             LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
+             LEFT JOIN classes cl ON cl.id = cp.class_id \
+             WHERE p.user_id = $1 ORDER BY p.created_at DESC LIMIT $2",
             &[&user_id, &limit],
         )
         .await
@@ -59,6 +66,8 @@ pub async fn list_my_permits(pool: &Pool, user_id: i64, limit: i64) -> Result<Ve
             end_date: r.get(2),
             parent_status: r.get(3),
             pamong_status: r.get(4),
+            guru_status: r.get(5),
+            require_pamong: r.get(6),
         })
         .collect())
 }
@@ -147,19 +156,28 @@ pub struct PendingPamongRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Antrean pamong: sudah lolos tahap orang tua, menunggu keputusan pamong.
-pub async fn pending_pamong_permits(pool: &Pool, limit: i64) -> Result<Vec<PendingPamongRow>> {
+/// Antrean pamong: izin dari kelas yang WAJIB via pamong (require_pamong),
+/// sudah lolos tahap orang tua, menunggu keputusan pamong. `default_require`
+/// = fallback untuk santri tanpa kelas utama.
+pub async fn pending_pamong_permits(
+    pool: &Pool,
+    default_require: bool,
+    pamong_id: Option<i64>,
+    limit: i64,
+) -> Result<Vec<PendingPamongRow>> {
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT p.id, u.full_name, u.nis, \
-                (SELECT c.name FROM class_participants cp JOIN classes c ON c.id = cp.class_id \
-                    WHERE cp.user_id = u.id LIMIT 1), \
+            "SELECT p.id, u.full_name, u.nis, cl.name, \
                 p.type, p.start_date, p.end_date, p.reason, p.created_at \
              FROM permit_requests p JOIN users u ON u.id = p.user_id \
+             LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
+             LEFT JOIN classes cl ON cl.id = cp.class_id \
              WHERE p.parent_status = 'approved' AND p.pamong_status = 'pending' \
+                AND COALESCE(cl.require_pamong, $2) = TRUE \
+                AND ($3::bigint IS NULL OR cl.pamong_id = $3) \
              ORDER BY p.created_at ASC LIMIT $1",
-            &[&limit],
+            &[&limit, &default_require, &pamong_id],
         )
         .await
         .context("pending_pamong_permits")?;
@@ -180,36 +198,150 @@ pub async fn pending_pamong_permits(pool: &Pool, limit: i64) -> Result<Vec<Pendi
 }
 
 /// Jumlah izin diputuskan pamong HARI INI (statistik antrean).
-pub async fn pamong_permits_decided_today(pool: &Pool) -> Result<i64> {
+pub async fn pamong_permits_decided_today(pool: &Pool, pamong_id: Option<i64>) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
-            "SELECT COUNT(*) FROM permit_requests \
-             WHERE pamong_status <> 'pending' \
-                AND (pamong_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date",
-            &[],
+            "SELECT COUNT(*) FROM permit_requests p \
+             LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
+             LEFT JOIN classes cl ON cl.id = cp.class_id \
+             WHERE p.pamong_status <> 'pending' \
+                AND (p.pamong_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date \
+                AND ($1::bigint IS NULL OR cl.pamong_id = $1)",
+            &[&pamong_id],
         )
         .await
         .context("pamong_permits_decided_today")?;
     Ok(row.get(0))
 }
 
-/// Setujui/tolak izin oleh pamong/dewan guru/admin.
+/// Setujui/tolak izin oleh pamong (tahap 1). Guard: kelas UTAMA santri WAJIB via
+/// pamong (require_pamong) — pamong tak bisa memproses izin kelas yang langsung
+/// ke wali kelas. `default_require` = fallback santri tanpa kelas utama.
 pub async fn decide_pamong_permit(
     pool: &Pool,
     permit_id: i64,
     approve: bool,
+    default_require: bool,
+    pamong_id: Option<i64>,
     staff_id: i64,
 ) -> Result<bool> {
     let status = if approve { "approved" } else { "rejected" };
     let c = pool.get().await?;
     let n = c
         .execute(
-            "UPDATE permit_requests SET pamong_status = $2, pamong_by = $3, pamong_at = NOW() \
-             WHERE id = $1 AND parent_status = 'approved' AND pamong_status = 'pending'",
-            &[&permit_id, &status, &staff_id],
+            "UPDATE permit_requests p SET pamong_status = $2, pamong_by = $3, pamong_at = NOW() \
+             WHERE p.id = $1 AND p.parent_status = 'approved' AND p.pamong_status = 'pending' \
+                AND COALESCE( \
+                    (SELECT c.require_pamong FROM class_participants cp \
+                        JOIN classes c ON c.id = cp.class_id \
+                        WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1), $4) = TRUE \
+                AND ($5::bigint IS NULL OR \
+                    (SELECT c.pamong_id FROM class_participants cp \
+                        JOIN classes c ON c.id = cp.class_id \
+                        WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1) = $5)",
+            &[&permit_id, &status, &staff_id, &default_require, &pamong_id],
         )
         .await
         .context("decide_pamong_permit")?;
+    Ok(n > 0)
+}
+
+// ── Tahap FINAL: WALI KELAS (guru penyetuju akhir) ────────────────────────────
+
+/// Prasyarat + rute wali kelas per-permit: kelas UTAMA santri menentukan apakah
+/// perlu pamong dulu (require_pamong) & siapa wali kelasnya. `wali_id` Some =
+/// hanya izin yang wali kelasnya = guru ini (teacher); None = semua (dewan
+/// guru/admin oversight). `default_require` = fallback tanpa kelas utama.
+pub async fn pending_guru_permits(
+    pool: &Pool,
+    wali_id: Option<i64>,
+    default_require: bool,
+    limit: i64,
+) -> Result<Vec<PendingPamongRow>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT p.id, u.full_name, u.nis, cl.name, \
+                p.type, p.start_date, p.end_date, p.reason, p.created_at \
+             FROM permit_requests p JOIN users u ON u.id = p.user_id \
+             LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
+             LEFT JOIN classes cl ON cl.id = cp.class_id \
+             WHERE p.guru_status = 'pending' \
+                AND CASE WHEN COALESCE(cl.require_pamong, $2) \
+                         THEN p.pamong_status = 'approved' \
+                         ELSE p.parent_status = 'approved' END \
+                AND ($3::bigint IS NULL OR cl.wali_kelas_id = $3) \
+             ORDER BY p.created_at ASC LIMIT $1",
+            &[&limit, &default_require, &wali_id],
+        )
+        .await
+        .context("pending_guru_permits")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| PendingPamongRow {
+            id: r.get(0),
+            student_name: r.get(1),
+            nis: r.get(2),
+            class_name: r.get(3),
+            kind: r.get(4),
+            start_date: r.get(5),
+            end_date: r.get(6),
+            reason: r.get(7),
+            created_at: r.get(8),
+        })
+        .collect())
+}
+
+/// Jumlah izin diputuskan wali kelas (final) HARI INI. `wali_id` Some = hanya
+/// keputusan atas izin kelas guru ini.
+pub async fn guru_permits_decided_today(pool: &Pool, wali_id: Option<i64>) -> Result<i64> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "SELECT COUNT(*) FROM permit_requests p \
+             LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
+             LEFT JOIN classes cl ON cl.id = cp.class_id \
+             WHERE p.guru_status <> 'pending' \
+                AND (p.guru_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date \
+                AND ($1::bigint IS NULL OR cl.wali_kelas_id = $1)",
+            &[&wali_id],
+        )
+        .await
+        .context("guru_permits_decided_today")?;
+    Ok(row.get(0))
+}
+
+/// Keputusan FINAL wali kelas. Guard: prasyarat per-permit (require_pamong →
+/// pamong approved; else parent approved) + guru_status pending + (wali_id None
+/// ATAU wali kelas kelas utama santri = wali_id).
+pub async fn decide_guru_permit(
+    pool: &Pool,
+    permit_id: i64,
+    approve: bool,
+    wali_id: Option<i64>,
+    default_require: bool,
+    staff_id: i64,
+) -> Result<bool> {
+    let status = if approve { "approved" } else { "rejected" };
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE permit_requests p SET guru_status = $2, guru_by = $3, guru_at = NOW() \
+             WHERE p.id = $1 AND p.guru_status = 'pending' \
+                AND CASE WHEN COALESCE( \
+                        (SELECT c.require_pamong FROM class_participants cp \
+                            JOIN classes c ON c.id = cp.class_id \
+                            WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1), $5) \
+                     THEN p.pamong_status = 'approved' \
+                     ELSE p.parent_status = 'approved' END \
+                AND ($4::bigint IS NULL OR \
+                     (SELECT c.wali_kelas_id FROM class_participants cp \
+                        JOIN classes c ON c.id = cp.class_id \
+                        WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1) = $4)",
+            &[&permit_id, &status, &staff_id, &wali_id, &default_require],
+        )
+        .await
+        .context("decide_guru_permit")?;
     Ok(n > 0)
 }

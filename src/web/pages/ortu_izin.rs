@@ -280,7 +280,8 @@ pub fn OrtuIzinPage() -> impl IntoView {
                                                 || p.status_kind == f
                                                 || (f == "pending"
                                                     && (p.status_kind == "pending_parent"
-                                                        || p.status_kind == "pending_pamong"))
+                                                        || p.status_kind == "pending_pamong"
+                                                        || p.status_kind == "pending_guru"))
                                         })
                                         .collect();
                                     if list.is_empty() {

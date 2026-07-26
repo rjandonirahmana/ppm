@@ -115,6 +115,16 @@ fn parse_point_magnitude(s: &str, field: &str) -> Result<Option<i16>> {
     Ok(Some(n))
 }
 
+/// Jenis kegiatan PRD valid → Some(kanonik); selain itu (termasuk kosong) → None
+/// (legacy preset). Menentukan preset poin default (models::category_points).
+fn normalize_activity_type(s: &str) -> Option<String> {
+    let s = s.trim();
+    crate::models::ACTIVITY_TYPES
+        .iter()
+        .any(|(k, _)| *k == s)
+        .then(|| s.to_string())
+}
+
 /// Parse daftar tanggal manual "2026-07-24,2026-08-01" → Vec<NaiveDate> unik &
 /// terurut. Untuk recurrence 'custom'. Toleran spasi & pemisah baris/koma.
 fn parse_custom_dates(s: &str) -> Result<Vec<NaiveDate>> {
@@ -215,8 +225,7 @@ pub async fn kelas_list(pool: &Pool, role: &str) -> Result<KelasData> {
 
 /// Detail satu kelas (anggota, jadwal, sesi, kategori, opsi form, statistik).
 pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<KelasDetail> {
-    let Some((name, description, category, golongan)) = repo::class_info(pool, class_id).await?
-    else {
+    let Some(ci) = repo::class_info(pool, class_id).await? else {
         bail!("Kelas tidak ditemukan.");
     };
 
@@ -226,7 +235,7 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
     // kelas) di main.rs. Halaman detail = murni baca (5 query paralel).
     // Sesi yang DITAMPILKAN hanya MULAI hari ini ke depan (yang lewat dibuang).
     let today = Utc::now().with_timezone(&wib()).date_naive();
-    let (members, scheds, sessions, teachers, cats, golongans, curriculum, books, rooms) = tokio::join!(
+    let (members, scheds, sessions, teachers, cats, golongans, curriculum, books, rooms, pamongs) = tokio::join!(
         repo::class_members(pool, class_id),
         repo::class_schedules(pool, class_id),
         repo::sessions_of_class(pool, class_id, today, 50),
@@ -236,7 +245,12 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
         repo::class_curriculum(pool, class_id),
         repo::list_books(pool),
         repo::device_options(pool),
+        repo::pamong_options(pool),
     );
+    let pamong_options: Vec<crate::models::TeacherOption> = pamongs?
+        .into_iter()
+        .map(|(id, name)| crate::models::TeacherOption { id, name })
+        .collect();
 
     let members = members?
         .into_iter()
@@ -308,6 +322,8 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
             room_id: s.room_id.unwrap_or(0),
             room_label: s.room_name.clone().unwrap_or_default(),
             custom_dates: s.custom_dates.join(","),
+            activity_type: s.activity_type.clone().unwrap_or_default(),
+            izin_points: s.izin_points.map(|n| n.to_string()).unwrap_or_default(),
         })
         .collect();
 
@@ -370,12 +386,18 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
     Ok(KelasDetail {
         role: role.to_string(),
         id: class_id,
-        name,
-        description,
-        category: category.unwrap_or_default(),
+        name: ci.name,
+        description: ci.description,
+        category: ci.category.unwrap_or_default(),
         category_options: cats?,
-        golongan: golongan.unwrap_or_default(),
+        golongan: ci.golongan.unwrap_or_default(),
         golongan_options: golongans?,
+        wali_kelas_id: ci.wali_kelas_id.unwrap_or(0),
+        wali_kelas_name: ci.wali_kelas_name.unwrap_or_default(),
+        require_pamong: ci.require_pamong,
+        pamong_id: ci.pamong_id.unwrap_or(0),
+        pamong_name: ci.pamong_name.unwrap_or_default(),
+        pamong_options,
         members,
         schedules,
         schedule_options,
@@ -448,6 +470,23 @@ pub async fn categories(pool: &Pool) -> Result<Vec<String>> {
     repo::distinct_categories(pool).await
 }
 
+/// Tetapkan wali kelas + pamong + rute persetujuan izin (require_pamong) satu
+/// kelas (migrasi 29/30). id 0 = kosongkan.
+pub async fn set_class_staff(
+    pool: &Pool,
+    class_id: i64,
+    wali_kelas_id: i64,
+    pamong_id: i64,
+    require_pamong: bool,
+) -> Result<()> {
+    let wali = (wali_kelas_id > 0).then_some(wali_kelas_id);
+    let pamong = (pamong_id > 0).then_some(pamong_id);
+    if !repo::set_class_staff(pool, class_id, wali, pamong, require_pamong).await? {
+        bail!("Kelas tidak ditemukan.");
+    }
+    Ok(())
+}
+
 fn parse_time(s: &str, field: &str) -> Result<NaiveTime> {
     NaiveTime::parse_from_str(s.trim(), "%H:%M")
         .map_err(|_| anyhow::anyhow!("Format {field} tidak valid (HH:MM)."))
@@ -510,6 +549,8 @@ pub async fn create_schedule(
     absent_points: &str,
     room_id: i64,
     custom_dates: &str,
+    activity_type: &str,
+    izin_points: &str,
 ) -> Result<i64> {
     let today = Utc::now().with_timezone(&wib()).date_naive();
     // Recurrence 'custom' = tanggal manual (loncat-loncat): start/end jadwal
@@ -536,10 +577,13 @@ pub async fn create_schedule(
     let pp = parse_point_magnitude(present_points, "tepat waktu")?;
     let lp = parse_point_magnitude(late_points, "telat")?;
     let ap = parse_point_magnitude(absent_points, "alpa")?;
+    let ip = parse_point_magnitude(izin_points, "izin")?;
+    let atype = normalize_activity_type(activity_type);
     let room = (room_id > 0).then_some(room_id);
     let cd_json = custom_dates_json(&custom);
     let id = repo::create_schedule(
         pool, class_id, title.trim(), st, et, lt, rec, sd, ed, cat, pp, lp, ap, room, &cd_json,
+        atype.as_deref(), ip,
     )
     .await?;
     // Materialisasi sesi. 'custom' → langsung SEMUA tanggal ≥ hari ini (tak
@@ -572,6 +616,8 @@ pub async fn update_schedule(
     absent_points: &str,
     room_id: i64,
     custom_dates: &str,
+    activity_type: &str,
+    izin_points: &str,
 ) -> Result<()> {
     let today = Utc::now().with_timezone(&wib()).date_naive();
     let custom = if recurrence == "custom" { parse_custom_dates(custom_dates)? } else { Vec::new() };
@@ -596,10 +642,13 @@ pub async fn update_schedule(
     let pp = parse_point_magnitude(present_points, "tepat waktu")?;
     let lp = parse_point_magnitude(late_points, "telat")?;
     let ap = parse_point_magnitude(absent_points, "alpa")?;
+    let ip = parse_point_magnitude(izin_points, "izin")?;
+    let atype = normalize_activity_type(activity_type);
     let room = (room_id > 0).then_some(room_id);
     let cd_json = custom_dates_json(&custom);
     if !repo::update_schedule(
         pool, schedule_id, title.trim(), st, et, lt, rec, sd, ed, cat, pp, lp, ap, room, &cd_json,
+        atype.as_deref(), ip,
     )
     .await?
     {
@@ -807,8 +856,11 @@ pub async fn students_data(pool: &Pool, user: &SessionUser) -> Result<StudentsDa
 
     let (verify_stage, pending_rows, verified_today) = match user.role.as_str() {
         "supervisor" => {
-            let (p, cnt) =
-                tokio::join!(repo::pending_pamong(pool, 50), repo::approved_today(pool));
+            // Pamong hanya lihat kehadiran santri di kelas yang ia ampu (migrasi 30).
+            let (p, cnt) = tokio::join!(
+                repo::pending_pamong(pool, Some(user.id), 50),
+                repo::approved_today(pool)
+            );
             ("tahap1", p?, cnt?)
         }
         "dewan_guru" | "admin" => {

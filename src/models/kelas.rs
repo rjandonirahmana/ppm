@@ -198,6 +198,11 @@ pub struct ScheduleItem {
     /// Tanggal manual (migrasi 23) utk recurrence 'custom', ISO dipisah koma
     /// ("2026-07-24,2026-08-01") — prefill picker tanggal di form edit.
     pub custom_dates: String,
+    /// Jenis kegiatan PRD (migrasi 28): kbm|non_kbm|piket|apel_kepulangan; ""
+    /// = legacy. Menentukan preset poin default (lihat models::category_points).
+    pub activity_type: String,
+    /// Poin DIPOTONG saat IZIN biasa (migrasi 28). "" = preset kategori.
+    pub izin_points: String,
 }
 
 /// Opsi jadwal (dropdown tambah santri / buat sesi).
@@ -236,6 +241,18 @@ pub struct KelasDetail {
     pub golongan: String,
     /// Golongan yang sudah pernah dipakai (untuk dropdown + boleh ketik baru).
     pub golongan_options: Vec<String>,
+    /// Wali kelas (migrasi 29): guru penyetuju FINAL izin santri kelas ini.
+    /// 0 = belum diset; wali_kelas_name utk tampilan.
+    pub wali_kelas_id: i64,
+    pub wali_kelas_name: String,
+    /// TRUE = izin santri kelas ini lewat Pamong dulu; FALSE = langsung wali kelas.
+    pub require_pamong: bool,
+    /// Pamong kelas (migrasi 30): verifikasi kehadiran + tahap-1 izin + terima WA
+    /// pengingat sesi. 0 = belum diset.
+    pub pamong_id: i64,
+    pub pamong_name: String,
+    /// Opsi pamong (role supervisor) untuk dropdown.
+    pub pamong_options: Vec<TeacherOption>,
     pub members: Vec<MemberItem>,
     pub schedules: Vec<ScheduleItem>,
     pub schedule_options: Vec<ScheduleOption>,
@@ -323,10 +340,16 @@ pub struct PermitReviewItem {
     pub when_label: String,
 }
 
-/// Payload halaman /izin-staf (pamong/dewan guru/admin).
+/// Payload halaman /izin-staf. Antrean disesuaikan peran peninjau (pamong →
+/// tahap 1; guru/dewan guru/admin → tahap final). `stage_label` = nama tahap
+/// yang ditinjau; `two_stage` = mode global saat ini.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PermitQueueData {
     pub pending_count: i64,
     pub approved_today: i64,
     pub items: Vec<PermitReviewItem>,
+    #[serde(default)]
+    pub two_stage: bool,
+    #[serde(default)]
+    pub stage_label: String,
 }

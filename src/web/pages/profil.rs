@@ -6,12 +6,73 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 
 use crate::models::ProfilData;
-use crate::web::api::{logout_action, profil_data};
+use crate::web::api::{
+    add_ipk_action, delete_ipk_action, logout_action, profil_data, update_profile_action,
+};
 use crate::web::components::{DeviceFrame, MobileHeader};
 
 #[component]
 pub fn ProfilPage() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { profil_data().await });
+
+    // Form data mahasiswa (santri isi sendiri) — diinisialisasi dari resource.
+    let campus = RwSignal::new(String::new());
+    let major = RwSignal::new(String::new());
+    let gender = RwSignal::new(String::new());
+    let is_santri = RwSignal::new(false);
+    let sem_input = RwSignal::new(String::new());
+    let ipk_input = RwSignal::new(String::new());
+    let msg = RwSignal::new(String::new());
+    let saving = RwSignal::new(false);
+
+    Effect::new(move |_| {
+        if let Some(Ok(p)) = data.get() {
+            campus.set(p.campus.clone().unwrap_or_default());
+            major.set(p.major.clone().unwrap_or_default());
+            gender.set(p.gender.clone().unwrap_or_default());
+            is_santri.set(p.role == "santri");
+        }
+    });
+
+    let save_profile = move |_| {
+        saving.set(true);
+        msg.set(String::new());
+        leptos::task::spawn_local(async move {
+            let r = update_profile_action(campus.get_untracked(), major.get_untracked(), gender.get_untracked()).await;
+            saving.set(false);
+            match r {
+                Ok(_) => {
+                    msg.set("Data mahasiswa tersimpan.".into());
+                    data.refetch();
+                }
+                Err(e) => msg.set(e.to_string()),
+            }
+        });
+    };
+
+    let add_ipk = move |_| {
+        let sem = sem_input.get_untracked();
+        let val = ipk_input.get_untracked();
+        msg.set(String::new());
+        leptos::task::spawn_local(async move {
+            match add_ipk_action(sem, val).await {
+                Ok(_) => {
+                    sem_input.set(String::new());
+                    ipk_input.set(String::new());
+                    data.refetch();
+                }
+                Err(e) => msg.set(e.to_string()),
+            }
+        });
+    };
+
+    let delete_ipk = move |id: i64| {
+        leptos::task::spawn_local(async move {
+            if delete_ipk_action(id).await.is_ok() {
+                data.refetch();
+            }
+        });
+    };
 
     Effect::new(move |_| {
         if let Some(Err(e)) = data.get() {
@@ -52,6 +113,125 @@ pub fn ProfilPage() -> impl IntoView {
                     </div>
 
                     <div class="space-y-5 md:col-span-2">
+                        // ── Data Mahasiswa + Riwayat IPK (santri isi sendiri) ─
+                        <Show when=move || is_santri.get()>
+                            <div class="ppm-card p-5">
+                                <div class="flex items-center gap-2 mb-4">
+                                    <span class="material-symbols-outlined text-on-background">"school"</span>
+                                    <h2 class="text-body-lg font-bold text-on-background">"Data Mahasiswa"</h2>
+                                </div>
+                                <div class="space-y-3 md:grid md:grid-cols-2 md:gap-3 md:space-y-0">
+                                    <label class="block">
+                                        <span class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">"Kampus"</span>
+                                        <input
+                                            class="mt-1 w-full rounded-xl border border-outline-variant bg-surface px-3 py-2.5 text-body-md text-on-background focus:outline-none focus:ring-2 focus:ring-primary"
+                                            placeholder="mis. Universitas Indonesia"
+                                            prop:value=move || campus.get()
+                                            on:input=move |e| campus.set(event_target_value(&e))
+                                        />
+                                    </label>
+                                    <label class="block">
+                                        <span class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">"Jurusan"</span>
+                                        <input
+                                            class="mt-1 w-full rounded-xl border border-outline-variant bg-surface px-3 py-2.5 text-body-md text-on-background focus:outline-none focus:ring-2 focus:ring-primary"
+                                            placeholder="mis. Teknik Informatika"
+                                            prop:value=move || major.get()
+                                            on:input=move |e| major.set(event_target_value(&e))
+                                        />
+                                    </label>
+                                    <label class="block">
+                                        <span class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">"Jenis Kelamin"</span>
+                                        <select
+                                            class="mt-1 w-full rounded-xl border border-outline-variant bg-surface px-3 py-2.5 text-body-md text-on-background focus:outline-none focus:ring-2 focus:ring-primary cursor-pointer"
+                                            prop:value=move || gender.get()
+                                            on:change=move |e| gender.set(event_target_value(&e))
+                                        >
+                                            <option value="">"—"</option>
+                                            <option value="L">"Laki-laki"</option>
+                                            <option value="P">"Perempuan"</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                <button
+                                    class="mt-4 w-full md:w-auto px-5 py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-body-md cursor-pointer press disabled:opacity-60"
+                                    prop:disabled=move || saving.get()
+                                    on:click=save_profile
+                                >
+                                    {move || if saving.get() { "Menyimpan…" } else { "Simpan Data" }}
+                                </button>
+                            </div>
+
+                            // ── Riwayat IPK ─────────────────────────────────
+                            <div class="ppm-card p-5">
+                                <div class="flex items-center gap-2 mb-4">
+                                    <span class="material-symbols-outlined text-on-background">"trending_up"</span>
+                                    <h2 class="text-body-lg font-bold text-on-background">"Riwayat IPK"</h2>
+                                </div>
+                                <div class="space-y-2">
+                                    {move || {
+                                        data.get()
+                                            .and_then(|r| r.ok())
+                                            .map(|p| {
+                                                if p.ipk_history.is_empty() {
+                                                    view! {
+                                                        <p class="text-body-sm text-on-surface-variant py-2">
+                                                            "Belum ada riwayat IPK. Tambahkan per semester di bawah."
+                                                        </p>
+                                                    }.into_any()
+                                                } else {
+                                                    p.ipk_history.into_iter().map(|it| {
+                                                        let id = it.id;
+                                                        view! {
+                                                            <div class="flex items-center gap-3 bg-surface-container rounded-xl px-3.5 py-3">
+                                                                <div class="flex-1 min-w-0">
+                                                                    <p class="text-body-md font-semibold text-on-background truncate">{it.semester}</p>
+                                                                </div>
+                                                                <span class="text-title-md font-bold text-primary tabular-nums">
+                                                                    {format!("{:.2}", it.ipk)}
+                                                                </span>
+                                                                <button
+                                                                    class="w-9 h-9 rounded-full flex items-center justify-center text-error hover:bg-error-container cursor-pointer press"
+                                                                    aria-label="Hapus"
+                                                                    on:click=move |_| delete_ipk(id)
+                                                                >
+                                                                    <span class="material-symbols-outlined text-[20px]">"delete"</span>
+                                                                </button>
+                                                            </div>
+                                                        }
+                                                    }).collect_view().into_any()
+                                                }
+                                            })
+                                    }}
+                                </div>
+
+                                // Form tambah entri IPK
+                                <div class="mt-4 flex flex-col sm:flex-row gap-2">
+                                    <input
+                                        class="flex-1 rounded-xl border border-outline-variant bg-surface px-3 py-2.5 text-body-md text-on-background focus:outline-none focus:ring-2 focus:ring-primary"
+                                        placeholder="Semester (mis. 2024/2025 Ganjil)"
+                                        prop:value=move || sem_input.get()
+                                        on:input=move |e| sem_input.set(event_target_value(&e))
+                                    />
+                                    <input
+                                        class="sm:w-28 rounded-xl border border-outline-variant bg-surface px-3 py-2.5 text-body-md text-on-background focus:outline-none focus:ring-2 focus:ring-primary"
+                                        placeholder="IPK"
+                                        inputmode="decimal"
+                                        prop:value=move || ipk_input.get()
+                                        on:input=move |e| ipk_input.set(event_target_value(&e))
+                                    />
+                                    <button
+                                        class="px-5 py-2.5 rounded-xl bg-secondary-container text-primary font-semibold text-body-md cursor-pointer press whitespace-nowrap"
+                                        on:click=add_ipk
+                                    >
+                                        "Tambah"
+                                    </button>
+                                </div>
+                                <Show when=move || !msg.get().is_empty()>
+                                    <p class="mt-3 text-body-sm text-on-surface-variant">{move || msg.get()}</p>
+                                </Show>
+                            </div>
+                        </Show>
+
                         // ── Pengaturan Akun ────────────────────────────────
                         <div class="ppm-card p-5">
                             <div class="flex items-center gap-2 mb-4">
@@ -148,10 +328,28 @@ fn ProfilContent(p: ProfilData) -> impl IntoView {
                     <span class="text-[11px] font-bold tracking-[0.15em] opacity-80">"NIS"</span>
                     <span class="text-body-lg font-bold">{p.nis.unwrap_or_else(|| "—".into())}</span>
                 </div>
-                <div class="flex items-center justify-between">
+                <div class="flex items-center justify-between border-b border-white/10 pb-3">
                     <span class="text-[11px] font-bold tracking-[0.15em] opacity-80">"TOTAL POIN"</span>
                     <span class="text-body-lg font-bold" data-count=p.points.to_string()>{p.points}</span>
                 </div>
+                <div class="flex items-center justify-between">
+                    <span class="text-[11px] font-bold tracking-[0.15em] opacity-80">"PRESTASI KETERTIBAN"</span>
+                    <span class="px-3 py-1 rounded-full bg-white/15 text-body-sm font-bold">
+                        {crate::models::prestasi_label(p.points).0}
+                    </span>
+                </div>
+                {crate::models::sp_level(p.points)
+                    .map(|(level, _, treatment)| {
+                        view! {
+                            <div class="mt-3 rounded-xl bg-white/15 p-3 border border-white/20">
+                                <div class="flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-[18px]">"gavel"</span>
+                                    <span class="text-body-md font-bold">"Status " {level}</span>
+                                </div>
+                                <p class="text-body-sm opacity-80 mt-1">{treatment}</p>
+                            </div>
+                        }
+                    })}
             </div>
         </div>
     }

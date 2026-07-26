@@ -111,7 +111,10 @@ pub async fn upload(
     let size = bytes.len() as i64;
     let url = match storage.upload_bytes(bytes, &key, content_type).await {
         Ok(u) => u,
-        Err(e) => return (StatusCode::BAD_GATEWAY, format!("Upload gagal: {e}")).into_response(),
+        Err(e) => {
+            crate::service::telegram::report_error(502, "Materials upload", e.to_string());
+            return (StatusCode::BAD_GATEWAY, format!("Upload gagal: {e}")).into_response();
+        }
     };
 
     match crate::repository::insert_material(
@@ -120,6 +123,9 @@ pub async fn upload(
     .await
     {
         Ok(id) => (StatusCode::OK, id.to_string()).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => {
+            crate::service::telegram::report_error(500, "Materials insert", e.to_string());
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        }
     }
 }

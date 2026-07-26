@@ -8,8 +8,48 @@ use deadpool_postgres::Pool;
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
 use super::fmt::{fmt_date, wib};
+use crate::config::WahaConfig;
 use crate::models::{category_allows_recording, SessionItem, SessionsData, SessionUser};
 use crate::repository as repo;
+
+/// Kirim WA ke PAMONG kelas untuk sesi yang mulai ≤60 menit lagi (migrasi 30) —
+/// agar pamong mengatur dewan guru pengisi. Idempotent: repo menandai
+/// pamong_notified_at saat klaim (tak kirim ganda). Dipanggil task berkala di
+/// main.rs. `base_url` (APP_BASE_URL) kosong → tanpa tautan. Return jumlah terkirim.
+pub async fn send_pamong_session_reminders(
+    pool: &Pool,
+    http: &reqwest::Client,
+    waha: &WahaConfig,
+    base_url: &str,
+) -> Result<i64> {
+    let due = repo::claim_due_pamong_reminders(pool).await?;
+    let base = base_url.trim_end_matches('/');
+    let mut sent = 0;
+    for d in due {
+        let pengajar = d
+            .teacher_name
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("belum diatur");
+        let link = if base.is_empty() {
+            String::new()
+        } else {
+            format!("\n\nAtur pengajar di sini: {base}/sesi/{}", d.session_id)
+        };
+        let text = format!(
+            "Assalamu'alaikum {} 🕌\n\n\
+             Pengingat: sesi *{}* kelas *{}* akan dimulai pukul {} WIB (±1 jam lagi).\n\
+             Pengajar (dewan guru) saat ini: {}.\n\
+             Mohon atur/pastikan dewan guru pengisi sesi.{}",
+            d.pamong_name, d.session_title, d.class_name, d.start_hm, pengajar, link
+        );
+        match super::registration::send_wa_text(http, waha, &d.pamong_phone, &text).await {
+            Ok(_) => sent += 1,
+            Err(e) => tracing::warn!(session = d.session_id, "WA pengingat pamong gagal: {e}"),
+        }
+    }
+    Ok(sent)
+}
 
 /// Jendela boleh MENGAKTIFKAN sesi (mulai/mulai-ulang): 10 menit sebelum jam
 /// mulai jadwal s/d 10 menit sesudah jam selesai jadwal (permintaan user).

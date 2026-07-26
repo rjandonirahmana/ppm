@@ -120,7 +120,8 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
     let permits = permits?
         .into_iter()
         .map(|p| {
-            let (status_label, status_kind) = permit_stage(&p.parent_status, &p.pamong_status);
+            let (status_label, status_kind) =
+                permit_stage(&p.parent_status, &p.pamong_status, &p.guru_status, p.require_pamong);
             PermitItem {
                 kind_label: permit_kind_label(&p.kind).into(),
                 range_label: fmt_range(p.start_date, p.end_date),
@@ -197,6 +198,12 @@ pub async fn profil(pool: &Pool, user_id: i64) -> Result<ProfilData> {
         "parent" => "ORANG TUA",
         _ => "PENGGUNA",
     };
+    let ipk_history = repo::list_ipk(pool, user_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, semester, ipk)| crate::models::IpkItem { id, semester, ipk })
+        .collect();
     Ok(ProfilData {
         name: p.full_name,
         username: p.username.unwrap_or_default(),
@@ -207,5 +214,59 @@ pub async fn profil(pool: &Pool, user_id: i64) -> Result<ProfilData> {
         address: p.address,
         nis: p.nis,
         points: p.points,
+        campus: p.campus,
+        major: p.major,
+        gender: p.gender,
+        ipk_history,
     })
+}
+
+/// Ubah profil mahasiswa (kampus/jurusan/gender). Kosong → NULL.
+pub async fn update_profile_extra(
+    pool: &Pool,
+    user_id: i64,
+    campus: &str,
+    major: &str,
+    gender: &str,
+) -> Result<()> {
+    let opt = |s: &str| -> Option<String> {
+        let t = s.trim();
+        (!t.is_empty()).then(|| t.to_string())
+    };
+    let g = match gender.trim() {
+        "L" | "P" => Some(gender.trim().to_string()),
+        _ => None,
+    };
+    repo::update_profile_extra(
+        pool,
+        user_id,
+        opt(campus).as_deref(),
+        opt(major).as_deref(),
+        g.as_deref(),
+    )
+    .await
+}
+
+/// Tambah entri IPK santri. `ipk` teks (0.00–4.00).
+pub async fn add_ipk(pool: &Pool, user_id: i64, semester: &str, ipk: &str) -> Result<i64> {
+    let semester = semester.trim();
+    if semester.is_empty() {
+        bail!("Semester wajib diisi (mis. 2024/2025 Ganjil).");
+    }
+    let val: f64 = ipk
+        .trim()
+        .replace(',', ".")
+        .parse()
+        .map_err(|_| anyhow::anyhow!("IPK harus berupa angka (mis. 3.75)."))?;
+    if !(0.0..=4.0).contains(&val) {
+        bail!("IPK harus di antara 0.00 sampai 4.00.");
+    }
+    repo::add_ipk(pool, user_id, semester, val).await
+}
+
+pub async fn delete_ipk(pool: &Pool, user_id: i64, id: i64) -> Result<()> {
+    if !repo::delete_ipk(pool, user_id, id).await? {
+        bail!("Entri IPK tidak ditemukan.");
+    }
+    Ok(())
 }

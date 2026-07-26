@@ -20,6 +20,16 @@ pub struct AppConfig {
     /// utk fitur yang inti kerjanya menyimpan kode OTP sementara.
     pub redis_url: String,
     pub waha: WahaConfig,
+    /// Notifikasi error ke Telegram — aktif bila bot_token & admin_chat_id ada.
+    pub telegram: TelegramConfig,
+}
+
+/// Telegram bot untuk alert error server/WAHA (pola e-ticketing). Nonaktif bila
+/// bot_token kosong / admin_chat_id 0.
+#[derive(Clone, Default)]
+pub struct TelegramConfig {
+    pub bot_token: String,
+    pub admin_chat_id: i64,
 }
 
 /// WAHA (WhatsApp HTTP API) — kirim OTP + password registrasi lewat WA.
@@ -74,6 +84,13 @@ impl AppConfig {
                 base_url: env::var("WAHA_BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into()),
                 session: env::var("WAHA_SESSION").unwrap_or_else(|_| "default".into()),
                 api_key: env::var("WAHA_API_KEY").unwrap_or_default(),
+            },
+            telegram: TelegramConfig {
+                bot_token: env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default(),
+                admin_chat_id: env::var("TELEGRAM_ADMIN_CHAT_ID")
+                    .ok()
+                    .and_then(|s| s.trim().parse().ok())
+                    .unwrap_or(0),
             },
         })
     }

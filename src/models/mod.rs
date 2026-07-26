@@ -13,6 +13,7 @@ pub mod kelas;
 pub mod laporan;
 pub mod materials;
 pub mod parent;
+pub mod rekap;
 pub mod santri;
 pub mod schedule;
 
@@ -27,5 +28,6 @@ pub use kelas::*;
 pub use laporan::*;
 pub use materials::*;
 pub use parent::*;
+pub use rekap::*;
 pub use santri::*;
 pub use schedule::*;

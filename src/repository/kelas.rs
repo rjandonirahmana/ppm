@@ -23,7 +23,7 @@ pub async fn staf_stats(pool: &Pool) -> Result<(i64, i64, i64, i64)> {
                     WHERE u.role = 'santri' AND a.status IN ('present','late') \
                     AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date), \
                 (SELECT COUNT(*) FROM permit_requests \
-                    WHERE parent_status = 'pending' OR (parent_status = 'approved' AND pamong_status = 'pending'))",
+                    WHERE guru_status = 'pending' AND parent_status <> 'rejected' AND pamong_status <> 'rejected')",
             &[],
         )
         .await
@@ -657,19 +657,79 @@ pub async fn create_class(
     Ok(row.get(0))
 }
 
-/// Info dasar kelas (nama, deskripsi, kategori, golongan).
-pub async fn class_info(
-    pool: &Pool,
-    class_id: i64,
-) -> Result<Option<(String, String, Option<String>, Option<String>)>> {
+/// Info dasar kelas + staf (wali kelas, pamong, rute izin).
+pub struct ClassInfo {
+    pub name: String,
+    pub description: String,
+    pub category: Option<String>,
+    pub golongan: Option<String>,
+    pub wali_kelas_id: Option<i64>,
+    pub wali_kelas_name: Option<String>,
+    pub require_pamong: bool,
+    pub pamong_id: Option<i64>,
+    pub pamong_name: Option<String>,
+}
+
+pub async fn class_info(pool: &Pool, class_id: i64) -> Result<Option<ClassInfo>> {
     let c = pool.get().await?;
     let row = c
         .query_opt(
-            "SELECT name, COALESCE(description, ''), category, golongan FROM classes WHERE id = $1",
+            "SELECT cl.name, COALESCE(cl.description, ''), cl.category, cl.golongan, \
+                    cl.wali_kelas_id, w.full_name, cl.require_pamong, \
+                    cl.pamong_id, pm.full_name \
+             FROM classes cl \
+             LEFT JOIN users w ON w.id = cl.wali_kelas_id \
+             LEFT JOIN users pm ON pm.id = cl.pamong_id \
+             WHERE cl.id = $1",
             &[&class_id],
         )
         .await?;
-    Ok(row.map(|r| (r.get(0), r.get(1), r.get(2), r.get(3))))
+    Ok(row.map(|r| ClassInfo {
+        name: r.get(0),
+        description: r.get(1),
+        category: r.get(2),
+        golongan: r.get(3),
+        wali_kelas_id: r.get(4),
+        wali_kelas_name: r.get(5),
+        require_pamong: r.get(6),
+        pamong_id: r.get(7),
+        pamong_name: r.get(8),
+    }))
+}
+
+/// Set wali kelas + pamong + rute persetujuan (require_pamong) satu kelas
+/// (migrasi 29/30).
+pub async fn set_class_staff(
+    pool: &Pool,
+    class_id: i64,
+    wali_kelas_id: Option<i64>,
+    pamong_id: Option<i64>,
+    require_pamong: bool,
+) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE classes SET wali_kelas_id = $2, pamong_id = $3, require_pamong = $4 \
+             WHERE id = $1",
+            &[&class_id, &wali_kelas_id, &pamong_id, &require_pamong],
+        )
+        .await
+        .context("set_class_staff")?;
+    Ok(n > 0)
+}
+
+/// Opsi pamong (role supervisor) untuk dropdown wali/pamong kelas.
+pub async fn pamong_options(pool: &Pool) -> Result<Vec<(i64, String)>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT id, full_name FROM users \
+             WHERE role = 'supervisor' AND is_active = TRUE ORDER BY full_name",
+            &[],
+        )
+        .await
+        .context("pamong_options")?;
+    Ok(rows.into_iter().map(|r| (r.get(0), r.get(1))).collect())
 }
 
 /// Santri anggota kelas (unik).
@@ -714,6 +774,11 @@ pub struct SchedRow {
     /// Poin DIPOTONG saat ALPA (migrasi 15). None = default 15. Magnitude
     /// positif, dikurangkan.
     pub absent_points: Option<i16>,
+    /// Jenis kegiatan PRD (migrasi 28): kbm|non_kbm|piket|apel_kepulangan. None =
+    /// legacy (preset default 10/0/15). Menentukan preset poin bila override kosong.
+    pub activity_type: Option<String>,
+    /// Poin DIPOTONG saat IZIN biasa (migrasi 28). None = preset kategori.
+    pub izin_points: Option<i16>,
     /// Ruang = perangkat RFID (migrasi 24). None = belum diset. room_name utk
     /// tampilan (join rfid_devices.device_name).
     pub room_id: Option<i64>,
@@ -748,7 +813,7 @@ pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>
             "SELECT cs.id, COALESCE(cs.title, ''), cs.start_time, cs.end_time, \
                     cs.limit_entery_time, cs.recurrence_type, cs.start_date, cs.end_date, \
                     cs.category, cs.present_points, cs.late_points, cs.absent_points, \
-                    cs.room_id, dev.device_name, cs.custom_dates \
+                    cs.room_id, dev.device_name, cs.custom_dates, cs.activity_type, cs.izin_points \
              FROM class_schedules cs \
              LEFT JOIN rfid_devices dev ON dev.id = cs.room_id \
              WHERE cs.class_id = $1 ORDER BY cs.start_time",
@@ -774,6 +839,8 @@ pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>
             room_id: r.get(12),
             room_name: r.get(13),
             custom_dates: json_dates(&r.get::<_, serde_json::Value>(14)),
+            activity_type: r.get(15),
+            izin_points: r.get(16),
         })
         .collect())
 }
@@ -796,6 +863,8 @@ pub async fn create_schedule(
     absent_points: Option<i16>,
     room_id: Option<i64>,
     custom_dates: &serde_json::Value,
+    activity_type: Option<&str>,
+    izin_points: Option<i16>,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
@@ -803,12 +872,12 @@ pub async fn create_schedule(
             "INSERT INTO class_schedules \
                 (class_id, title, start_time, end_time, limit_entery_time, recurrence_type, \
                  start_date, end_date, category, present_points, late_points, absent_points, \
-                 room_id, custom_dates) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id",
+                 room_id, custom_dates, activity_type, izin_points) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id",
             &[
                 &class_id, &title, &start_time, &end_time, &limit_time, &recurrence_type,
                 &start_date, &end_date, &category, &present_points, &late_points, &absent_points,
-                &room_id, custom_dates,
+                &room_id, custom_dates, &activity_type, &izin_points,
             ],
         )
         .await
@@ -897,6 +966,8 @@ pub async fn update_schedule(
     absent_points: Option<i16>,
     room_id: Option<i64>,
     custom_dates: &serde_json::Value,
+    activity_type: Option<&str>,
+    izin_points: Option<i16>,
 ) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
@@ -904,7 +975,7 @@ pub async fn update_schedule(
             "UPDATE class_schedules SET title = $2, start_time = $3, end_time = $4, \
                 limit_entery_time = $5, recurrence_type = $6, start_date = $7, end_date = $8, \
                 category = $9, present_points = $10, late_points = $11, absent_points = $12, \
-                room_id = $13, custom_dates = $14 \
+                room_id = $13, custom_dates = $14, activity_type = $15, izin_points = $16 \
              WHERE id = $1",
             &[
                 &schedule_id,
@@ -921,6 +992,8 @@ pub async fn update_schedule(
                 &absent_points,
                 &room_id,
                 custom_dates,
+                &activity_type,
+                &izin_points,
             ],
         )
         .await

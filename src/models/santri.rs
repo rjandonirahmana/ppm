@@ -59,15 +59,37 @@ pub fn permit_kind_label(kind: &str) -> &'static str {
     }
 }
 
-/// Label + kind gabungan dua-tahap (migrasi 17: Orang Tua → Pamong) untuk
-/// satu baris permit_requests — dipakai tampilan santri & orang tua.
-pub fn permit_stage(parent_status: &str, pamong_status: &str) -> (&'static str, &'static str) {
-    match (parent_status, pamong_status) {
-        ("rejected", _) => ("Ditolak Orang Tua", "rejected"),
-        ("pending", _) => ("Menunggu Orang Tua", "pending_parent"),
-        (_, "rejected") => ("Ditolak Pengurus", "rejected"),
-        (_, "approved") => ("Disetujui", "approved"),
-        _ => ("Menunggu Pengurus", "pending_pamong"),
+/// Label + kind gabungan multi-tahap untuk satu baris permit_requests — dipakai
+/// tampilan santri & orang tua. Alur: Orang Tua → (Pamong, hanya bila kelas
+/// UTAMA santri `require_pamong`) → Wali Kelas (keputusan FINAL). `require_pamong`
+/// diturunkan per-permit dari kelas utama santri (migrasi 29).
+pub fn permit_stage(
+    parent_status: &str,
+    pamong_status: &str,
+    guru_status: &str,
+    require_pamong: bool,
+) -> (&'static str, &'static str) {
+    // Tahap orang tua.
+    match parent_status {
+        "rejected" => return ("Ditolak Orang Tua", "rejected"),
+        "pending" => return ("Menunggu Orang Tua", "pending_parent"),
+        _ => {}
+    }
+    // Keputusan final wali kelas (terminal — didahulukan agar aman saat rute berubah).
+    match guru_status {
+        "approved" => return ("Disetujui", "approved"),
+        "rejected" => return ("Ditolak Wali Kelas", "rejected"),
+        _ => {}
+    }
+    // Belum diputus wali kelas.
+    if require_pamong {
+        match pamong_status {
+            "rejected" => ("Ditolak Pamong", "rejected"),
+            "pending" => ("Menunggu Pamong", "pending_pamong"),
+            _ => ("Menunggu Wali Kelas", "pending_guru"),
+        }
+    } else {
+        ("Menunggu Wali Kelas", "pending_guru")
     }
 }
 
@@ -98,4 +120,19 @@ pub struct ProfilData {
     pub address: Option<String>,
     pub nis: Option<String>,
     pub points: i32,
+    /// Profil mahasiswa (migrasi 26) — diisi santri sendiri.
+    pub campus: Option<String>,
+    pub major: Option<String>,
+    /// "L" | "P" mentah (kosong = belum diisi).
+    pub gender: Option<String>,
+    /// Riwayat IPK per semester (terbaru dulu).
+    pub ipk_history: Vec<IpkItem>,
+}
+
+/// Satu entri riwayat IPK.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IpkItem {
+    pub id: i64,
+    pub semester: String,
+    pub ipk: f64,
 }
