@@ -151,9 +151,9 @@ pub async fn decide_pamong(
 
 /// Antrean verifikasi final + jumlah terverifikasi hari ini. Reuse PamongData
 /// (pending + count) — `approved_today` di sini bermakna "terverifikasi hari ini".
-pub async fn verify_data(pool: &Pool) -> Result<PamongData> {
+pub async fn verify_data(pool: &Pool, teacher_id: Option<i64>) -> Result<PamongData> {
     let (pending, verified_today, stats) = tokio::join!(
-        repo::pending_verify(pool, 50),
+        repo::pending_verify(pool, teacher_id, 50),
         repo::verified_today(pool),
         repo::staf_stats(pool),
     );
@@ -185,7 +185,14 @@ pub async fn verify_data(pool: &Pool) -> Result<PamongData> {
     })
 }
 
-/// Verifikasi final satu absensi (tahap 2).
-pub async fn decide_verify(pool: &Pool, att_id: i64, approver: i64, approve: bool) -> Result<bool> {
-    repo::decide_verify(pool, att_id, approver, approve).await
+/// Verifikasi final satu absensi (tahap final, oleh ustad bertugas). `teacher_id`
+/// Some = guard hanya sesi yang ustadnya guru ini (migrasi 33).
+pub async fn decide_verify(
+    pool: &Pool,
+    att_id: i64,
+    approver: i64,
+    approve: bool,
+    teacher_id: Option<i64>,
+) -> Result<bool> {
+    repo::decide_verify(pool, att_id, approver, approve, teacher_id).await
 }

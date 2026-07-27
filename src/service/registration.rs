@@ -33,6 +33,12 @@ fn invite_key(token: &str) -> String {
     format!("reg-invite:{token}")
 }
 
+/// Counter sisa kuota link (multi-pakai). Ada = link berkuota; tak ada = legacy
+/// sekali-pakai.
+fn uses_key(token: &str) -> String {
+    format!("reg-invite:{token}:uses")
+}
+
 fn pending_key(phone: &str) -> String {
     format!("reg:ppm:{phone}")
 }
@@ -47,18 +53,31 @@ struct PendingRegistration {
 }
 
 /// Buat link undangan baru (admin/pamong/dewan guru) — token acak (16 byte,
-/// hex) → Redis `reg-invite:{token}` = peran, TTL 24 jam. Return token mentah
+/// hex) → Redis `reg-invite:{token}` = peran + counter kuota `:uses` = max_uses.
+/// `max_uses` (1..=1000) = berapa orang boleh pakai token SAMA (mis. 100 santri
+/// sekali intake); `ttl_days` (1..=30) = masa berlaku. Return token mentah
 /// (pemanggil merangkai URL `/register?key={token}`).
-pub async fn create_invite(redis: &mut ConnectionManager, role: &str) -> Result<String> {
+pub async fn create_invite(
+    redis: &mut ConnectionManager,
+    role: &str,
+    max_uses: i64,
+    ttl_days: i64,
+) -> Result<String> {
     if !INVITABLE_ROLES.contains(&role) {
         bail!("Peran tidak valid untuk registrasi mandiri.");
     }
+    let max_uses = max_uses.clamp(1, 1000);
+    let ttl_secs = (ttl_days.clamp(1, 30) as u64) * 86400;
     let mut bytes = [0u8; 16];
     rand::rng().fill(&mut bytes);
     let token = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
 
     let _: () = redis
-        .set_ex(invite_key(&token), role, 24 * 3600)
+        .set_ex(invite_key(&token), role, ttl_secs)
+        .await
+        .map_err(|e| anyhow::anyhow!("Redis SET gagal: {e}"))?;
+    let _: () = redis
+        .set_ex(uses_key(&token), max_uses, ttl_secs)
         .await
         .map_err(|e| anyhow::anyhow!("Redis SET gagal: {e}"))?;
     Ok(token)
@@ -179,10 +198,27 @@ pub async fn verify_register(
         bail!("Kode OTP salah.");
     }
 
-    // Sekali pakai: hapus SEBELUM insert (kegagalan insert di bawah tak boleh
+    // OTP sekali pakai: hapus SEBELUM insert (kegagalan insert di bawah tak boleh
     // membuat OTP bisa dipakai berulang).
     let _: () = redis.del(&key).await.unwrap_or(());
-    let _: () = redis.del(invite_key(token)).await.unwrap_or(());
+
+    // Konsumsi 1 kuota link (multi-pakai). DECR atomik → aman konkuren. Habis
+    // (kuota 0) → hapus link. Legacy tanpa counter → sekali pakai (hapus).
+    let has_counter: bool = redis.exists(uses_key(token)).await.unwrap_or(false);
+    if has_counter {
+        let remaining: i64 = redis.decr(uses_key(token), 1).await.unwrap_or(-1);
+        if remaining < 0 {
+            // Slot terakhir sudah diambil pendaftar lain (race) → kembalikan & tolak.
+            let _: i64 = redis.incr(uses_key(token), 1).await.unwrap_or(0);
+            bail!("Kuota link registrasi sudah habis. Minta link baru ke admin.");
+        }
+        if remaining == 0 {
+            let _: () = redis.del(invite_key(token)).await.unwrap_or(());
+            let _: () = redis.del(uses_key(token)).await.unwrap_or(());
+        }
+    } else {
+        let _: () = redis.del(invite_key(token)).await.unwrap_or(());
+    }
 
     let password = pending.password.clone();
     let hashed = tokio::task::spawn_blocking(move || bcrypt::hash(&password, 10)).await??;

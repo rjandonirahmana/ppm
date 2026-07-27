@@ -13,8 +13,9 @@ use leptos_router::hooks::use_params_map;
 
 use crate::models::{is_mengaji_category, HafalanItem, SessionAttRow, SessionChatItem, SessionDetailData};
 use crate::web::api::{
-    hafalan_of_class_action, log_hafalan_action, mark_session_present, session_detail_data,
-    set_session_book_action, set_session_live, set_session_teacher_action,
+    hafalan_of_class_action, log_hafalan_action, mark_session_bulk, mark_session_present,
+    session_detail_data, set_session_book_action, set_session_live, set_session_pamong_action,
+    set_session_teacher_action,
 };
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 
@@ -66,7 +67,6 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
     let when = format!("{} • {}", d.date_label, d.time_label);
     let hadir_label = format!("{}/{} hadir", d.hadir, d.total);
     let is_cancelled = d.status_kind == "cancelled";
-    let busy_id = RwSignal::new(Option::<i64>::None);
     // Tab aktif: "absensi" (default) | "kelola" | "hafalan" | "lainnya" (chat+rekaman).
     let tab = RwSignal::new("absensi".to_string());
 
@@ -81,6 +81,8 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
     let is_finished = d.status_kind == "finished";
     let cur_teacher = d.teacher_id.unwrap_or(0);
     let teacher_options = StoredValue::new(d.teacher_options.clone());
+    let cur_pamong = d.pamong_id.unwrap_or(0);
+    let pamong_options = StoredValue::new(d.pamong_options.clone());
     let busy_ctl = RwSignal::new(false);
     // Nonaktif HANYA untuk aksi MULAI (di luar jendela ±10 menit dari jadwal);
     // akhiri sesi selalu boleh. Alasan dari server (start_blocked_reason) —
@@ -110,6 +112,17 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
         busy_ctl.set(true);
         leptos::task::spawn_local(async move {
             let _ = set_session_teacher_action(session_id, tid).await;
+            busy_ctl.set(false);
+            refetch();
+        });
+    };
+    let set_pamong = move |pid: i64| {
+        if busy_ctl.get_untracked() {
+            return;
+        }
+        busy_ctl.set(true);
+        leptos::task::spawn_local(async move {
+            let _ = set_session_pamong_action(session_id, pid).await;
             busy_ctl.set(false);
             refetch();
         });
@@ -215,7 +228,7 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                             // ── Kelola sesi: mulai/akhiri + pengajar ──────
                             <div class="ppm-card p-4 anim-in">
                                 <label class="text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
-                                    "Pengajar"
+                                    "Pengajar (ustad bertugas)"
                                 </label>
                                 <select
                                     class="mt-1 w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-60"
@@ -241,6 +254,33 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                                         })
                                         .collect_view()}
                                 </select>
+                                // ── Pamong bertugas verifikasi (migrasi 33) ──
+                                <label class="mt-3 block text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
+                                    "Pamong bertugas (verifikasi)"
+                                </label>
+                                <select
+                                    class="mt-1 w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-60"
+                                    disabled=move || busy_ctl.get()
+                                    on:change=move |ev| {
+                                        set_pamong(event_target_value(&ev).parse().unwrap_or(0))
+                                    }
+                                >
+                                    <option value="0" selected=cur_pamong == 0>
+                                        "— Pakai pamong kelas —"
+                                    </option>
+                                    {pamong_options
+                                        .get_value()
+                                        .into_iter()
+                                        .map(|o| {
+                                            let val = o.id.to_string();
+                                            let sel = o.id == cur_pamong;
+                                            view! { <option value=val selected=sel>{o.name}</option> }
+                                        })
+                                        .collect_view()}
+                                </select>
+                                <p class="mt-1 text-[11px] text-on-surface-variant">
+                                    "Pamong kelas menugaskan ustad & pamong verifikator sesi ini (±1 jam sebelum mulai)."
+                                </p>
                                 {(!is_cancelled)
                                     .then(|| {
                                         let (label, icon, cls) = if is_live {
@@ -444,35 +484,14 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                             .into_any()
                     }
                     _ => {
-                        // "absensi" (default)
+                        // "absensi" (default) — panel dengan aksi massal.
                         view! {
-                            <div class="ppm-card p-4 anim-in">
-                                {if d.attendance.is_empty() {
-                                    view! {
-                                        <p class="text-body-sm text-on-surface-variant py-3">
-                                            "Belum ada anggota di kelas ini."
-                                        </p>
-                                    }
-                                        .into_any()
-                                } else {
-                                    d.attendance
-                                        .iter()
-                                        .cloned()
-                                        .map(|row| {
-                                            view! {
-                                                <AttRowView
-                                                    row=row
-                                                    session_id=session_id
-                                                    can_mark=!is_cancelled
-                                                    busy_id=busy_id
-                                                    refetch=refetch
-                                                />
-                                            }
-                                        })
-                                        .collect_view()
-                                        .into_any()
-                                }}
-                            </div>
+                            <AbsensiPanel
+                                attendance=d.attendance.clone()
+                                session_id=session_id
+                                can_mark=!is_cancelled
+                                refetch=refetch
+                            />
                         }
                             .into_any()
                     }
@@ -514,54 +533,202 @@ fn att_badge(kind: &str) -> &'static str {
     }
 }
 
+/// Panel absensi sesi dgn AKSI MASSAL: centang banyak santri (yang belum
+/// tercatat) → "Tandai Hadir" atau "Alpa-kan" sekaligus. Tetap ada tombol
+/// "Hadir" per baris untuk penandaan cepat satu orang.
 #[component]
-fn AttRowView(
-    row: SessionAttRow,
+fn AbsensiPanel(
+    attendance: Vec<SessionAttRow>,
     session_id: i64,
     can_mark: bool,
-    busy_id: RwSignal<Option<i64>>,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
-    let badge = att_badge(&row.status_kind);
-    let unrecorded = row.status_kind == "none";
-    let sid = row.user_id;
-    let initial: String = row.name.chars().next().map(|c| c.to_string()).unwrap_or_default();
-    let mark = move |_| {
-        if busy_id.get_untracked().is_some() {
+    let selected = RwSignal::new(Vec::<i64>::new());
+    let busy = RwSignal::new(false);
+    let msg = RwSignal::new(Option::<(bool, String)>::None);
+    // id santri yang BELUM tercatat (bisa ditandai/dialpakan massal).
+    let unrecorded_ids: Vec<i64> = attendance
+        .iter()
+        .filter(|r| r.status_kind == "none")
+        .map(|r| r.user_id)
+        .collect();
+    let unrecorded_all = StoredValue::new(unrecorded_ids.clone());
+    let has_unrecorded = !unrecorded_ids.is_empty();
+
+    let toggle = move |id: i64| {
+        selected.update(|v| {
+            if let Some(p) = v.iter().position(|&x| x == id) {
+                v.remove(p);
+            } else {
+                v.push(id);
+            }
+        });
+    };
+    let toggle_all = move |_| {
+        let all = unrecorded_all.get_value();
+        selected.update(|v| {
+            if v.len() == all.len() {
+                v.clear();
+            } else {
+                *v = all;
+            }
+        });
+    };
+    let run = move |status: &'static str| {
+        if busy.get_untracked() {
             return;
         }
-        busy_id.set(Some(sid));
+        let ids = selected.get_untracked();
+        if ids.is_empty() {
+            return;
+        }
+        busy.set(true);
+        msg.set(None);
+        leptos::task::spawn_local(async move {
+            match mark_session_bulk(session_id, ids, status.to_string()).await {
+                Ok(n) => {
+                    let what = if status == "absent" { "dialpakan" } else { "ditandai hadir" };
+                    msg.set(Some((true, format!("{n} santri {what}."))));
+                    selected.set(Vec::new());
+                    refetch();
+                }
+                Err(e) => {
+                    let m = e.to_string();
+                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                }
+            }
+            busy.set(false);
+        });
+    };
+    let mark_one = move |sid: i64| {
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
         leptos::task::spawn_local(async move {
             let _ = mark_session_present(session_id, sid).await;
-            busy_id.set(None);
+            busy.set(false);
             refetch();
         });
     };
+
     view! {
-        <div class="flex items-center gap-3 py-2.5 border-b border-outline-variant/40 last:border-0">
-            <div class="w-9 h-9 rounded-full bg-secondary-container text-primary flex items-center justify-center text-body-sm font-bold shrink-0">
-                {initial}
-            </div>
-            <div class="flex-1 min-w-0">
-                <p class="text-body-sm font-semibold text-on-background truncate">{row.name.clone()}</p>
-                <p class="text-[11px] text-on-surface-variant">
-                    {row.nis.clone()}
-                    {(!row.time_label.is_empty()).then(|| format!(" • {}", row.time_label))}
-                </p>
-            </div>
-            <span class=badge>{row.status_label.clone()}</span>
-            {(unrecorded && can_mark)
-                .then(|| {
-                    view! {
-                        <button
-                            class="px-2.5 py-1.5 rounded-lg bg-primary text-on-primary text-[11px] font-bold press disabled:opacity-50"
-                            disabled=move || busy_id.get() == Some(sid)
-                            on:click=mark
-                        >
-                            "Tandai Hadir"
-                        </button>
-                    }
-                })}
+        <div class="ppm-card p-4 anim-in space-y-3">
+            {if attendance.is_empty() {
+                view! {
+                    <p class="text-body-sm text-on-surface-variant py-3">
+                        "Belum ada anggota di kelas ini."
+                    </p>
+                }
+                    .into_any()
+            } else {
+                view! {
+                    // ── Toolbar aksi massal ─────────────────────────────
+                    {(can_mark && has_unrecorded)
+                        .then(|| {
+                            view! {
+                                <div class="flex flex-wrap items-center gap-2 pb-2 border-b border-outline-variant/40">
+                                    <button
+                                        class="text-[11px] font-semibold text-primary underline cursor-pointer"
+                                        on:click=toggle_all
+                                    >
+                                        {move || {
+                                            let all = unrecorded_all.get_value();
+                                            if selected.get().len() == all.len() {
+                                                "Batal pilih semua"
+                                            } else {
+                                                "Pilih semua belum tercatat"
+                                            }
+                                        }}
+                                    </button>
+                                    <span class="flex-1"></span>
+                                    <button
+                                        class="px-3 py-1.5 rounded-lg bg-success/10 text-success text-[11px] font-bold press disabled:opacity-50 cursor-pointer"
+                                        prop:disabled=move || busy.get() || selected.get().is_empty()
+                                        on:click=move |_| run("present")
+                                    >
+                                        {move || format!("Tandai Hadir ({})", selected.get().len())}
+                                    </button>
+                                    <button
+                                        class="px-3 py-1.5 rounded-lg bg-error-container text-error text-[11px] font-bold press disabled:opacity-50 cursor-pointer"
+                                        prop:disabled=move || busy.get() || selected.get().is_empty()
+                                        on:click=move |_| run("absent")
+                                    >
+                                        {move || format!("Alpa-kan ({})", selected.get().len())}
+                                    </button>
+                                </div>
+                            }
+                        })}
+                    <Show when=move || msg.get().is_some() fallback=|| ().into_any()>
+                        {move || {
+                            msg.get()
+                                .map(|(ok, t)| {
+                                    let c = if ok { "text-success" } else { "text-error" };
+                                    view! { <p class=format!("text-body-sm {c}")>{t}</p> }
+                                })
+                        }}
+                    </Show>
+
+                    {attendance
+                        .into_iter()
+                        .map(|row| {
+                            let badge = att_badge(&row.status_kind);
+                            let unrecorded = row.status_kind == "none";
+                            let sid = row.user_id;
+                            let initial: String = row
+                                .name
+                                .chars()
+                                .next()
+                                .map(|c| c.to_string())
+                                .unwrap_or_default();
+                            let checked = move || selected.get().contains(&sid);
+                            let selectable = unrecorded && can_mark;
+                            view! {
+                                <div class="flex items-center gap-3 py-2.5 border-b border-outline-variant/40 last:border-0">
+                                    {selectable
+                                        .then(|| {
+                                            view! {
+                                                <input
+                                                    type="checkbox"
+                                                    class="w-5 h-5 accent-primary cursor-pointer shrink-0"
+                                                    prop:checked=checked
+                                                    on:change=move |_| toggle(sid)
+                                                />
+                                            }
+                                        })}
+                                    <div class="w-9 h-9 rounded-full bg-secondary-container text-primary flex items-center justify-center text-body-sm font-bold shrink-0">
+                                        {initial}
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <p class="text-body-sm font-semibold text-on-background truncate">
+                                            {row.name.clone()}
+                                        </p>
+                                        <p class="text-[11px] text-on-surface-variant">
+                                            {row.nis.clone()}
+                                            {(!row.time_label.is_empty())
+                                                .then(|| format!(" • {}", row.time_label))}
+                                        </p>
+                                    </div>
+                                    <span class=badge>{row.status_label.clone()}</span>
+                                    {(unrecorded && can_mark)
+                                        .then(|| {
+                                            view! {
+                                                <button
+                                                    class="px-2.5 py-1.5 rounded-lg bg-primary text-on-primary text-[11px] font-bold press disabled:opacity-50 cursor-pointer"
+                                                    prop:disabled=move || busy.get()
+                                                    on:click=move |_| mark_one(sid)
+                                                >
+                                                    "Hadir"
+                                                </button>
+                                            }
+                                        })}
+                                </div>
+                            }
+                        })
+                        .collect_view()}
+                }
+                    .into_any()
+            }}
         </div>
     }
 }

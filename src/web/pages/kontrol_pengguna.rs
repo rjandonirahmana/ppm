@@ -310,6 +310,10 @@ fn InvitePanel() -> impl IntoView {
         ("supervisor", "Pamong"),
     ];
     let role = RwSignal::new("santri".to_string());
+    // Kuota: berapa orang boleh pakai token SAMA (1 = sekali pakai; mis. 100 utk
+    // intake santri). Masa berlaku dalam hari.
+    let kuota = RwSignal::new(1_i64);
+    let hari = RwSignal::new(7_i64);
     let code = RwSignal::new(String::new());
     let link = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
@@ -325,8 +329,9 @@ fn InvitePanel() -> impl IntoView {
         msg.set(None);
         copied.set(0);
         let r = role.get_untracked();
+        let (mu, td) = (kuota.get_untracked().max(1), hari.get_untracked().max(1));
         leptos::task::spawn_local(async move {
-            match create_invite_action(r).await {
+            match create_invite_action(r, mu, td).await {
                 Ok(token) => {
                     // Rangkai URL penuh dari origin browser (klien).
                     #[cfg(target_arch = "wasm32")]
@@ -377,7 +382,7 @@ fn InvitePanel() -> impl IntoView {
                 "Buat Link Registrasi"
             </h3>
             <p class="text-[11px] text-on-surface-variant">
-                "Hanya yang punya link ini yang bisa mendaftar. Pilih peran → buat link → bagikan. Link berlaku 24 jam."
+                "Hanya yang punya link ini yang bisa mendaftar. Atur peran + KUOTA (berapa orang boleh pakai token yang sama) + masa berlaku. Mis. kuota 100 utk intake santri → satu link untuk semua."
             </p>
             {move || {
                 msg.get()
@@ -389,27 +394,59 @@ fn InvitePanel() -> impl IntoView {
                         }
                     })
             }}
+            <select
+                class=field
+                on:change=move |ev| role.set(event_target_value(&ev))
+            >
+                {ROLES
+                    .iter()
+                    .map(|(v, l)| {
+                        let val = v.to_string();
+                        view! { <option value=val>{*l}</option> }
+                    })
+                    .collect_view()}
+            </select>
             <div class="flex gap-2">
-                <select
-                    class=field
-                    on:change=move |ev| role.set(event_target_value(&ev))
-                >
-                    {ROLES
-                        .iter()
-                        .map(|(v, l)| {
-                            let val = v.to_string();
-                            view! { <option value=val>{*l}</option> }
-                        })
-                        .collect_view()}
-                </select>
-                <button
-                    class="px-4 rounded-lg bg-primary text-on-primary font-semibold text-body-sm shrink-0 press disabled:opacity-60"
-                    disabled=move || busy.get()
-                    on:click=generate
-                >
-                    {move || if busy.get() { "…" } else { "Buat Link" }}
-                </button>
+                <label class="flex-1 space-y-1">
+                    <span class="text-[11px] text-on-surface-variant">"Kuota (orang)"</span>
+                    <input
+                        type="number"
+                        min="1"
+                        max="1000"
+                        class=field
+                        prop:value=move || kuota.get().to_string()
+                        on:input=move |ev| {
+                            kuota.set(event_target_value(&ev).parse().unwrap_or(1).clamp(1, 1000))
+                        }
+                    />
+                </label>
+                <label class="flex-1 space-y-1">
+                    <span class="text-[11px] text-on-surface-variant">"Berlaku (hari)"</span>
+                    <input
+                        type="number"
+                        min="1"
+                        max="30"
+                        class=field
+                        prop:value=move || hari.get().to_string()
+                        on:input=move |ev| {
+                            hari.set(event_target_value(&ev).parse().unwrap_or(7).clamp(1, 30))
+                        }
+                    />
+                </label>
             </div>
+            <button
+                class="w-full py-2.5 rounded-lg bg-primary text-on-primary font-semibold text-body-sm press disabled:opacity-60"
+                disabled=move || busy.get()
+                on:click=generate
+            >
+                {move || {
+                    if busy.get() {
+                        "…".to_string()
+                    } else {
+                        format!("Buat Link (kuota {})", kuota.get())
+                    }
+                }}
+            </button>
             {move || {
                 let c = code.get();
                 (!c.is_empty())
@@ -419,7 +456,7 @@ fn InvitePanel() -> impl IntoView {
                             // pengguna tempel di halaman /register).
                             <div class="rounded-lg bg-secondary-container/50 p-2.5 space-y-1.5">
                                 <p class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">
-                                    "Kode Referal (sekali pakai · 24 jam)"
+                                    {move || format!("Kode Referal (kuota {} · {} hari)", kuota.get(), hari.get())}
                                 </p>
                                 <div class="flex items-center gap-2">
                                     <code class="flex-1 min-w-0 text-body-sm font-bold text-primary truncate">

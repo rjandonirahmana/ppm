@@ -51,6 +51,9 @@ pub struct SessionItem {
     pub teacher: String,
     /// Pengajar terpasang (untuk pre-select dropdown assign). None = belum diisi.
     pub teacher_id: Option<i64>,
+    /// Pamong bertugas verifikasi sesi (migrasi 33; pre-select dropdown). None =
+    /// pakai pamong kelas.
+    pub pamong_id: Option<i64>,
     /// Kategori kelas (chip tampilan; "-" bila kosong).
     pub category: String,
 }
@@ -113,6 +116,10 @@ pub struct SessionDetailData {
     /// dewan guru bisa ganti pengajar langsung dari halaman detail sesi.
     pub teacher_id: Option<i64>,
     pub teacher_options: Vec<super::kelas::TeacherOption>,
+    /// Pamong bertugas verifikasi sesi (migrasi 33) — None = pakai pamong kelas.
+    /// pamong_options = daftar pamong (role supervisor) utk dropdown.
+    pub pamong_id: Option<i64>,
+    pub pamong_options: Vec<super::kelas::TeacherOption>,
     pub category: String,
     /// Materi buku sesi ini (migrasi 20) — None = belum dipilih.
     pub book_id: Option<i64>,

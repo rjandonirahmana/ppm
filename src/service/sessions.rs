@@ -39,8 +39,9 @@ pub async fn send_pamong_session_reminders(
         let text = format!(
             "Assalamu'alaikum {} 🕌\n\n\
              Pengingat: sesi *{}* kelas *{}* akan dimulai pukul {} WIB (±1 jam lagi).\n\
-             Pengajar (dewan guru) saat ini: {}.\n\
-             Mohon atur/pastikan dewan guru pengisi sesi.{}",
+             Pengajar (ustad) saat ini: {}.\n\
+             Mohon atur/pastikan: (1) USTAD pengisi sesi, dan (2) PAMONG yang bertugas \
+             memverifikasi kehadiran sesi ini.{}",
             d.pamong_name, d.session_title, d.class_name, d.start_hm, pengajar, link
         );
         match super::registration::send_wa_text(http, waha, &d.pamong_phone, &text).await {
@@ -129,6 +130,7 @@ pub async fn list_for(pool: &Pool, user: &SessionUser) -> Result<SessionsData> {
                     status_kind: status_kind.into(),
                     teacher: r.teacher.unwrap_or_else(|| "-".into()),
                     teacher_id: r.teacher_id,
+                    pamong_id: r.pamong_id,
                     category: r.category.filter(|c| !c.is_empty()).unwrap_or_else(|| "-".into()),
                 }
             })
@@ -181,10 +183,11 @@ pub async fn detail_for(
         anyhow::bail!("Sesi tidak ditemukan.");
     };
 
-    let (att_rows, chat_rows, teachers, books) = tokio::join!(
+    let (att_rows, chat_rows, teachers, pamongs, books) = tokio::join!(
         repo::session_attendance(pool, session_id, d.class_id),
         repo::session_chats(pool, session_id, 200),
         repo::teacher_options(pool),
+        repo::pamong_options(pool),
         repo::list_books(pool),
     );
 
@@ -252,6 +255,11 @@ pub async fn detail_for(
             .into_iter()
             .map(|(id, name)| crate::models::TeacherOption { id, name })
             .collect(),
+        pamong_id: d.pamong_id,
+        pamong_options: pamongs?
+            .into_iter()
+            .map(|(id, name)| crate::models::TeacherOption { id, name })
+            .collect(),
         category: d.category.clone().filter(|c| !c.is_empty()).unwrap_or_else(|| "-".into()),
         start_blocked_reason: start_window_reason(d.session_date, d.start_time, d.end_time),
         book_id: d.book_id,
@@ -279,6 +287,30 @@ pub async fn mark_present(
     }
     tracing::info!(by = user.id, student_id, session_id, "absensi manual ditandai staf");
     Ok(())
+}
+
+/// Tandai BANYAK santri sekaligus (hadir/alpa) pada sesi (staf). Return jumlah
+/// baru tercatat.
+pub async fn mark_bulk(
+    pool: &Pool,
+    user: &SessionUser,
+    session_id: i64,
+    student_ids: Vec<i64>,
+    status: &str,
+) -> Result<i64> {
+    if !matches!(user.role.as_str(), "admin" | "supervisor" | "dewan_guru" | "teacher") {
+        anyhow::bail!("forbidden");
+    }
+    if !matches!(status, "present" | "absent") {
+        anyhow::bail!("Status tidak valid.");
+    }
+    let ids: Vec<i64> = student_ids.into_iter().filter(|&x| x > 0).collect();
+    if ids.is_empty() {
+        anyhow::bail!("Pilih minimal satu santri.");
+    }
+    let n = repo::mark_attendance_bulk(pool, session_id, &ids, status).await?;
+    tracing::info!(by = user.id, session_id, status, n, "absensi massal ditandai staf");
+    Ok(n)
 }
 
 // ── Ruang sesi LIVE (/sesi/:id/live): chat + mulai/akhiri ────────────────────

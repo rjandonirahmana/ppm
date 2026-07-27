@@ -159,11 +159,15 @@ pub async fn logout_action() -> Result<(), ServerFnError> {
 /// Buat link undangan (admin/pamong/dewan guru) — return token mentah;
 /// klien merangkai URL `{origin}/register?key={token}`.
 #[server(CreateInviteAction, "/api-fn")]
-pub async fn create_invite_action(role: String) -> Result<String, ServerFnError> {
+pub async fn create_invite_action(
+    role: String,
+    max_uses: i64,
+    ttl_days: i64,
+) -> Result<String, ServerFnError> {
     require_roles(&["admin", "supervisor", "dewan_guru"]).await?;
     let state = app_state().await?;
     let mut redis = state.redis.clone();
-    crate::service::registration::create_invite(&mut redis, &role)
+    crate::service::registration::create_invite(&mut redis, &role, max_uses, ttl_days)
         .await
         .map_err(err)
 }
@@ -487,6 +491,21 @@ pub async fn mark_session_present(
         .map_err(err)
 }
 
+/// Tandai BANYAK santri (hadir/alpa) sekaligus pada sesi (staf). `status` =
+/// "present" | "absent". Return jumlah baru tercatat.
+#[server(MarkSessionBulk, "/api-fn")]
+pub async fn mark_session_bulk(
+    session_id: i64,
+    student_ids: Vec<i64>,
+    status: String,
+) -> Result<i64, ServerFnError> {
+    let sess = require_roles(&["teacher", "supervisor", "admin", "dewan_guru"]).await?;
+    let state = app_state().await?;
+    crate::service::sessions::mark_bulk(&state.pool, &sess, session_id, student_ids, &status)
+        .await
+        .map_err(err)
+}
+
 // ── Sisi ORANG TUA ─────────────────────────────────────────────────────────────
 
 /// Cari santri (nama/NIS) untuk koneksi.
@@ -615,22 +634,25 @@ pub async fn decide_pamong(att_id: i64, approve: bool) -> Result<(), ServerFnErr
     Ok(())
 }
 
-/// Antrean verifikasi TAHAP 2 (dewan guru/admin) — final.
+/// Antrean verifikasi FINAL (ustad bertugas / dewan guru / admin).
 #[server(GetVerifyData, "/api-fn")]
 pub async fn verify_data() -> Result<PamongData, ServerFnError> {
-    require_roles(&["dewan_guru", "admin"]).await?;
+    let sess = require_roles(&["teacher", "dewan_guru", "admin"]).await?;
     let state = app_state().await?;
-    crate::service::attendance::verify_data(&state.pool)
+    // Ustad (teacher) → hanya sesi yang ia ampu; dewan guru/admin → semua.
+    let teacher_id = (sess.role == "teacher").then_some(sess.id);
+    crate::service::attendance::verify_data(&state.pool, teacher_id)
         .await
         .map_err(err)
 }
 
-/// Verifikasi final satu absensi (tahap 2).
+/// Verifikasi final satu absensi (oleh ustad bertugas / dewan guru / admin).
 #[server(DecideVerify, "/api-fn")]
 pub async fn decide_verify(att_id: i64, approve: bool) -> Result<(), ServerFnError> {
-    let sess = require_roles(&["dewan_guru", "admin"]).await?;
+    let sess = require_roles(&["teacher", "dewan_guru", "admin"]).await?;
     let state = app_state().await?;
-    crate::service::attendance::decide_verify(&state.pool, att_id, sess.id, approve)
+    let teacher_id = (sess.role == "teacher").then_some(sess.id);
+    crate::service::attendance::decide_verify(&state.pool, att_id, sess.id, approve, teacher_id)
         .await
         .map_err(err)?;
     Ok(())
@@ -808,6 +830,21 @@ pub async fn add_member_action(
         .map_err(err)
 }
 
+/// Tambah BANYAK santri ke kelas (pada jadwal terpilih) sekali request. Return
+/// jumlah baru ditambahkan.
+#[server(AddMembers, "/api-fn")]
+pub async fn add_members_action(
+    class_id: i64,
+    schedule_id: i64,
+    student_ids: Vec<i64>,
+) -> Result<i64, ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::add_members(&state.pool, class_id, schedule_id, student_ids)
+        .await
+        .map_err(err)
+}
+
 /// Ubah jadwal.
 #[server(UpdateSchedule, "/api-fn")]
 pub async fn update_schedule_action(
@@ -879,6 +916,16 @@ pub async fn set_session_teacher_action(session_id: i64, teacher_id: i64) -> Res
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
     crate::service::kelas::set_session_teacher(&state.pool, session_id, teacher_id)
+        .await
+        .map_err(err)
+}
+
+/// Pasang/ubah PAMONG bertugas verifikasi sebuah sesi (0 = kosongkan) — migrasi 33.
+#[server(SetSessionPamong, "/api-fn")]
+pub async fn set_session_pamong_action(session_id: i64, pamong_id: i64) -> Result<(), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::set_session_pamong(&state.pool, session_id, pamong_id)
         .await
         .map_err(err)
 }

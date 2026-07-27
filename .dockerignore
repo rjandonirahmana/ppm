@@ -1,0 +1,27 @@
+# Build artifacts — besar, tak pernah dibutuhkan build context
+target/
+
+# Rekaman siaran lokal (dibuat runtime)
+recordings/
+
+# Env lokal — jangan bake secret ke image
+.env
+.env.*
+*.env
+
+# Dev tooling
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# macOS clutter
+.DS_Store
+**/.DS_Store
+
+# Editor & temp
+*.swp
+*.swo
+*~
+
+node_modules/

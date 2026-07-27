@@ -152,6 +152,8 @@ pub async fn credit_weekly_reward(
         return Ok(false);
     }
     let reason = format!("Reward mingguan {week_start}");
+    // users.points diperbarui OTOMATIS oleh trigger trg_point_logs_balance
+    // (migrasi 32) — cukup tulis point_logs.
     tx.execute(
         "INSERT INTO point_logs (user_id, delta, reason, category) \
          VALUES ($1, $2, $3, 'achievement')",
@@ -159,12 +161,6 @@ pub async fn credit_weekly_reward(
     )
     .await
     .context("credit_weekly_reward point_logs")?;
-    tx.execute(
-        "UPDATE users SET points = points + $2 WHERE id = $1",
-        &[&user_id, &points],
-    )
-    .await
-    .context("credit_weekly_reward points")?;
     tx.commit().await.context("credit_weekly_reward commit")?;
     Ok(true)
 }
@@ -284,13 +280,14 @@ pub async fn pending_pamong(
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT a.id, u.full_name, u.nis, c.name, a.scanned_at, a.gate_label, a.status \
+            "SELECT a.id, u.full_name, u.nis, cl.name, a.scanned_at, a.gate_label, a.status \
              FROM attendances a \
              JOIN users u ON u.id = a.user_id \
-             LEFT JOIN class_schedules cs ON cs.id = a.class_schedule_id \
-             LEFT JOIN classes c ON c.id = cs.class_id \
+             LEFT JOIN class_sessions cs ON cs.id = a.class_session_id \
+             LEFT JOIN classes cl ON cl.id = cs.class_id \
              WHERE a.pamong_status = 'pending' \
-                AND ($2::bigint IS NULL OR c.pamong_id = $2) \
+                AND COALESCE(cl.require_pamong, TRUE) = TRUE \
+                AND ($2::bigint IS NULL OR COALESCE(cs.pamong_id, cl.pamong_id) = $2) \
              ORDER BY a.scanned_at ASC LIMIT $1",
             &[&limit, &pamong_id],
         )
@@ -334,85 +331,25 @@ pub async fn decide_pamong(
     approve: bool,
     pamong_id: Option<i64>,
 ) -> Result<bool> {
-    let mut c = pool.get().await?;
-    let tx = c.transaction().await.context("decide_pamong tx")?;
-
     let status = if approve { "approved" } else { "rejected" };
-    // Guard (migrasi 30): pamong hanya boleh memverifikasi kehadiran di KELAS
-    // yang ia ampu (kelas dari jadwal absensi). $4 NULL = admin/dewan (bebas).
-    let row = tx
-        .query_opt(
+    // Tahap 1 hanya MEMAJUKAN status; POIN diberikan sekali di tahap FINAL
+    // (decide_verify / auto-verify-final) — migrasi 33. Guard: pamong bertugas
+    // sesi = approver (COALESCE cs.pamong_id, cl.pamong_id); $4 NULL = admin/dewan.
+    let c = pool.get().await?;
+    let n = c
+        .execute(
             "UPDATE attendances a SET pamong_status = $2, pamong_by = $3, pamong_at = NOW() \
              WHERE a.id = $1 AND a.pamong_status = 'pending' \
                 AND ($4::bigint IS NULL OR \
-                    (SELECT cl.pamong_id FROM class_schedules cs \
+                    (SELECT COALESCE(cs.pamong_id, cl.pamong_id) FROM class_sessions cs \
                         JOIN classes cl ON cl.id = cs.class_id \
-                        WHERE cs.id = a.class_schedule_id) = $4) \
-             RETURNING a.user_id, a.status, a.class_schedule_id",
+                        WHERE cs.id = a.class_session_id) = $4) \
+             RETURNING a.id",
             &[&att_id, &status, &approver, &pamong_id],
         )
         .await
-        .context("decide_pamong update")?;
-
-    let Some(row) = row else {
-        tx.rollback().await.ok();
-        return Ok(false);
-    };
-
-    if approve {
-        let user_id: i64 = row.get(0);
-        let att_status: String = row.get(1);
-        let schedule_id: Option<i64> = row.get(2);
-        // Poin per-jadwal (magnitudo positif): present ditambah, late/absent
-        // dikurangi (migrasi 21). Ambil ketiga override; None = default global.
-        let (mut present_p, mut late_p, mut absent_p, mut izin_p) = (None, None, None, None);
-        let mut activity_type = String::new();
-        if let Some(sid) = schedule_id {
-            if let Some(r) = tx
-                .query_opt(
-                    "SELECT present_points, late_points, absent_points, izin_points, \
-                            COALESCE(activity_type, '') \
-                     FROM class_schedules WHERE id = $1",
-                    &[&sid],
-                )
-                .await
-                .context("decide_pamong schedule points")?
-            {
-                present_p = r.get(0);
-                late_p = r.get(1);
-                absent_p = r.get(2);
-                izin_p = r.get(3);
-                activity_type = r.get(4);
-            }
-        }
-        let (delta, note, category) = crate::models::attendance_delta(
-            &att_status,
-            &activity_type,
-            present_p,
-            late_p,
-            absent_p,
-            izin_p,
-        );
-        if delta != 0 {
-            let reason = format!("Kehadiran ({att_status}) — {note}");
-            tx.execute(
-                "INSERT INTO point_logs (user_id, delta, reason, category, given_by) \
-                 VALUES ($1, $2, $3, $4, $5)",
-                &[&user_id, &delta, &reason, &category, &approver],
-            )
-            .await
-            .context("decide_pamong point_logs")?;
-            tx.execute(
-                "UPDATE users SET points = points + $2 WHERE id = $1",
-                &[&user_id, &delta],
-            )
-            .await
-            .context("decide_pamong points")?;
-        }
-    }
-
-    tx.commit().await.context("decide_pamong commit")?;
-    Ok(true)
+        .context("decide_pamong")?;
+    Ok(n > 0)
 }
 
 pub struct RiwayatRow {
@@ -577,21 +514,31 @@ pub async fn insert_attendance(
     Ok(row.get(0))
 }
 
-// ── Verifikasi TAHAP 2 (dewan guru — final) ──────────────────────────────────────
+// ── Verifikasi TAHAP FINAL (USTAD bertugas sesi) ─────────────────────────────────
 
-/// Antrean tahap 2: sudah disetujui pamong, menunggu verifikasi final dewan guru.
-pub async fn pending_verify(pool: &Pool, limit: i64) -> Result<Vec<PendingRow>> {
+/// Antrean tahap final: menunggu verifikasi USTAD bertugas sesi. 2 langkah
+/// (require_pamong) → harus lolos pamong dulu; 1 langkah → langsung. `teacher_id`
+/// Some = hanya sesi yang ustadnya guru ini (COALESCE cs.teacher_id,
+/// cl.wali_kelas_id); None = semua (dewan guru/admin oversight). Migrasi 33.
+pub async fn pending_verify(
+    pool: &Pool,
+    teacher_id: Option<i64>,
+    limit: i64,
+) -> Result<Vec<PendingRow>> {
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT a.id, u.full_name, u.nis, c.name, a.scanned_at, a.gate_label, a.status \
+            "SELECT a.id, u.full_name, u.nis, cl.name, a.scanned_at, a.gate_label, a.status \
              FROM attendances a \
              JOIN users u ON u.id = a.user_id \
-             LEFT JOIN class_schedules cs ON cs.id = a.class_schedule_id \
-             LEFT JOIN classes c ON c.id = cs.class_id \
-             WHERE a.pamong_status = 'approved' AND a.verify_status = 'pending' \
+             LEFT JOIN class_sessions cs ON cs.id = a.class_session_id \
+             LEFT JOIN classes cl ON cl.id = cs.class_id \
+             WHERE a.verify_status = 'pending' \
+                AND CASE WHEN COALESCE(cl.require_pamong, TRUE) \
+                         THEN a.pamong_status = 'approved' ELSE TRUE END \
+                AND ($2::bigint IS NULL OR COALESCE(cs.teacher_id, cl.wali_kelas_id) = $2) \
              ORDER BY a.scanned_at ASC LIMIT $1",
-            &[&limit],
+            &[&limit, &teacher_id],
         )
         .await
         .context("pending_verify")?;
@@ -623,20 +570,84 @@ pub async fn verified_today(pool: &Pool) -> Result<i64> {
     Ok(row.get(0))
 }
 
-/// Verifikasi final (tahap 2). Poin TIDAK diubah (sudah diberikan tahap pamong);
-/// ini hanya menyetel verify_status final. Return true bila ada baris ter-update.
-pub async fn decide_verify(pool: &Pool, att_id: i64, approver: i64, approve: bool) -> Result<bool> {
-    let c = pool.get().await?;
+/// Verifikasi FINAL oleh ustad bertugas (migrasi 33). Guard: ustad sesi =
+/// approver (teacher_id Some; None = dewan/admin). Prereq: 2 langkah → pamong
+/// approved; 1 langkah → langsung. POIN diberikan DI SINI (sekali, saat final)
+/// utk KEDUA mode → hindari dobel dgn trigger (migrasi 32). Return true bila
+/// ada baris ter-update.
+pub async fn decide_verify(
+    pool: &Pool,
+    att_id: i64,
+    approver: i64,
+    approve: bool,
+    teacher_id: Option<i64>,
+) -> Result<bool> {
+    let mut c = pool.get().await?;
+    let tx = c.transaction().await.context("decide_verify tx")?;
     let status = if approve { "approved" } else { "rejected" };
-    let n = c
-        .execute(
-            "UPDATE attendances SET verify_status = $2, verified_by = $3, verified_at = NOW() \
-             WHERE id = $1 AND pamong_status = 'approved' AND verify_status = 'pending'",
-            &[&att_id, &status, &approver],
+    let row = tx
+        .query_opt(
+            "UPDATE attendances a SET verify_status = $2, verified_by = $3, verified_at = NOW() \
+             WHERE a.id = $1 AND a.verify_status = 'pending' \
+                AND CASE WHEN COALESCE( \
+                        (SELECT cl.require_pamong FROM class_sessions cs \
+                            JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = a.class_session_id), TRUE) \
+                     THEN a.pamong_status = 'approved' ELSE TRUE END \
+                AND ($4::bigint IS NULL OR \
+                    (SELECT COALESCE(cs.teacher_id, cl.wali_kelas_id) FROM class_sessions cs \
+                        JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = a.class_session_id) = $4) \
+             RETURNING a.user_id, a.status, a.class_schedule_id",
+            &[&att_id, &status, &approver, &teacher_id],
         )
         .await
-        .context("decide_verify")?;
-    Ok(n > 0)
+        .context("decide_verify update")?;
+
+    let Some(row) = row else {
+        tx.rollback().await.ok();
+        return Ok(false);
+    };
+
+    if approve {
+        let user_id: i64 = row.get(0);
+        let att_status: String = row.get(1);
+        let schedule_id: Option<i64> = row.get(2);
+        let (mut present_p, mut late_p, mut absent_p, mut izin_p) = (None, None, None, None);
+        let mut activity_type = String::new();
+        if let Some(sid) = schedule_id {
+            if let Some(r) = tx
+                .query_opt(
+                    "SELECT present_points, late_points, absent_points, izin_points, \
+                            COALESCE(activity_type, '') FROM class_schedules WHERE id = $1",
+                    &[&sid],
+                )
+                .await
+                .context("decide_verify schedule points")?
+            {
+                present_p = r.get(0);
+                late_p = r.get(1);
+                absent_p = r.get(2);
+                izin_p = r.get(3);
+                activity_type = r.get(4);
+            }
+        }
+        let (delta, note, category) = crate::models::attendance_delta(
+            &att_status, &activity_type, present_p, late_p, absent_p, izin_p,
+        );
+        if delta != 0 {
+            let reason = format!("Kehadiran ({att_status}) — {note}");
+            // users.points diperbarui otomatis oleh trigger (migrasi 32).
+            tx.execute(
+                "INSERT INTO point_logs (user_id, delta, reason, category, given_by) \
+                 VALUES ($1, $2, $3, $4, $5)",
+                &[&user_id, &delta, &reason, &category, &approver],
+            )
+            .await
+            .context("decide_verify point_logs")?;
+        }
+    }
+
+    tx.commit().await.context("decide_verify commit")?;
+    Ok(true)
 }
 
 // ── Auto-absent (job penutup sesi) ───────────────────────────────────────────────
@@ -697,7 +708,7 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
                           AND p.guru_status = 'approved' \
                           AND p.start_date <= s.session_date \
                           AND COALESCE(p.end_date, p.start_date) >= s.session_date) \
-                RETURNING id, user_id \
+                RETURNING id, user_id, class_schedule_id \
              ), \
              lg AS ( \
                 INSERT INTO point_logs (user_id, delta, reason, category) \
@@ -705,20 +716,8 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
                        -COALESCE(sch.absent_points, cat_default_points(COALESCE(sch.activity_type,'other'),'absent'))::int, \
                        'Kehadiran (absent) — otomatis', 'discipline' \
                 FROM ins \
-                JOIN attendances att ON att.id = ins.id \
-                LEFT JOIN class_schedules sch ON sch.id = att.class_schedule_id \
-             ), \
-             agg AS ( \
-                SELECT ins.user_id, \
-                       SUM(COALESCE(sch.absent_points, cat_default_points(COALESCE(sch.activity_type,'other'),'absent')))::int AS total \
-                FROM ins \
-                JOIN attendances att ON att.id = ins.id \
-                LEFT JOIN class_schedules sch ON sch.id = att.class_schedule_id \
-                GROUP BY ins.user_id \
-             ), \
-             upd AS ( \
-                UPDATE users u SET points = points - agg.total \
-                FROM agg WHERE u.id = agg.user_id RETURNING u.id \
+                LEFT JOIN class_schedules sch ON sch.id = ins.class_schedule_id \
+                RETURNING user_id \
              ) \
              SELECT COUNT(*)::bigint FROM ins",
             &[],
@@ -738,14 +737,40 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
 /// outside_schedule/permit/sick netral. `pamong_by` dibiarkan NULL (oleh
 /// sistem, bukan pengguna — pola sama `run_auto_absent`). Return jumlah baris.
 pub async fn run_auto_verify_pamong(pool: &Pool) -> Result<i64> {
+    // Hanya MEMAJUKAN tahap pamong utk kelas 2-langkah (require_pamong) yg
+    // menunggu >1 hari. TANPA poin (poin diberikan di tahap FINAL, migrasi 33).
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE attendances a SET pamong_status = 'approved', pamong_at = NOW() \
+             WHERE a.pamong_status = 'pending' \
+               AND a.scanned_at < NOW() - INTERVAL '1 day' \
+               AND COALESCE( \
+                   (SELECT cl.require_pamong FROM class_sessions cs \
+                       JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = a.class_session_id), TRUE) = TRUE",
+            &[],
+        )
+        .await
+        .context("run_auto_verify_pamong")?;
+    Ok(n as i64)
+}
+
+/// Auto-verifikasi FINAL utk absensi yg menunggu >1 hari (2-langkah: pamong
+/// sudah approved & pamong_at lawas; 1-langkah: scanned_at lawas). POIN diberikan
+/// DI SINI (sekali, sama seperti decide_verify) — migrasi 33. Return jumlah baris.
+pub async fn run_auto_verify_final(pool: &Pool) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
             "WITH upd AS ( \
-                UPDATE attendances a SET pamong_status = 'approved', pamong_at = NOW() \
-                WHERE a.pamong_status = 'pending' \
-                  AND a.scanned_at < NOW() - INTERVAL '1 day' \
-                RETURNING a.id, a.user_id, a.status, a.class_schedule_id \
+                UPDATE attendances a SET verify_status = 'approved', verified_at = NOW() \
+                WHERE a.verify_status = 'pending' \
+                  AND CASE WHEN COALESCE( \
+                          (SELECT cl.require_pamong FROM class_sessions cs \
+                              JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = a.class_session_id), TRUE) \
+                       THEN a.pamong_status = 'approved' AND a.pamong_at < NOW() - INTERVAL '1 day' \
+                       ELSE a.scanned_at < NOW() - INTERVAL '1 day' END \
+                RETURNING a.user_id, a.status, a.class_schedule_id \
              ), \
              pts AS ( \
                 SELECT upd.user_id, upd.status, \
@@ -762,39 +787,15 @@ pub async fn run_auto_verify_pamong(pool: &Pool) -> Result<i64> {
              lg AS ( \
                 INSERT INTO point_logs (user_id, delta, reason, category) \
                 SELECT user_id, delta, \
-                       'Kehadiran (' || status || ') — auto-verifikasi 1 hari', \
+                       'Kehadiran (' || status || ') — verifikasi final otomatis', \
                        CASE WHEN delta < 0 THEN 'discipline' ELSE 'attendance' END \
                 FROM pts WHERE delta <> 0 \
-             ), \
-             agg AS ( \
-                SELECT user_id, SUM(delta)::int AS total FROM pts WHERE delta <> 0 GROUP BY user_id \
-             ), \
-             u AS ( \
-                UPDATE users us SET points = points + agg.total \
-                FROM agg WHERE us.id = agg.user_id RETURNING us.id \
+                RETURNING user_id \
              ) \
              SELECT COUNT(*)::bigint FROM upd",
             &[],
         )
         .await
-        .context("run_auto_verify_pamong")?;
-    Ok(row.get(0))
-}
-
-/// Auto-approve TAHAP 2 (dewan guru — final) untuk absensi yang sudah disetujui
-/// pamong tapi >1 hari menunggu verifikasi final sejak `pamong_at`. TIDAK
-/// mengubah poin (sama seperti `decide_verify` manual — poin sudah diberikan
-/// di tahap pamong). Return jumlah baris.
-pub async fn run_auto_verify_final(pool: &Pool) -> Result<i64> {
-    let c = pool.get().await?;
-    let n = c
-        .execute(
-            "UPDATE attendances SET verify_status = 'approved', verified_at = NOW() \
-             WHERE pamong_status = 'approved' AND verify_status = 'pending' \
-               AND pamong_at < NOW() - INTERVAL '1 day'",
-            &[],
-        )
-        .await
         .context("run_auto_verify_final")?;
-    Ok(n as i64)
+    Ok(row.get(0))
 }

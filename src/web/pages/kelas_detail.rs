@@ -12,9 +12,10 @@ use crate::models::{
     CurriculumItem, KelasDetail, ScheduleItem, ScheduleOption, StudentSearchItem, TeacherOption,
 };
 use crate::web::api::{
-    add_member_action, create_curriculum_action, create_schedule_action, create_session_action,
+    add_members_action, create_curriculum_action, create_schedule_action, create_session_action,
     delete_curriculum_action, delete_schedule_action, kelas_detail, remove_member_action,
-    set_class_staff_action, set_session_libur_action, set_session_teacher_action,
+    set_class_staff_action, set_session_libur_action, set_session_pamong_action,
+    set_session_teacher_action,
     staff_search_students, update_class_action, update_curriculum_action, update_schedule_action,
 };
 use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
@@ -597,8 +598,18 @@ fn AddMemberForm(
     let sched = RwSignal::new(first_sched);
     let q = RwSignal::new(String::new());
     let results = RwSignal::new(Vec::<StudentSearchItem>::new());
+    let selected = RwSignal::new(Vec::<i64>::new());
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
+    let toggle = move |id: i64| {
+        selected.update(|v| {
+            if let Some(pos) = v.iter().position(|&x| x == id) {
+                v.remove(pos);
+            } else {
+                v.push(id);
+            }
+        });
+    };
 
     // Selalu memanggil server (query pendek/kosong → daftar default beberapa
     // santri), agar daftar tampil tanpa harus mengetik.
@@ -618,27 +629,29 @@ fn AddMemberForm(
         }
     });
 
-    let add = move |student_id: i64| {
+    let add_selected = move |_| {
         if busy.get_untracked() {
+            return;
+        }
+        let ids = selected.get_untracked();
+        if ids.is_empty() {
             return;
         }
         busy.set(true);
         msg.set(None);
         let sid = sched.get_untracked();
         leptos::task::spawn_local(async move {
-            match add_member_action(class_id, sid, student_id).await {
-                Ok(_) => {
-                    msg.set(Some((true, "Santri ditambahkan ke kelas.".into())));
+            match add_members_action(class_id, sid, ids).await {
+                Ok(n) => {
+                    msg.set(Some((true, format!("{n} santri ditambahkan ke kelas."))));
+                    selected.set(Vec::new());
                     results.set(Vec::new());
                     q.set(String::new());
                     refetch();
                 }
                 Err(e) => {
                     let m = e.to_string();
-                    msg.set(Some((
-                        false,
-                        m.rsplit(": ").next().unwrap_or(&m).to_string(),
-                    )));
+                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
                 }
             }
             busy.set(false);
@@ -706,32 +719,51 @@ fn AddMemberForm(
                 (!list.is_empty())
                     .then(|| {
                         view! {
+                            <p class="text-[11px] text-on-surface-variant">
+                                "Centang santri (boleh banyak), lalu tekan Tambah."
+                            </p>
                             <div class="space-y-2">
                                 {list
                                     .into_iter()
                                     .map(|s| {
                                         let id = s.id;
                                         let meta = format!("NIS: {} • {}", s.nis, s.class_name);
+                                        let checked = move || selected.get().contains(&id);
                                         view! {
-                                            <div class="flex items-center gap-2 p-2.5 bg-surface-container rounded-lg anim-in">
+                                            <label class="flex items-center gap-3 p-2.5 bg-surface-container rounded-lg anim-in cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    class="w-5 h-5 accent-primary cursor-pointer shrink-0"
+                                                    prop:checked=checked
+                                                    on:change=move |_| toggle(id)
+                                                />
                                                 <div class="flex-1 min-w-0">
                                                     <p class="text-body-sm font-semibold text-on-background truncate">
                                                         {s.name}
                                                     </p>
                                                     <p class="text-[12px] text-on-surface-variant truncate">{meta}</p>
                                                 </div>
-                                                <button
-                                                    class="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-body-sm font-semibold disabled:opacity-60"
-                                                    disabled=move || busy.get()
-                                                    on:click=move |_| add(id)
-                                                >
-                                                    "Tambah"
-                                                </button>
-                                            </div>
+                                            </label>
                                         }
                                     })
                                     .collect_view()}
                             </div>
+                            <button
+                                class="w-full py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-body-sm cursor-pointer press disabled:opacity-60"
+                                prop:disabled=move || busy.get() || selected.get().is_empty()
+                                on:click=add_selected
+                            >
+                                {move || {
+                                    let n = selected.get().len();
+                                    if busy.get() {
+                                        "Menambahkan…".to_string()
+                                    } else if n == 0 {
+                                        "Pilih santri dulu".to_string()
+                                    } else {
+                                        format!("Tambah {n} santri")
+                                    }
+                                }}
+                            </button>
                         }
                     })
             }}
@@ -1714,6 +1746,7 @@ fn SesiTab(
     let sessions = d.sessions.clone();
     let sched_opts = StoredValue::new(d.schedule_options.clone());
     let teacher_opts = StoredValue::new(d.teacher_options.clone());
+    let pamong_opts = StoredValue::new(d.pamong_options.clone());
     let book_opts = StoredValue::new(d.book_options.clone());
 
     view! {
@@ -1746,7 +1779,7 @@ fn SesiTab(
                     <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
                         {sessions
                             .into_iter()
-                            .map(|s| view! { <SesiCard s=s teacher_options=teacher_opts refetch=refetch /> })
+                            .map(|s| view! { <SesiCard s=s teacher_options=teacher_opts pamong_options=pamong_opts refetch=refetch /> })
                             .collect_view()}
                     </div>
                 }
@@ -1760,11 +1793,13 @@ fn SesiTab(
 fn SesiCard(
     s: crate::models::SessionItem,
     teacher_options: StoredValue<Vec<TeacherOption>>,
+    pamong_options: StoredValue<Vec<TeacherOption>>,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
     let sid = s.id;
     let is_libur = s.status_kind == "cancelled";
     let cur_teacher = s.teacher_id.unwrap_or(0);
+    let cur_pamong = s.pamong_id.unwrap_or(0);
     let busy = RwSignal::new(false);
 
     let badge = if is_libur {
@@ -1787,6 +1822,14 @@ fn SesiCard(
         busy.set(true);
         leptos::task::spawn_local(async move {
             let _ = set_session_teacher_action(sid, tid).await;
+            busy.set(false);
+            refetch();
+        });
+    };
+    let set_pamong = move |pid: i64| {
+        busy.set(true);
+        leptos::task::spawn_local(async move {
+            let _ = set_session_pamong_action(sid, pid).await;
             busy.set(false);
             refetch();
         });
@@ -1857,6 +1900,30 @@ fn SesiCard(
                                                 {o.name}
                                             </option>
                                         }
+                                    })
+                                    .collect_view()}
+                            </select>
+                            // ── Pamong bertugas verifikasi (migrasi 33) ──
+                            <label class="mt-2 block text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
+                                "Pamong Bertugas"
+                            </label>
+                            <select
+                                class="w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-60"
+                                disabled=move || busy.get()
+                                on:change=move |ev| set_pamong(
+                                    event_target_value(&ev).parse().unwrap_or(0),
+                                )
+                            >
+                                <option value="0" selected=cur_pamong == 0>
+                                    "— Pakai pamong kelas —"
+                                </option>
+                                {pamong_options
+                                    .get_value()
+                                    .into_iter()
+                                    .map(|o| {
+                                        let val = o.id.to_string();
+                                        let sel = o.id == cur_pamong;
+                                        view! { <option value=val selected=sel>{o.name}</option> }
                                     })
                                     .collect_view()}
                             </select>

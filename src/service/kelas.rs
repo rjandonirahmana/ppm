@@ -347,6 +347,7 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
                 status_kind: status_kind.into(),
                 teacher: r.teacher.unwrap_or_else(|| "-".into()),
                 teacher_id: r.teacher_id,
+                pamong_id: r.pamong_id,
                 category: r.category.filter(|c| !c.is_empty()).unwrap_or_else(|| "-".into()),
             }
         })
@@ -787,6 +788,23 @@ pub async fn add_member(pool: &Pool, class_id: i64, schedule_id: i64, student_id
     Ok(())
 }
 
+/// Tambah BANYAK santri ke kelas sekaligus. Return jumlah BARU ditambahkan.
+pub async fn add_members(
+    pool: &Pool,
+    class_id: i64,
+    schedule_id: i64,
+    student_ids: Vec<i64>,
+) -> Result<i64> {
+    if schedule_id <= 0 {
+        bail!("Pilih jadwal untuk menempatkan santri.");
+    }
+    let ids: Vec<i64> = student_ids.into_iter().filter(|&x| x > 0).collect();
+    if ids.is_empty() {
+        bail!("Pilih minimal satu santri.");
+    }
+    repo::add_members(pool, class_id, schedule_id, &ids).await
+}
+
 pub async fn remove_member(pool: &Pool, class_id: i64, student_id: i64) -> Result<()> {
     if !repo::remove_member(pool, class_id, student_id).await? {
         bail!("Santri tidak ada di kelas ini.");
@@ -816,6 +834,15 @@ pub async fn search_students(pool: &Pool, q: &str) -> Result<Vec<StudentSearchIt
 pub async fn set_session_teacher(pool: &Pool, session_id: i64, teacher_id: i64) -> Result<()> {
     let tid = (teacher_id > 0).then_some(teacher_id);
     if !repo::set_session_teacher(pool, session_id, tid).await? {
+        bail!("Sesi tidak ditemukan.");
+    }
+    Ok(())
+}
+
+/// Set pamong bertugas verifikasi satu sesi (migrasi 33). 0 = kosongkan.
+pub async fn set_session_pamong(pool: &Pool, session_id: i64, pamong_id: i64) -> Result<()> {
+    let pid = (pamong_id > 0).then_some(pamong_id);
+    if !repo::set_session_pamong(pool, session_id, pid).await? {
         bail!("Sesi tidak ditemukan.");
     }
     Ok(())
@@ -855,17 +882,26 @@ pub async fn students_data(pool: &Pool, user: &SessionUser) -> Result<StudentsDa
         .collect();
 
     let (verify_stage, pending_rows, verified_today) = match user.role.as_str() {
+        // Pamong bertugas → tahap 1 (hanya sesi yang ia tugaskan, migrasi 33).
         "supervisor" => {
-            // Pamong hanya lihat kehadiran santri di kelas yang ia ampu (migrasi 30).
             let (p, cnt) = tokio::join!(
                 repo::pending_pamong(pool, Some(user.id), 50),
                 repo::approved_today(pool)
             );
             ("tahap1", p?, cnt?)
         }
+        // Ustad bertugas → tahap FINAL (hanya sesi yang ia ampu).
+        "teacher" => {
+            let (p, cnt) = tokio::join!(
+                repo::pending_verify(pool, Some(user.id), 50),
+                repo::verified_today(pool)
+            );
+            ("tahap2", p?, cnt?)
+        }
+        // Dewan guru/admin → tahap FINAL semua sesi (oversight).
         "dewan_guru" | "admin" => {
             let (p, cnt) =
-                tokio::join!(repo::pending_verify(pool, 50), repo::verified_today(pool));
+                tokio::join!(repo::pending_verify(pool, None, 50), repo::verified_today(pool));
             ("tahap2", p?, cnt?)
         }
         _ => ("none", Vec::new(), 0),
@@ -985,4 +1021,35 @@ pub async fn delete_curriculum(pool: &Pool, id: i64) -> Result<()> {
         bail!("Materi kurikulum tidak ditemukan.");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_activity_type_valid_saja() {
+        assert_eq!(normalize_activity_type("kbm").as_deref(), Some("kbm"));
+        assert_eq!(normalize_activity_type("non_kbm").as_deref(), Some("non_kbm"));
+        assert_eq!(normalize_activity_type("piket").as_deref(), Some("piket"));
+        assert_eq!(normalize_activity_type("apel_kepulangan").as_deref(), Some("apel_kepulangan"));
+        assert_eq!(normalize_activity_type("  kbm  ").as_deref(), Some("kbm"));
+        // Tak valid / kosong / salah huruf → None (legacy).
+        assert_eq!(normalize_activity_type("KBM"), None);
+        assert_eq!(normalize_activity_type(""), None);
+        assert_eq!(normalize_activity_type("ngaji"), None);
+    }
+
+    #[test]
+    fn parse_point_magnitude_batas() {
+        assert_eq!(parse_point_magnitude("", "x").unwrap(), None);
+        assert_eq!(parse_point_magnitude("  ", "x").unwrap(), None);
+        assert_eq!(parse_point_magnitude("0", "x").unwrap(), Some(0));
+        assert_eq!(parse_point_magnitude("10", "x").unwrap(), Some(10));
+        assert_eq!(parse_point_magnitude("100", "x").unwrap(), Some(100));
+        // Di luar 0..=100 atau bukan angka positif → error.
+        assert!(parse_point_magnitude("101", "x").is_err());
+        assert!(parse_point_magnitude("-5", "x").is_err());
+        assert!(parse_point_magnitude("abc", "x").is_err());
+    }
 }

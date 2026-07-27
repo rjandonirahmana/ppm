@@ -246,3 +246,99 @@ pub async fn credit_weekly_rewards(pool: &Pool, offset: i32) -> Result<(i64, i64
     }
     Ok((n, total))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repository::WeeklyCatCount;
+
+    fn cc(atype: &str, hadir: i64, telat: i64, izin: i64, sakit: i64, alfa: i64) -> WeeklyCatCount {
+        WeeklyCatCount {
+            user_id: 1,
+            name: "Santri".into(),
+            nis: Some("2023001".into()),
+            activity_type: atype.into(),
+            hadir,
+            telat,
+            izin,
+            sakit,
+            alfa,
+        }
+    }
+
+    fn points_of(counts: Vec<WeeklyCatCount>) -> i32 {
+        let rows = compute_rewards(counts, &[]);
+        rows.first().map(|r| r.points).unwrap_or(0)
+    }
+
+    #[test]
+    fn reward_kbm_sempurna_dapat_semua() {
+        // hadir tanpa alfa/telat/izin/sakit → No-Alfa(5)+No-Telat(13)+Full(20)=38.
+        assert_eq!(points_of(vec![cc("kbm", 5, 0, 0, 0, 0)]), 38);
+    }
+
+    #[test]
+    fn reward_kbm_ada_telat_hanya_no_alfa() {
+        // 1 telat → No-Alfa(5) saja (No-Telat & Full batal).
+        assert_eq!(points_of(vec![cc("kbm", 4, 1, 0, 0, 0)]), 5);
+    }
+
+    #[test]
+    fn reward_kbm_ada_alfa_hanya_no_telat() {
+        // 1 alfa (tetap hadir≥1) → No-Telat(13) saja.
+        assert_eq!(points_of(vec![cc("kbm", 4, 0, 0, 0, 1)]), 13);
+    }
+
+    #[test]
+    fn reward_ada_izin_tak_dapat_full() {
+        // izin membatalkan Full-Hadir; No-Alfa & No-Telat tetap → 5+13=18.
+        assert_eq!(points_of(vec![cc("kbm", 4, 0, 1, 0, 0)]), 18);
+    }
+
+    #[test]
+    fn reward_tanpa_kehadiran_nol() {
+        // attended (hadir+telat) == 0 → tak berhak reward apa pun.
+        assert_eq!(points_of(vec![cc("kbm", 0, 0, 0, 3, 0)]), 0);
+    }
+
+    #[test]
+    fn reward_kategori_lain_nol() {
+        assert_eq!(points_of(vec![cc("other", 5, 0, 0, 0, 0)]), 0);
+        // Piket sempurna → hanya No-Alfa (2); No-Telat/Full piket = 0.
+        assert_eq!(points_of(vec![cc("piket", 5, 0, 0, 0, 0)]), 2);
+    }
+
+    #[test]
+    fn reward_multi_kategori_dijumlah() {
+        // KBM sempurna (38) + Non-KBM sempurna (3+8+12=23) = 61.
+        let pts = points_of(vec![cc("kbm", 3, 0, 0, 0, 0), cc("non_kbm", 3, 0, 0, 0, 0)]);
+        assert_eq!(pts, 61);
+    }
+
+    #[test]
+    fn reward_credited_flag() {
+        let rows = compute_rewards(vec![cc("kbm", 3, 0, 0, 0, 0)], &[1]);
+        assert!(rows[0].credited);
+        let rows2 = compute_rewards(vec![cc("kbm", 3, 0, 0, 0, 0)], &[999]);
+        assert!(!rows2[0].credited);
+    }
+
+    #[test]
+    fn angkatan_dari_nis() {
+        assert_eq!(angkatan_of("2023001"), "2023");
+        assert_eq!(angkatan_of("2019"), "2019");
+        assert_eq!(angkatan_of("abc123"), "-");
+        assert_eq!(angkatan_of("202"), "-");
+        assert_eq!(angkatan_of(""), "-");
+    }
+
+    #[test]
+    fn week_range_senin_minggu() {
+        let (s0, e0) = week_range(0);
+        assert_eq!(s0.weekday(), chrono::Weekday::Mon);
+        assert_eq!((e0 - s0).num_days(), 6);
+        // Offset 1 = tepat 7 hari sebelum pekan 0.
+        let (s1, _e1) = week_range(1);
+        assert_eq!((s0 - s1).num_days(), 7);
+    }
+}

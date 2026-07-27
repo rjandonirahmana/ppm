@@ -507,6 +507,8 @@ pub async fn adjust_points(
 ) -> Result<()> {
     let mut c = pool.get().await?;
     let tx = c.transaction().await.context("adjust_points tx")?;
+    // users.points diperbarui otomatis oleh trigger trg_point_logs_balance
+    // (migrasi 32) — cukup tulis point_logs.
     tx.execute(
         "INSERT INTO point_logs (user_id, delta, reason, category, given_by) \
          VALUES ($1, $2, $3, 'manual', $4)",
@@ -514,12 +516,6 @@ pub async fn adjust_points(
     )
     .await
     .context("adjust_points insert")?;
-    tx.execute(
-        "UPDATE users SET points = points + $2 WHERE id = $1",
-        &[&user_id, &delta],
-    )
-    .await
-    .context("adjust_points update")?;
     tx.commit().await.context("adjust_points commit")?;
     Ok(())
 }
@@ -933,6 +929,30 @@ pub async fn add_member(
     Ok(n > 0)
 }
 
+/// Tambah BANYAK santri ke kelas (pada jadwal terpilih) sekali jalan. Set-based
+/// via unnest; ON CONFLICT skip yang sudah terdaftar. Return jumlah BARU.
+pub async fn add_members(
+    pool: &Pool,
+    class_id: i64,
+    schedule_id: i64,
+    user_ids: &[i64],
+) -> Result<i64> {
+    if user_ids.is_empty() {
+        return Ok(0);
+    }
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "INSERT INTO class_participants (class_id, class_schedule_id, user_id) \
+             SELECT $1, $2, uid FROM unnest($3::bigint[]) AS uid \
+             ON CONFLICT (class_id, user_id, class_schedule_id) DO NOTHING",
+            &[&class_id, &schedule_id, &user_ids],
+        )
+        .await
+        .context("add_members")?;
+    Ok(n as i64)
+}
+
 /// Opsi pengajar (teacher/dewan_guru/supervisor) untuk dropdown buat sesi.
 pub async fn teacher_options(pool: &Pool) -> Result<Vec<(i64, String)>> {
     let c = pool.get().await?;
@@ -1140,6 +1160,24 @@ pub async fn set_session_teacher(
         )
         .await
         .context("set_session_teacher")?;
+    Ok(n > 0)
+}
+
+/// Set pamong bertugas verifikasi untuk satu sesi (migrasi 33). None = kosongkan
+/// (fallback ke pamong kelas).
+pub async fn set_session_pamong(
+    pool: &Pool,
+    session_id: i64,
+    pamong_id: Option<i64>,
+) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE class_sessions SET pamong_id = $2 WHERE id = $1",
+            &[&session_id, &pamong_id],
+        )
+        .await
+        .context("set_session_pamong")?;
     Ok(n > 0)
 }
 

@@ -144,13 +144,16 @@ pub struct SessionRow {
     pub status: String,
     pub teacher: Option<String>,
     pub teacher_id: Option<i64>,
+    /// Pamong bertugas verifikasi sesi (migrasi 33) — None = pakai pamong kelas.
+    pub pamong_id: Option<i64>,
     /// Kategori kelas (mis. "Pengajian", "Sholat") — menentukan boleh/tidaknya
     /// siaran suara direkam (lihat models::category_allows_recording).
     pub category: Option<String>,
 }
 
 const SESSION_COLS: &str = "SELECT s.id, COALESCE(s.title, cs.title), c.name, s.session_date, \
-     cs.start_time, s.status, t.full_name, s.teacher_id, COALESCE(cs.category, c.category) \
+     cs.start_time, s.status, t.full_name, s.teacher_id, COALESCE(cs.category, c.category), \
+     s.pamong_id \
      FROM class_sessions s \
      JOIN classes c ON c.id = s.class_id \
      LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
@@ -167,6 +170,7 @@ fn row_to_session(r: tokio_postgres::Row) -> SessionRow {
         teacher: r.get(6),
         teacher_id: r.get(7),
         category: r.get(8),
+        pamong_id: r.get(9),
     }
 }
 
@@ -274,6 +278,8 @@ pub struct SessionDetailRow {
     pub recording_path: Option<String>,
     pub recording_size: Option<i64>,
     pub teacher_id: Option<i64>,
+    /// Pamong bertugas verifikasi sesi (migrasi 33) — None = pakai pamong kelas.
+    pub pamong_id: Option<i64>,
     pub category: Option<String>,
     /// Materi buku sesi ini (migrasi 20) — None bila tak ada buku dipilih.
     pub book_id: Option<i64>,
@@ -305,7 +311,7 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
             "SELECT s.id, s.class_id, COALESCE(s.title, cs.title), c.name, s.session_date, \
                     cs.start_time, cs.end_time, s.status, t.full_name, s.recording_path, \
                     s.recording_size, s.teacher_id, COALESCE(cs.category, c.category), \
-                    s.book_id, b.title, s.book_pages \
+                    s.book_id, b.title, s.book_pages, s.pamong_id \
              FROM class_sessions s \
              JOIN classes c ON c.id = s.class_id \
              LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
@@ -333,6 +339,7 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
         book_id: r.get(13),
         book_title: r.get(14),
         book_pages: r.get(15),
+        pamong_id: r.get(16),
     }))
 }
 
@@ -401,6 +408,36 @@ pub async fn mark_manual_present(
         .await
         .context("mark_manual_present")?;
     Ok(n > 0)
+}
+
+/// Tandai BANYAK santri sekaligus pada sesi dgn `status` ('present'|'absent').
+/// Set-based via unnest; ON CONFLICT skip yang sudah tercatat. Masuk antrean
+/// verifikasi normal (pamong/verify 'pending' → poin di tahap final, migrasi 33).
+/// Return jumlah BARU tercatat.
+pub async fn mark_attendance_bulk(
+    pool: &Pool,
+    session_id: i64,
+    student_ids: &[i64],
+    status: &str,
+) -> Result<i64> {
+    if student_ids.is_empty() {
+        return Ok(0);
+    }
+    let note = if status == "absent" { "dialpakan staf" } else { "ditandai staf" };
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "INSERT INTO attendances \
+                (user_id, class_session_id, class_schedule_id, gate_label, status, method, note) \
+             SELECT uid, s.id, s.class_schedule_id, 'manual', $3, 'manual', $4 \
+             FROM class_sessions s CROSS JOIN unnest($2::bigint[]) AS uid \
+             WHERE s.id = $1 \
+             ON CONFLICT (user_id, class_session_id) DO NOTHING",
+            &[&session_id, &student_ids, &status, &note],
+        )
+        .await
+        .context("mark_attendance_bulk")?;
+    Ok(n as i64)
 }
 
 /// Kirim satu pesan chat sesi.

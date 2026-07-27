@@ -84,9 +84,17 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
         else { el.classList.add('is-visible'); if(el.hasAttribute('data-count')) countUp(el); }
       });
   }
+  /* Throttle scan ke SATU kali per frame (rAF): navigasi SPA Leptos memicu
+     BANYAK mutasi DOM beruntun → tanpa throttle, scan() (querySelectorAll
+     seluruh dokumen) jalan berkali-kali = jank saat pindah halaman. */
+  var scanQueued=false;
+  function queueScan(){
+    if(scanQueued) return; scanQueued=true;
+    requestAnimationFrame(function(){ scanQueued=false; scan(); });
+  }
   function start(){
     scan();
-    try{ new MutationObserver(function(){ scan(); })
+    try{ new MutationObserver(queueScan)
       .observe(document.body,{childList:true,subtree:true}); }catch(e){}
     /* Pengaman: tampilkan semua reveal setelah 5 dtk apa pun yang terjadi. */
     setTimeout(function(){
