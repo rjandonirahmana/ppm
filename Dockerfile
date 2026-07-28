@@ -70,18 +70,17 @@ RUN touch src/main.rs src/lib.rs
 # cache id=target → hanya source berubah yang recompile.
 #
 # CATATAN: `hash-files = true` (Cargo.toml) → nama file /pkg ber-hash
-# (`ppm-<hash>_bg.wasm`, `ppm-<hash>.js`, `hash.txt`). Runtime memetakan nama via
-# hash.txt (HydrationScripts/HashedStylesheet di app.rs) — TIDAK ada `ppm_bg.wasm`
-# tetap, jadi jangan menormalkan nama (dulu bikin build gagal: cp ppm.wasm). Cukup
-# pastikan artefak wasm + hash.txt benar-benar terbit.
+# (`ppm.<hash>.wasm`, `ppm.<hash>.js`) + `hash.txt` (di root site, BUKAN /pkg).
+# Runtime memetakan nama via hash.txt (HydrationScripts/HashedStylesheet). JANGAN
+# menormalkan nama & jangan mengasumsikan `*_bg.wasm` atau lokasi hash.txt (dulu
+# dua-duanya bikin build gagal padahal cargo sukses). Sanity check: ada file
+# .wasm apa pun di /pkg.
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=target,target=/app/target \
     cargo leptos build --release 2>&1 \
     && cp /app/target/release/ppm /app/ppm-bin \
     && cp -r /app/target/site /app/site-out \
-    && cd /app/site-out/pkg \
-    && ls *_bg.wasm >/dev/null 2>&1 \
-    && test -f hash.txt
+    && ls /app/site-out/pkg/*.wasm >/dev/null 2>&1
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
