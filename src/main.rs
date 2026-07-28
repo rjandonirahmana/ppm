@@ -257,15 +257,11 @@ async fn main() -> Result<()> {
     let ssr_routes = generate_route_list(App);
 
     // ── Aset statis (/pkg wasm+js+css, /fonts) dgn Cache-Control ─────────────
-    // /pkg: cargo-leptos hash-files=true (Cargo.toml) → nama file wasm/js/css
-    // ber-hash konten (mis. ppm.abcd1234.wasm), beda tiap build. Nama BEDA =
-    // URL BEDA → aman `max-age` panjang + `immutable` (browser tak pernah
-    // perlu revalidate; build baru otomatis dapat URL baru, tak mungkin
-    // collide dgn cache lama). Ini yg bikin navigasi ulang/refresh nol-network
-    // utk aset yg tak berubah.
-    // /fonts: dari `public/` (assets-dir), BUKAN dihash — nama tetap sama
-    // walau isi berubah, jadi TETAP `no-cache, must-revalidate` (aman, hemat
-    // byte lewat 304, tanpa risiko stale — lihat insiden lama di git blame).
+    // /pkg: hash-files DIMATIKAN (Cargo.toml) → nama file TETAP (ppm.js/wasm/css).
+    // Nama sama walau isi berubah → JANGAN immutable (nanti stale setelah deploy).
+    // Pakai `no-cache, must-revalidate`: browser tetap simpan tapi revalidate →
+    // 304 kalau tak berubah (hemat byte), ambil baru setelah build baru.
+    // /fonts: dari `public/` (assets-dir), nama tetap → sama, no-cache/revalidate.
     let site_root = leptos_options.site_root.to_string();
     let static_routes: axum::Router = axum::Router::new()
         .nest_service(
@@ -274,7 +270,7 @@ async fn main() -> Result<()> {
         )
         .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
             axum::http::header::CACHE_CONTROL,
-            axum::http::HeaderValue::from_static("public, max-age=31536000, immutable"),
+            axum::http::HeaderValue::from_static("no-cache, must-revalidate"),
         ))
         .merge(
             axum::Router::new()
@@ -329,6 +325,7 @@ async fn main() -> Result<()> {
             "/api/activity-photos/upload",
             post(ppm::web::activity_photos::upload),
         )
+        .route("/api/guestbook", post(ppm::web::guestbook::checkin))
         .layer(axum::Extension(state.clone()));
 
     // ── Unduh laporan PDF/Excel (biner, di luar server-fn) ───────────────────

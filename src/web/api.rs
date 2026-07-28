@@ -1067,6 +1067,36 @@ pub async fn reorder_activity_photos_action(ids: Vec<i64>) -> Result<(), ServerF
     crate::repository::reorder_activity_photos(&state.pool, &ids).await.map_err(err)
 }
 
+// ── Buku tamu (migrasi 35) — PUBLIK (tanpa login) ─────────────────────────────
+// /tamu: isi data → kode 6-digit (Redis) → ketik di mesin IoT → mesin kirim kode
+// + wajah ke POST /api/guestbook → HP tamu polling status → ✅.
+
+/// Daftar tamu → balas kode spesial 6-digit untuk diketik di mesin.
+#[server(RegisterGuest, "/api-fn")]
+pub async fn register_guest_action(
+    name: String,
+    phone: String,
+    purpose: String,
+) -> Result<String, ServerFnError> {
+    let state = app_state().await?;
+    let mut redis = state.redis.clone();
+    crate::service::guest::register_guest(&mut redis, &name, &phone, &purpose)
+        .await
+        .map_err(err)
+}
+
+/// Polling status check-in tamu. Some = mesin sudah konfirmasi (tampil ✅ + wajah).
+#[server(GuestStatus, "/api-fn")]
+pub async fn guest_status_action(
+    code: String,
+) -> Result<Option<crate::models::GuestCheckin>, ServerFnError> {
+    let state = app_state().await?;
+    let mut redis = state.redis.clone();
+    crate::service::guest::check_status(&mut redis, &code)
+        .await
+        .map_err(err)
+}
+
 /// Halaman Students: daftar santri + antrean verifikasi sesuai peran.
 #[server(GetStudentsData, "/api-fn")]
 pub async fn students_data() -> Result<StudentsData, ServerFnError> {

@@ -28,10 +28,14 @@ assets-dir = "public"
 site-addr = "0.0.0.0:3000"
 reload-port = 3001
 browserquery = "defaults"
-# Nama file /pkg (wasm/js/css) ber-hash per build → aman di-cache browser
-# selamanya (immutable): build baru = nama baru, tak pernah collide dgn cache
-# lama. Lihat main.rs (Cache-Control) & app.rs (HashedStylesheet/HydrationScripts).
-hash-files = true
+# hash-files DIMATIKAN (Jul 2026). Dgn true, Leptos runtime membaca `hash.txt`
+# dari FOLDER BINARI (current_exe().parent()/hash.txt) — cargo-leptos menaruhnya
+# di site-root, jadi tiap deploy (Docker/manual) HARUS menyalin hash.txt ke sebelah
+# binari, kalau tidak → panic "failed to read hash file" tiap request. Footgun
+# berulang. false = nama file /pkg TETAP (ppm.js/wasm/css), tanpa hash.txt.
+# Konsekuensi: cache /pkg TIDAK boleh immutable → main.rs pakai no-cache,
+# must-revalidate (browser 304, ambil baru setelah deploy).
+hash-files = false
 bin-features = ["ssr"]
 lib-features = ["hydrate"]
 lib-profile-release = "wasm-release"

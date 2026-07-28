@@ -10,3 +10,11 @@ pub struct ActivityPhoto {
     pub caption: String,
     pub sort_order: i32,
 }
+
+/// Status check-in tamu (buku tamu, migrasi 35) — dipolling halaman /tamu untuk
+/// menampilkan ✅ setelah mesin IoT mengonfirmasi kode + wajah.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GuestCheckin {
+    pub name: String,
+    pub face_url: String,
+}

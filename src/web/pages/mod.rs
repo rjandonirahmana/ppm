@@ -31,6 +31,7 @@ mod sesi_live;
 mod setelan;
 mod staf;
 mod students;
+mod tamu;
 mod verifikasi_pamong;
 mod verifikasi_tahap2;
 
@@ -65,5 +66,6 @@ pub use sesi_live::SesiLivePage;
 pub use setelan::SetelanPage;
 pub use students::StudentsPage;
 pub use staf::StafDashboardPage;
+pub use tamu::TamuPage;
 pub use verifikasi_pamong::VerifikasiPamongPage;
 pub use verifikasi_tahap2::VerifikasiTahap2Page;

@@ -10,6 +10,7 @@ pub mod dashboard;
 pub mod export;
 pub mod fmt;
 pub mod gate;
+pub mod guest;
 pub mod hafalan;
 pub mod kelas;
 pub mod laporan;
