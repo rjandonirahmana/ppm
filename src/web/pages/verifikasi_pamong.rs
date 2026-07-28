@@ -55,6 +55,14 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                 </header>
 
                 <div class="px-5 pt-5 space-y-5 stagger">
+                    // Pintasan Rekap Mingguan (pamong juga boleh — server izinkan).
+                    <a
+                        href="/rekap-mingguan"
+                        class="ppm-card p-3 flex items-center gap-2 press md:max-w-lg"
+                    >
+                        <span class="material-symbols-outlined text-primary">"summarize"</span>
+                        <span class="text-body-sm font-semibold text-on-background">"Rekap Mingguan"</span>
+                    </a>
                     <Suspense fallback=|| {
                         view! {
                             <div class="animate-pulse space-y-3">

@@ -79,8 +79,9 @@ async fn finalize(state: &Arc<AppState>, session_id: i64) -> Result<()> {
     let d = crate::repository::session_detail(&state.pool, session_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("sesi tidak ditemukan"))?;
+    // Prefix `ppm/` DIBUANG: bucket sudah bernama "ppm" → dulu jadi `/ppm/ppm/...`.
     let key = format!(
-        "ppm/{}/{}/{}-sesi-{}.webm",
+        "recordings/{}/{}/{}-sesi-{}.webm",
         slug(&d.class_name),
         slug(d.title.as_deref().unwrap_or("sesi")),
         d.session_date, // YYYY-MM-DD

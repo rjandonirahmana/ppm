@@ -18,7 +18,11 @@ pub fn MobileHeader(
 ) -> impl IntoView {
     let session = use_context::<Resource<Option<SessionUser>>>();
     view! {
-        <header class="sticky top-0 md:relative z-20 bg-surface/90 md:bg-transparent backdrop-blur md:backdrop-blur-none border-b border-outline-variant/50 md:border-0 px-5 md:px-0 py-4 md:pt-2 md:pb-5 flex items-center gap-3">
+        // z-40 (bukan z-20): `backdrop-blur` bikin stacking-context baru, jadi
+        // popover NotifBell (z-40 internal) ikut "terkurung" di level header.
+        // Header harus di atas bottom-nav (z-20), FAB (z-20), sidebar (z-30) agar
+        // popover notif tak tertutup ikon/elemen lain. Sheet modal (z-50) tetap menang.
+        <header class="sticky top-0 md:relative z-40 bg-surface/90 md:bg-transparent backdrop-blur md:backdrop-blur-none border-b border-outline-variant/50 md:border-0 px-5 md:px-0 py-4 md:pt-2 md:pb-5 flex items-center gap-3">
             {back_href
                 .map(|href| {
                     view! {
@@ -145,6 +149,7 @@ fn nav_visible(path: &str) -> bool {
         "/dewan-guru", "/poin", "/poin-dewan", "/verifikasi-pamong",
         "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua", "/kontrol-pengguna",
         "/akademik", "/kalender", "/izin-staf", "/materi", "/rekap-mingguan", "/setelan",
+        "/galeri",
     ];
     PREFIXES
         .iter()

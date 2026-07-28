@@ -67,16 +67,21 @@ COPY tailwind.config.js ./tailwind.config.js
 RUN touch src/main.rs src/lib.rs
 
 # cargo leptos build → WASM (hydrate) + binari SSR sekaligus. Artefak dep di
-# cache id=target → hanya source berubah yang recompile. Normalisasi nama wasm
-# (_bg suffix) agar loader JS konsisten lintas versi cargo-leptos.
+# cache id=target → hanya source berubah yang recompile.
+#
+# CATATAN: `hash-files = true` (Cargo.toml) → nama file /pkg ber-hash
+# (`ppm-<hash>_bg.wasm`, `ppm-<hash>.js`, `hash.txt`). Runtime memetakan nama via
+# hash.txt (HydrationScripts/HashedStylesheet di app.rs) — TIDAK ada `ppm_bg.wasm`
+# tetap, jadi jangan menormalkan nama (dulu bikin build gagal: cp ppm.wasm). Cukup
+# pastikan artefak wasm + hash.txt benar-benar terbit.
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=target,target=/app/target \
     cargo leptos build --release 2>&1 \
     && cp /app/target/release/ppm /app/ppm-bin \
     && cp -r /app/target/site /app/site-out \
     && cd /app/site-out/pkg \
-    && ([ -f ppm_bg.wasm ] || cp ppm.wasm ppm_bg.wasm) \
-    && test -f ppm_bg.wasm
+    && ls *_bg.wasm >/dev/null 2>&1 \
+    && test -f hash.txt
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime

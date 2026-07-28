@@ -300,10 +300,14 @@ fn StudentList(
                                     <p class="text-body-lg font-bold text-primary">{s.points}</p>
                                     <p class="text-[10px] text-on-surface-variant">"Poin"</p>
                                 </div>
-                                <span class="material-symbols-outlined text-on-surface-variant shrink-0 text-[20px]">
-                                    {move || {
-                                        if expanded.get() == Some(sid) { "expand_less" } else { "expand_more" }
-                                    }}
+                                // `expand_less` TAK ada di subset font (jadi teks
+                                // mentah) → pakai `expand_more` (ada) lalu rotasi
+                                // 180° saat terbuka = panah-atas.
+                                <span
+                                    class="material-symbols-outlined text-on-surface-variant shrink-0 text-[20px] transition-transform"
+                                    class:rotate-180=move || expanded.get() == Some(sid)
+                                >
+                                    "expand_more"
                                 </span>
                             </div>
                             {move || {

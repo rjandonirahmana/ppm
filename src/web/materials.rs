@@ -106,7 +106,8 @@ pub async fn upload(
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '-' })
         .collect();
-    let key = format!("ppm/materials/{}-{}.{}", slug, chrono::Utc::now().timestamp(), ext);
+    // Prefix `ppm/` dibuang: bucket sudah "ppm" (dulu jadi `/ppm/ppm/materials/...`).
+    let key = format!("materials/{}-{}.{}", slug, chrono::Utc::now().timestamp(), ext);
 
     let size = bytes.len() as i64;
     let url = match storage.upload_bytes(bytes, &key, content_type).await {

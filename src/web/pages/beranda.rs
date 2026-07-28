@@ -14,6 +14,12 @@ pub fn BerandaPage() -> impl IntoView {
     // Sesi (bila ada) → tombol portal langsung ke dashboard peran, tanpa login.
     // Pakai CONTEXT sesi global dari App (audit poin 4) — jangan fetch sendiri.
     let session = use_context::<Resource<Option<SessionUser>>>();
+    // Foto kegiatan (galeri, migrasi 34) — publik. Bila kosong, jatuh ke
+    // placeholder ikon (FotoCard) agar tampilan tetap terisi.
+    let gallery = Resource::new(
+        || (),
+        |_| async move { crate::web::api::activity_photos_data().await },
+    );
 
     view! {
         <Title text="PPM Al-Faqih Mandiri — Pondok Pesantren Mahasiswa Depok" />
@@ -149,12 +155,49 @@ pub fn BerandaPage() -> impl IntoView {
                                 .collect_view()}
                         </ul>
                     </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <FotoCard icon="menu_book" label="Kajian Kitab" tall=true />
-                        <FotoCard icon="mosque" label="Sholat Berjamaah" tall=false />
-                        <FotoCard icon="diversity_3" label="Kebersamaan" tall=false />
-                        <FotoCard icon="volunteer_activism" label="Kontribusi Dakwah" tall=true />
-                    </div>
+                    <Suspense fallback=|| view! {
+                        <div class="grid grid-cols-2 gap-4">
+                            <FotoCard icon="menu_book" label="Kajian Kitab" tall=true />
+                            <FotoCard icon="mosque" label="Sholat Berjamaah" tall=false />
+                            <FotoCard icon="diversity_3" label="Kebersamaan" tall=false />
+                            <FotoCard icon="volunteer_activism" label="Kontribusi Dakwah" tall=true />
+                        </div>
+                    }>
+                        {move || {
+                            let photos = gallery.get().and_then(|r| r.ok()).unwrap_or_default();
+                            if photos.is_empty() {
+                                view! {
+                                    <div class="grid grid-cols-2 gap-4">
+                                        <FotoCard icon="menu_book" label="Kajian Kitab" tall=true />
+                                        <FotoCard icon="mosque" label="Sholat Berjamaah" tall=false />
+                                        <FotoCard icon="diversity_3" label="Kebersamaan" tall=false />
+                                        <FotoCard icon="volunteer_activism" label="Kontribusi Dakwah" tall=true />
+                                    </div>
+                                }
+                                    .into_any()
+                            } else {
+                                view! {
+                                    <div class="grid grid-cols-2 gap-4">
+                                        {photos
+                                            .into_iter()
+                                            .take(6)
+                                            .map(|p| view! {
+                                                <div class="rounded-2xl overflow-hidden aspect-[3/4] bg-surface-container">
+                                                    <img
+                                                        src=p.url
+                                                        alt=p.caption
+                                                        loading="lazy"
+                                                        class="w-full h-full object-cover"
+                                                    />
+                                                </div>
+                                            })
+                                            .collect_view()}
+                                    </div>
+                                }
+                                    .into_any()
+                            }
+                        }}
+                    </Suspense>
                 </div>
             </section>
 

@@ -1,0 +1,118 @@
+//! web/activity_photos.rs — Upload foto kegiatan ke galeri (migrasi 34).
+//! Handler axum murni (multipart, di luar server-fn — sama alasan materials.rs).
+//! Auth cookie manual; hanya admin/dewan_guru. Balas JSON `{ "id", "url" }`.
+
+use std::sync::Arc;
+
+use axum::extract::Multipart;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::{Extension, Json};
+use serde_json::json;
+
+use crate::state::AppState;
+
+fn is_manager(role: &str) -> bool {
+    matches!(role, "admin" | "dewan_guru")
+}
+
+/// Ekstensi/mime gambar yang diterima galeri.
+fn classify_image(filename: &str) -> Option<&'static str> {
+    let ext = filename.rsplit('.').next()?.to_lowercase();
+    Some(match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        _ => return None,
+    })
+}
+
+/// POST /api/activity-photos/upload — multipart: `file` (wajib), `caption` (opsional).
+pub async fn upload(
+    Extension(state): Extension<Arc<AppState>>,
+    headers: HeaderMap,
+    mut form: Multipart,
+) -> Response {
+    let claims = match crate::web::live_audio::auth(&state, &headers) {
+        Ok(c) => c,
+        Err(s) => return s.into_response(),
+    };
+    if !is_manager(&claims.role) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
+    let Some(storage) = state.storage.clone() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Penyimpanan file (RustFS) belum dikonfigurasi di server.",
+        )
+            .into_response();
+    };
+
+    let mut caption = String::new();
+    let mut file_bytes: Option<Vec<u8>> = None;
+    let mut filename = String::new();
+
+    loop {
+        let field = match form.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+        };
+        match field.name().unwrap_or_default() {
+            "caption" => caption = field.text().await.unwrap_or_default(),
+            "file" => {
+                filename = field.file_name().unwrap_or_default().to_string();
+                match field.bytes().await {
+                    Ok(b) => file_bytes = Some(b.to_vec()),
+                    Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let Some(bytes) = file_bytes else {
+        return (StatusCode::BAD_REQUEST, "File wajib diunggah.").into_response();
+    };
+    if bytes.is_empty() || bytes.len() > 10_000_000 {
+        return (StatusCode::BAD_REQUEST, "Ukuran gambar tidak valid (maks 10MB).")
+            .into_response();
+    }
+    let Some(content_type) = classify_image(&filename) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Jenis file tidak didukung (gunakan jpg/png/webp/gif).",
+        )
+            .into_response();
+    };
+
+    let ext = filename.rsplit('.').next().unwrap_or("bin");
+    // Prefix `ppm/` dibuang: bucket sudah "ppm" (dulu jadi `/ppm/ppm/activity/...`).
+    // Tanpa dep uuid di ppm: nanos + id pengunggah cukup unik untuk galeri.
+    let key = format!(
+        "activity/{}-{}.{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+        claims.user_id,
+        ext
+    );
+
+    let url = match storage.upload_bytes(bytes, &key, content_type).await {
+        Ok(u) => u,
+        Err(e) => {
+            crate::service::telegram::report_error(502, "Activity photo upload", e.to_string());
+            return (StatusCode::BAD_GATEWAY, format!("Upload gagal: {e}")).into_response();
+        }
+    };
+
+    let caption = caption.trim();
+    match crate::repository::insert_activity_photo(&state.pool, &url, caption, claims.user_id).await
+    {
+        Ok(id) => (StatusCode::OK, Json(json!({ "id": id, "url": url }))).into_response(),
+        Err(e) => {
+            crate::service::telegram::report_error(500, "Activity photo insert", e.to_string());
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        }
+    }
+}

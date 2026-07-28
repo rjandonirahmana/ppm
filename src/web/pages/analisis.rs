@@ -104,6 +104,21 @@ fn AnalisisBody(
             <p class="text-[11px] text-on-surface-variant/70 mt-0.5">{scope_note}" • 30 hari terakhir"</p>
         </div>
 
+        // ── Pintasan: Rekap (guru+dewan), Galeri (dewan) ────────────────────
+        <div class="grid grid-cols-2 gap-3">
+            <a href="/rekap-mingguan" class="ppm-card p-3 flex items-center gap-2 press">
+                <span class="material-symbols-outlined text-primary">"summarize"</span>
+                <span class="text-body-sm font-semibold text-on-background">"Rekap Mingguan"</span>
+            </a>
+            {is_dewan
+                .then(|| view! {
+                    <a href="/galeri" class="ppm-card p-3 flex items-center gap-2 press">
+                        <span class="material-symbols-outlined text-primary">"grid_on"</span>
+                        <span class="text-body-sm font-semibold text-on-background">"Galeri Foto"</span>
+                    </a>
+                })}
+        </div>
+
         // Desktop: ringkasan harian (hero+progres+sesi hari ini) kolom utama
         // kiri, analitik (tren+ranking+kinerja pengajar) jadi sidebar kanan —
         // konten sama, disusun 2 kolom di layar lebar (pola dashboard_santri).

@@ -325,6 +325,10 @@ async fn main() -> Result<()> {
     // ── Upload file Materials Library (multipart, di luar server-fn) ─────────
     let materials_routes: axum::Router = axum::Router::new()
         .route("/api/materials/upload", post(ppm::web::materials::upload))
+        .route(
+            "/api/activity-photos/upload",
+            post(ppm::web::activity_photos::upload),
+        )
         .layer(axum::Extension(state.clone()));
 
     // ── Unduh laporan PDF/Excel (biner, di luar server-fn) ───────────────────

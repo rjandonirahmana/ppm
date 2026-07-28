@@ -1036,6 +1036,37 @@ pub async fn delete_material_action(id: i64) -> Result<(), ServerFnError> {
     crate::service::materials::delete_material(&state.pool, id).await.map_err(err)
 }
 
+// ── Galeri Foto Kegiatan (migrasi 34) ─────────────────────────────────────────
+// Tampil publik di beranda; kelola (hapus/urutkan) hanya admin/dewan_guru.
+// Upload file lewat POST /api/activity-photos/upload (multipart, di luar sini).
+
+#[cfg(feature = "ssr")]
+const GALLERY_MANAGE_ROLES: &[&str] = &["admin", "dewan_guru"];
+
+/// Daftar foto kegiatan terurut — PUBLIK (dipakai beranda + halaman kelola).
+#[server(GetActivityPhotos, "/api-fn")]
+pub async fn activity_photos_data() -> Result<Vec<crate::models::ActivityPhoto>, ServerFnError> {
+    let state = app_state().await?;
+    crate::repository::list_activity_photos(&state.pool).await.map_err(err)
+}
+
+/// Hapus satu foto kegiatan (admin/dewan_guru).
+#[server(DeleteActivityPhoto, "/api-fn")]
+pub async fn delete_activity_photo_action(id: i64) -> Result<(), ServerFnError> {
+    require_roles(GALLERY_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    crate::repository::delete_activity_photo(&state.pool, id).await.map(|_| ()).map_err(err)
+}
+
+/// Simpan urutan baru hasil drag-and-drop (admin/dewan_guru). `ids` = urutan
+/// tampil dari kiri-atas ke kanan-bawah.
+#[server(ReorderActivityPhotos, "/api-fn")]
+pub async fn reorder_activity_photos_action(ids: Vec<i64>) -> Result<(), ServerFnError> {
+    require_roles(GALLERY_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    crate::repository::reorder_activity_photos(&state.pool, &ids).await.map_err(err)
+}
+
 /// Halaman Students: daftar santri + antrean verifikasi sesuai peran.
 #[server(GetStudentsData, "/api-fn")]
 pub async fn students_data() -> Result<StudentsData, ServerFnError> {
