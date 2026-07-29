@@ -133,6 +133,19 @@ pub async fn forgot_password_action(phone: String) -> Result<(), ServerFnError> 
         .map_err(err)
 }
 
+/// Ganti kata sandi (user yang sedang login): verifikasi sandi lama → set baru.
+#[server(ChangePassword, "/api-fn")]
+pub async fn change_password_action(
+    old_password: String,
+    new_password: String,
+) -> Result<(), ServerFnError> {
+    let sess = require_session().await?;
+    let state = app_state().await?;
+    crate::service::auth::change_password(&state.pool, sess.id, &old_password, &new_password)
+        .await
+        .map_err(err)
+}
+
 /// Sesi saat ini (None bila belum login). Direkonstruksi murni dari claims
 /// JWT — zero query DB (pola sama e-ticketing get_session).
 ///

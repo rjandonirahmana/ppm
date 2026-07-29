@@ -92,6 +92,29 @@ pub async fn forgot_password(
     Ok(())
 }
 
+/// Ganti kata sandi user yang sedang login: cocokkan sandi LAMA (bcrypt verify),
+/// bila cocok simpan sandi BARU (bcrypt hash). bcrypt di `spawn_blocking`.
+pub async fn change_password(pool: &Pool, user_id: i64, old: &str, new: &str) -> Result<()> {
+    if new.chars().count() < 6 {
+        bail!("Kata sandi baru minimal 6 karakter.");
+    }
+    if new == old {
+        bail!("Kata sandi baru harus berbeda dari yang lama.");
+    }
+    let Some(hash) = repo::get_password_hash(pool, user_id).await? else {
+        bail!("Akun tidak ditemukan.");
+    };
+    let old_s = old.to_string();
+    let ok = tokio::task::spawn_blocking(move || bcrypt::verify(&old_s, &hash)).await??;
+    if !ok {
+        bail!("Kata sandi lama salah.");
+    }
+    let new_s = new.to_string();
+    let new_hash = tokio::task::spawn_blocking(move || bcrypt::hash(&new_s, 10)).await??;
+    repo::set_password_hash(pool, user_id, &new_hash).await?;
+    Ok(())
+}
+
 /// Bootstrap: bila tabel users KOSONG, buat admin awal
 /// (username `admin`, password dari env ADMIN_PASSWORD, default "admin123").
 /// Tidak menyentuh apa pun bila sudah ada data (aman utk DB yang sedang diisi).

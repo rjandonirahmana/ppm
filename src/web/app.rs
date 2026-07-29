@@ -190,6 +190,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/sesi/:id") view=SesiDetailPage />
                 <Route path=path!("/sesi/:id/live") view=SesiLivePage />
                 <Route path=path!("/profil") view=ProfilPage />
+                <Route path=path!("/ganti-sandi") view=GantiSandiPage />
                 <Route path=path!("/laporan") view=LaporanPage />
                 <Route path=path!("/akademik") view=AkademikSantriPage />
                 <Route path=path!("/kalender") view=KalenderPage />

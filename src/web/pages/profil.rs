@@ -239,11 +239,9 @@ pub fn ProfilPage() -> impl IntoView {
                                 <h2 class="text-body-lg font-bold text-on-background">"Pengaturan Akun"</h2>
                             </div>
                             <div class="space-y-1 md:grid md:grid-cols-2 md:gap-x-4 md:space-y-0">
-                                <SettingRow icon="lock" label="Ganti Kata Sandi" />
-                                <SettingRow icon="language" label="Bahasa Aplikasi" />
-                                <SettingRow icon="shield" label="Privasi & Keamanan" />
-                                <SettingRow icon="info" label="Tentang Aplikasi" />
-                                <SettingRow icon="help" label="Bantuan & Dukungan" />
+                                <SettingLink icon="lock" label="Ganti Kata Sandi" href="/ganti-sandi" />
+                                // Placeholder mockup lain (Bahasa/Privasi/Tentang/Bantuan) DIHAPUS
+                                // — belum berfungsi, bikin klik-nihil saat demo.
 
                                 // Logout ASLI: hapus cookie sesi → /login.
                                 <button
@@ -370,10 +368,11 @@ fn ContactRow(icon: &'static str, label: &'static str, value: String) -> impl In
     }
 }
 
+/// Link setelan fungsional (ikon + label → halaman tujuan).
 #[component]
-fn SettingRow(icon: &'static str, label: &'static str) -> impl IntoView {
+fn SettingLink(icon: &'static str, label: &'static str, href: &'static str) -> impl IntoView {
     view! {
-        <a href="#" class="flex items-center gap-4 py-3.5 px-2 -mx-2 rounded-xl text-on-background hover:bg-surface-container transition-colors press">
+        <a href=href class="flex items-center gap-4 py-3.5 px-2 -mx-2 rounded-xl text-on-background hover:bg-surface-container transition-colors press">
             <span class="w-11 h-11 rounded-full bg-secondary-container flex items-center justify-center">
                 <span class="material-symbols-outlined text-primary">{icon}</span>
             </span>

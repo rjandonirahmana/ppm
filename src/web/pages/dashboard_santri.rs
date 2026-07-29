@@ -204,7 +204,7 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
                     <h2 class="text-headline-sm text-on-background leading-tight">
                         "Jadwal Kelas Mendatang"
                     </h2>
-                    <a href="#" class="text-label-md text-primary font-bold text-right shrink-0">
+                    <a href="/kalender" class="text-label-md text-primary font-bold text-right shrink-0">
                         "Lihat Semua"<br/>"Kalender"
                     </a>
                 </div>

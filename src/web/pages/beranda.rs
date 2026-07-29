@@ -47,9 +47,10 @@ pub fn BerandaPage() -> impl IntoView {
                     </div>
                     <div class="flex items-center gap-2">
                     // Tombol Buku Tamu (publik) — tamu isi data & dapat kode.
+                    // Tampil di SEMUA ukuran, ikon + teks (termasuk mobile).
                     <a
                         href="/tamu"
-                        class="hidden sm:flex items-center gap-2 px-4 py-2.5 border border-outline-variant text-on-surface rounded-xl text-body-sm font-semibold hover:border-primary hover:text-primary transition-colors"
+                        class="flex items-center gap-2 px-3 sm:px-4 py-2.5 border border-outline-variant text-on-surface rounded-xl text-body-sm font-semibold hover:border-primary hover:text-primary transition-colors shrink-0 whitespace-nowrap"
                     >
                         <span class="material-symbols-outlined text-lg">"how_to_reg"</span>
                         "Buku Tamu"

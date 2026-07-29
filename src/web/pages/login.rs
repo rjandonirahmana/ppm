@@ -242,22 +242,7 @@ pub fn LoginPage() -> impl IntoView {
                             </button>
                         </form>
 
-                        <div class="relative my-10 flex items-center">
-                            <div class="flex-grow border-t border-outline-variant"></div>
-                            <span class="flex-shrink mx-4 text-label-md text-outline">"Atau masuk dengan"</span>
-                            <div class="flex-grow border-t border-outline-variant"></div>
-                        </div>
-
-                        <div class="grid grid-cols-2 gap-4">
-                            <button class="flex items-center justify-center gap-3 py-3.5 px-4 border border-outline-variant rounded-xl text-label-md text-on-surface hover:bg-surface-container-low hover:border-primary/30 transition-all active:scale-95" type="button">
-                                <span class="material-symbols-outlined text-xl text-primary">"g_translate"</span>
-                                "Google"
-                            </button>
-                            <button class="flex items-center justify-center gap-3 py-3.5 px-4 border border-outline-variant rounded-xl text-label-md text-on-surface hover:bg-surface-container-low hover:border-primary/30 transition-all active:scale-95" type="button">
-                                <span class="material-symbols-outlined text-xl text-primary">"key"</span>
-                                "SSO"
-                            </button>
-                        </div>
+                        // (Login sosial Google/SSO placeholder DIHAPUS — belum berfungsi.)
 
                         <footer class="mt-12 text-center">
                             <p class="text-body-sm text-on-surface-variant">
@@ -269,11 +254,6 @@ pub fn LoginPage() -> impl IntoView {
                                     <span class="material-symbols-outlined text-lg">"home"</span>
                                     "Kembali ke Beranda"
                                 </a>
-                            </div>
-                            <div class="mt-6 flex justify-center gap-8 opacity-50">
-                                <a class="text-label-md hover:text-primary transition-colors" href="#">"Bantuan"</a>
-                                <a class="text-label-md hover:text-primary transition-colors" href="#">"Privasi"</a>
-                                <a class="text-label-md hover:text-primary transition-colors" href="#">"Syarat"</a>
                             </div>
                         </footer>
                     </div>

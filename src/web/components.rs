@@ -148,7 +148,7 @@ pub struct NavDef {
 /// /halaqah*, /rekaman, /koneksi-ortu) tak ada nav.
 fn nav_visible(path: &str) -> bool {
     const PREFIXES: &[&str] = &[
-        "/santri", "/izin", "/riwayat", "/sesi", "/profil", "/laporan", "/staf", "/guru",
+        "/santri", "/izin", "/riwayat", "/sesi", "/profil", "/ganti-sandi", "/laporan", "/staf", "/guru",
         "/dewan-guru", "/poin", "/poin-dewan", "/verifikasi-pamong",
         "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua", "/kontrol-pengguna",
         "/akademik", "/kalender", "/izin-staf", "/materi", "/rekap-mingguan", "/setelan",

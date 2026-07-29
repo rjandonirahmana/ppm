@@ -300,6 +300,16 @@ pub async fn find_by_phone(pool: &Pool, phone: &str) -> Result<Option<i64>> {
     Ok(row.map(|r| r.get(0)))
 }
 
+/// Ambil hash password user (untuk verifikasi sandi lama saat ganti sandi).
+pub async fn get_password_hash(pool: &Pool, user_id: i64) -> Result<Option<String>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt("SELECT password_hash FROM users WHERE id = $1", &[&user_id])
+        .await
+        .context("get_password_hash")?;
+    Ok(row.map(|r| r.get(0)))
+}
+
 /// Ganti password (forgot-password via WA). Return true bila ada baris terubah.
 pub async fn set_password_hash(pool: &Pool, user_id: i64, hash: &str) -> Result<bool> {
     let c = pool.get().await?;
