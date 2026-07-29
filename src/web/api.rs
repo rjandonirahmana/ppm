@@ -86,7 +86,8 @@ mod ssr_helpers {
     /// Sesi wajib + peran harus salah satu dari `roles`.
     pub async fn require_roles(roles: &[&str]) -> Result<SessionUser, ServerFnError> {
         let s = require_session().await?;
-        if roles.contains(&s.role.as_str()) {
+        // ketua=admin, santri_finance=santri (lihat models::role_satisfies).
+        if crate::models::role_satisfies(&s.role, roles) {
             Ok(s)
         } else {
             Err(ServerFnError::new("forbidden"))
@@ -120,6 +121,16 @@ pub async fn login_action(login: String, password: String) -> Result<String, Ser
         .map_err(err)?;
     set_auth_cookie(&ok.token);
     Ok(ok.redirect)
+}
+
+/// Lupa password: kirim password baru via WhatsApp ke nomor HP. Anti-enumerasi —
+/// SELALU sukses (tak bocorkan apakah nomor terdaftar).
+#[server(ForgotPassword, "/api-fn")]
+pub async fn forgot_password_action(phone: String) -> Result<(), ServerFnError> {
+    let state = app_state().await?;
+    crate::service::auth::forgot_password(&state.pool, &state.http, &state.waha, &phone)
+        .await
+        .map_err(err)
 }
 
 /// Sesi saat ini (None bila belum login). Direkonstruksi murni dari claims
@@ -238,7 +249,7 @@ pub async fn verify_register_action(
 /// Data dashboard santri (butuh sesi santri; admin boleh utk inspeksi).
 #[server(GetSantriHome, "/api-fn")]
 pub async fn santri_home() -> Result<SantriHome, ServerFnError> {
-    let sess = require_roles(&["santri", "admin"]).await?;
+    let sess = require_roles(&["santri", "santri_finance", "admin"]).await?;
     let state = app_state().await?;
     crate::service::dashboard::santri_home(&state.pool, sess.id)
         .await
@@ -248,7 +259,7 @@ pub async fn santri_home() -> Result<SantriHome, ServerFnError> {
 /// Riwayat kehadiran lengkap santri.
 #[server(GetRiwayat, "/api-fn")]
 pub async fn riwayat_data() -> Result<RiwayatData, ServerFnError> {
-    let sess = require_roles(&["santri", "admin"]).await?;
+    let sess = require_roles(&["santri", "santri_finance", "admin"]).await?;
     let state = app_state().await?;
     crate::service::santri::riwayat(&state.pool, sess.id)
         .await
@@ -258,7 +269,7 @@ pub async fn riwayat_data() -> Result<RiwayatData, ServerFnError> {
 /// Data halaman Ajukan Perizinan.
 #[server(GetIzinData, "/api-fn")]
 pub async fn izin_data() -> Result<IzinData, ServerFnError> {
-    let sess = require_roles(&["santri", "admin"]).await?;
+    let sess = require_roles(&["santri", "santri_finance", "admin"]).await?;
     let state = app_state().await?;
     crate::service::santri::izin_data(&state.pool, sess.id)
         .await
@@ -273,30 +284,35 @@ pub async fn submit_permit_action(
     end: String,
     reason: String,
 ) -> Result<(), ServerFnError> {
-    let sess = require_roles(&["santri", "admin"]).await?;
+    let sess = require_roles(&["santri", "santri_finance", "admin"]).await?;
     let state = app_state().await?;
     crate::service::santri::submit_permit(
         &state.pool, sess.id, sess.id, &kind, &start, &end, &reason,
     )
     .await
-    .map_err(err)
+    .map_err(err)?;
+    // Beri tahu pamong (jika 2 langkah) & wali kelas — pemohon = santri sendiri.
+    crate::service::permits::notify_permit(&state.http, &state.waha, &state.pool, sess.id, false)
+        .await;
+    Ok(())
 }
 
 /// Antrean izin sisi staf — /izin-staf. Antrean menyesuaikan peran (pamong →
-/// tahap 1; guru/dewan guru/admin → keputusan final).
+/// tahap 1; wali kelas → keputusan final). Dewan guru TIDAK terlibat izin santri
+/// (cukup pamong bila 2 tahap + wali kelas); admin tetap sbg superuser.
 #[server(GetPermitQueue, "/api-fn")]
 pub async fn permit_queue_data() -> Result<PermitQueueData, ServerFnError> {
-    let sess = require_roles(&["supervisor", "teacher", "dewan_guru", "admin"]).await?;
+    let sess = require_roles(&["supervisor", "dewan_guru", "admin"]).await?;
     let state = app_state().await?;
     crate::service::permits::permit_queue(&state.pool, &sess.role, sess.id)
         .await
         .map_err(err)
 }
 
-/// Setujui/tolak izin (tahap sesuai peran).
+/// Setujui/tolak izin (tahap sesuai peran). Dewan guru tak terlibat izin santri.
 #[server(DecidePermitAction, "/api-fn")]
 pub async fn decide_permit_action(permit_id: i64, approve: bool) -> Result<(), ServerFnError> {
-    let sess = require_roles(&["supervisor", "teacher", "dewan_guru", "admin"]).await?;
+    let sess = require_roles(&["supervisor", "dewan_guru", "admin"]).await?;
     let state = app_state().await?;
     crate::service::permits::decide_permit(&state.pool, permit_id, approve, &sess.role, sess.id)
         .await
@@ -573,7 +589,11 @@ pub async fn submit_child_permit_action(
         &state.pool, sess.id, child_id, &kind, &start, &end, &reason,
     )
     .await
-    .map_err(err)
+    .map_err(err)?;
+    // Beri tahu pamong (jika 2 langkah) & wali kelas — pemohon = orang tua.
+    crate::service::permits::notify_permit(&state.http, &state.waha, &state.pool, child_id, true)
+        .await;
+    Ok(())
 }
 
 /// Konfirmasi/tolak izin anak yang diajukan santri sendiri (tahap 1, migrasi 17).
@@ -613,7 +633,7 @@ pub async fn respond_connection_action(conn_id: i64, approve: bool) -> Result<()
 /// Antrean verifikasi pamong (supervisor/teacher/admin).
 #[server(GetPamongData, "/api-fn")]
 pub async fn pamong_data() -> Result<PamongData, ServerFnError> {
-    let sess = require_roles(&["supervisor", "teacher", "admin"]).await?;
+    let sess = require_roles(&["supervisor", "dewan_guru", "admin"]).await?;
     let state = app_state().await?;
     // Pamong (supervisor) → hanya kelas yang ia ampu; admin/dewan → semua.
     let pamong_id = (sess.role == "supervisor").then_some(sess.id);
@@ -625,7 +645,7 @@ pub async fn pamong_data() -> Result<PamongData, ServerFnError> {
 /// Setujui/tolak satu absensi (tahap pamong).
 #[server(DecidePamong, "/api-fn")]
 pub async fn decide_pamong(att_id: i64, approve: bool) -> Result<(), ServerFnError> {
-    let sess = require_roles(&["supervisor", "teacher", "admin"]).await?;
+    let sess = require_roles(&["supervisor", "dewan_guru", "admin"]).await?;
     let state = app_state().await?;
     let pamong_id = (sess.role == "supervisor").then_some(sess.id);
     crate::service::attendance::decide_pamong(&state.pool, att_id, sess.id, approve, pamong_id)
@@ -656,6 +676,33 @@ pub async fn decide_verify(att_id: i64, approve: bool) -> Result<(), ServerFnErr
         .await
         .map_err(err)?;
     Ok(())
+}
+
+/// Panel verifikasi kehadiran PER-SESI (detail sesi). Tahap otomatis dari peran:
+/// pamong → tahap pamong; dewan guru/admin → final. Kosong = tak ada yg menunggu.
+#[server(GetSessionVerify, "/api-fn")]
+pub async fn session_verify_data(
+    session_id: i64,
+) -> Result<crate::models::SessionVerifyData, ServerFnError> {
+    let sess = require_roles(&["supervisor", "dewan_guru", "admin"]).await?;
+    let state = app_state().await?;
+    crate::service::attendance::session_verify(&state.pool, session_id, &sess.role, sess.id)
+        .await
+        .map_err(err)
+}
+
+/// Verifikasi SATU sesi sekaligus: setujui semua yang menunggu KECUALI `reject_ids`
+/// (yang ditolak). Satu request per sesi (bukan per santri). Return jumlah diproses.
+#[server(DecideSession, "/api-fn")]
+pub async fn decide_session_action(
+    session_id: i64,
+    reject_ids: Vec<i64>,
+) -> Result<i64, ServerFnError> {
+    let sess = require_roles(&["supervisor", "dewan_guru", "admin"]).await?;
+    let state = app_state().await?;
+    crate::service::attendance::decide_session(&state.pool, session_id, &sess.role, sess.id, &reject_ids)
+        .await
+        .map_err(err)
 }
 
 // ── Manajemen Kelas (admin/dewan guru/pamong) ─────────────────────────────────────
@@ -942,10 +989,13 @@ pub async fn set_session_libur_action(session_id: i64, libur: bool) -> Result<()
 
 /// Cari santri (nama/NIS) untuk ditambahkan ke kelas.
 #[server(StaffSearchStudents, "/api-fn")]
-pub async fn staff_search_students(q: String) -> Result<Vec<StudentSearchItem>, ServerFnError> {
+pub async fn staff_search_students(
+    q: String,
+    class_id: i64,
+) -> Result<Vec<StudentSearchItem>, ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
-    crate::service::kelas::search_students(&state.pool, &q)
+    crate::service::kelas::search_students(&state.pool, &q, class_id)
         .await
         .map_err(err)
 }
@@ -1097,6 +1147,87 @@ pub async fn guest_status_action(
         .map_err(err)
 }
 
+// ── Tagihan santri (migrasi 37) ───────────────────────────────────────────────
+// FINANCE = lihat belum-bayar + tandai lunas + verifikasi (admin, ketua,
+// santri_finance). BILL_ADMIN = buat/hapus tagihan (admin, ketua).
+
+#[cfg(feature = "ssr")]
+const FINANCE_ROLES: &[&str] = &["admin", "ketua", "santri_finance"];
+#[cfg(feature = "ssr")]
+const BILL_ADMIN_ROLES: &[&str] = &["admin", "ketua"];
+
+/// Daftar santri yang BELUM membayar (finance).
+#[server(GetUnpaidBills, "/api-fn")]
+pub async fn unpaid_bills_data() -> Result<Vec<crate::models::BillItem>, ServerFnError> {
+    require_roles(FINANCE_ROLES).await?;
+    let state = app_state().await?;
+    crate::repository::list_unpaid(&state.pool, 500).await.map_err(err)
+}
+
+/// Buat tagihan untuk seorang santri (admin/ketua). Tanggal "YYYY-MM-DD".
+#[server(CreateBill, "/api-fn")]
+pub async fn create_bill_action(
+    user_id: i64,
+    title: String,
+    price: i64,
+    started: String,
+    expired: String,
+    note: String,
+) -> Result<i64, ServerFnError> {
+    require_roles(BILL_ADMIN_ROLES).await?;
+    let state = app_state().await?;
+    let parse = |s: &str| chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d");
+    let sd = parse(&started).map_err(|_| ServerFnError::new("Tanggal mulai tidak valid (YYYY-MM-DD)."))?;
+    let ed = parse(&expired).map_err(|_| ServerFnError::new("Tanggal jatuh tempo tidak valid."))?;
+    if price <= 0 {
+        return Err(ServerFnError::new("Nominal tagihan harus > 0."));
+    }
+    crate::repository::create_bill(&state.pool, user_id, title.trim(), price, sd, ed, note.trim())
+        .await
+        .map_err(err)
+}
+
+/// Tandai tagihan LUNAS + verifikasi (finance). `paid_amount` None = penuh.
+#[server(MarkBillPaid, "/api-fn")]
+pub async fn mark_bill_paid_action(
+    bill_id: i64,
+    paid_amount: Option<i64>,
+    method: String,
+) -> Result<(), ServerFnError> {
+    let sess = require_roles(FINANCE_ROLES).await?;
+    let state = app_state().await?;
+    crate::repository::mark_paid(&state.pool, bill_id, paid_amount, method.trim(), sess.id)
+        .await
+        .map(|_| ())
+        .map_err(err)
+}
+
+/// Hapus tagihan (admin/ketua).
+#[server(DeleteBill, "/api-fn")]
+pub async fn delete_bill_action(bill_id: i64) -> Result<(), ServerFnError> {
+    require_roles(BILL_ADMIN_ROLES).await?;
+    let state = app_state().await?;
+    crate::repository::delete_bill(&state.pool, bill_id).await.map(|_| ()).map_err(err)
+}
+
+/// Tagihan MILIK santri yang login (dashboard santri).
+#[server(GetMyBills, "/api-fn")]
+pub async fn my_bills_data() -> Result<Vec<crate::models::BillItem>, ServerFnError> {
+    let sess = require_roles(&["santri", "santri_finance"]).await?;
+    let state = app_state().await?;
+    crate::repository::list_for_user(&state.pool, sess.id).await.map_err(err)
+}
+
+/// Cari santri untuk membuat tagihan (admin/ketua) — nama/NIS.
+#[server(FinanceSearchStudents, "/api-fn")]
+pub async fn finance_student_search(q: String) -> Result<Vec<StudentSearchItem>, ServerFnError> {
+    require_roles(BILL_ADMIN_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::search_students(&state.pool, &q, 0)
+        .await
+        .map_err(err)
+}
+
 /// Halaman Students: daftar santri + antrean verifikasi sesuai peran.
 #[server(GetStudentsData, "/api-fn")]
 pub async fn students_data() -> Result<StudentsData, ServerFnError> {
@@ -1232,7 +1363,7 @@ pub async fn set_own_book_progress_action(
 /// Dashboard staf (/staf) — statistik hari ini, sesi live, kehadiran terbaru.
 #[server(GetStafHome, "/api-fn")]
 pub async fn staf_home_data() -> Result<StafHome, ServerFnError> {
-    let sess = require_roles(&["admin", "dewan_guru", "supervisor"]).await?;
+    let sess = require_roles(&["admin", "ketua", "dewan_guru", "supervisor"]).await?;
     let state = app_state().await?;
     crate::service::dashboard::staf_home(&state.pool, &sess.name)
         .await

@@ -287,12 +287,21 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
                         .collect_view()
                         .into_any()
                 }}
-                <a
-                    href="/riwayat"
-                    class="block w-full py-3.5 border-2 border-dashed border-outline-variant rounded-2xl text-body-md text-on-surface-variant hover:border-primary hover:text-primary transition-colors text-center"
-                >
-                    "Lihat Semua Riwayat"
-                </a>
+                <div class="grid grid-cols-2 gap-2">
+                    <a
+                        href="/riwayat"
+                        class="block w-full py-3.5 border-2 border-dashed border-outline-variant rounded-2xl text-body-md text-on-surface-variant hover:border-primary hover:text-primary transition-colors text-center"
+                    >
+                        "Riwayat"
+                    </a>
+                    <a
+                        href="/tagihan-saya"
+                        class="flex items-center justify-center gap-2 w-full py-3.5 border-2 border-dashed border-outline-variant rounded-2xl text-body-md text-on-surface-variant hover:border-primary hover:text-primary transition-colors text-center"
+                    >
+                        <span class="material-symbols-outlined text-[20px]">"card_giftcard"</span>
+                        "Tagihan"
+                    </a>
+                </div>
             </section>
             </div>
 

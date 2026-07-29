@@ -140,8 +140,12 @@ fn HomeBody(
         // kolom mobile drpd melebar penuh (lihat tailwind.css .ppm-wide).
         <div class="space-y-4 md:max-w-md">
         // ── Pencarian & kirim permintaan (selalu utk yg belum punya anak) ────
-        {(!has_children || show_search.get())
-            .then(|| view! { <SearchPanel refetch=refetch /> })}
+        // WAJIB `move ||`: tanpa ini panel dievaluasi SEKALI (tak reaktif) →
+        // klik "+" mengubah show_search tapi DOM tak update (bug "tambah anak").
+        {move || {
+            (!has_children || show_search.get())
+                .then(|| view! { <SearchPanel refetch=refetch /> })
+        }}
 
         // ── Belum terhubung: kartu edukasi + Mode Preview ────────────────────
         {(!has_children)

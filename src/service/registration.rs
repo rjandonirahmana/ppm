@@ -27,7 +27,10 @@ use crate::repository as repo;
 
 /// Peran yang boleh diundang mendaftar sendiri — TIDAK termasuk admin (sama
 /// aturan e-ticketing: "Admin accounts cannot self-register").
-pub const INVITABLE_ROLES: &[&str] = &["teacher", "dewan_guru", "supervisor", "santri", "parent"];
+// 'teacher' dihapus (digabung ke dewan_guru, migrasi 36). Peran finance baru
+// (ketua, santri_finance) TIDAK di sini — dibuat admin lewat kontrol pengguna,
+// bukan via link undangan publik.
+pub const INVITABLE_ROLES: &[&str] = &["dewan_guru", "supervisor", "santri", "parent"];
 
 fn invite_key(token: &str) -> String {
     format!("reg-invite:{token}")
@@ -342,7 +345,7 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 
 /// Password acak mudah dibaca dari WA — persis pola e-ticketing: 9 karakter,
 /// Upper·Lower×3·Digit·Special·Lower×3, tanpa karakter ambigu (I/O/i/l/o/0/1).
-fn generate_random_password() -> String {
+pub fn generate_random_password() -> String {
     const UPPER: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ";
     const LOWER: &[u8] = b"abcdefghjkmnpqrstuvwxyz";
     const DIGITS: &[u8] = b"23456789";

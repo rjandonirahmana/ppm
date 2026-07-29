@@ -139,7 +139,7 @@ fn AnalisisBody(
                             {format!("{} • {} • {} santri", s.time_label, s.teacher, s.santri_count)}
                         </p>
                         <a
-                            href="/sesi"
+                            href=format!("/sesi/{}", s.id)
                             class="mt-4 w-full py-3 rounded-xl bg-primary-fixed text-primary font-bold text-body-sm flex items-center justify-center gap-2 press"
                         >
                             <span class="material-symbols-outlined text-[18px]">"play_circle"</span>
@@ -230,7 +230,10 @@ fn AnalisisBody(
                                 .map(|s| {
                                     let live = s.state == "live";
                                     view! {
-                                        <div class="ppm-card p-3.5 flex items-center gap-3 card-hover">
+                                        <a
+                                            href=format!("/sesi/{}", s.id)
+                                            class="ppm-card p-3.5 flex items-center gap-3 card-hover press"
+                                        >
                                             <div class="w-10 h-10 rounded-xl bg-secondary-container text-primary flex items-center justify-center shrink-0">
                                                 <span class="material-symbols-outlined">"menu_book"</span>
                                             </div>
@@ -244,7 +247,7 @@ fn AnalisisBody(
                                                 .then(|| view! {
                                                     <span class="w-2 h-2 rounded-full bg-success pulse-dot shrink-0"></span>
                                                 })}
-                                        </div>
+                                        </a>
                                     }
                                 })
                                 .collect_view()}

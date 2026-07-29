@@ -64,6 +64,7 @@ pub fn MobileHeader(
                             .collect();
                         let role_label = match u.role.as_str() {
                             "admin" => "Administrator",
+                            "ketua" => "Ketua",
                             "supervisor" => "Pamong",
                             "teacher" | "dewan_guru" => "Dewan Guru",
                             "parent" => "Orang Tua",
@@ -108,8 +109,10 @@ pub fn NotifBell() -> impl IntoView {
                     .then(|| {
                         view! {
                             // Backdrop transparan: klik di luar menutup popover.
-                            <div class="fixed inset-0 z-30" on:click=move |_| open.set(false)></div>
-                            <div class="absolute right-0 top-12 z-40 w-72 ppm-card shadow-xl p-4 anim-in">
+                            // z tinggi (55/60) supaya popover PASTI di atas ikon/
+                            // elemen lain di header (header sendiri sudah z-40).
+                            <div class="fixed inset-0 z-[55]" on:click=move |_| open.set(false)></div>
+                            <div class="absolute right-0 top-12 z-[60] w-72 ppm-card shadow-xl p-4 anim-in">
                                 <div class="flex items-center justify-between mb-2">
                                     <p class="text-body-md font-bold text-on-background">"Notifikasi"</p>
                                     <button
@@ -149,7 +152,7 @@ fn nav_visible(path: &str) -> bool {
         "/dewan-guru", "/poin", "/poin-dewan", "/verifikasi-pamong",
         "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua", "/kontrol-pengguna",
         "/akademik", "/kalender", "/izin-staf", "/materi", "/rekap-mingguan", "/setelan",
-        "/galeri",
+        "/galeri", "/tagihan", "/tagihan-saya",
     ];
     PREFIXES
         .iter()
@@ -267,10 +270,11 @@ pub fn DesktopSidebar() -> impl IntoView {
             let has_role = !role.is_empty();
             let role_label = match role.as_str() {
                 "admin" => "Administrator",
+                "ketua" => "Ketua",
                 "supervisor" => "Pamong",
                 "teacher" | "dewan_guru" => "Dewan Guru",
                 "parent" => "Orang Tua",
-                "santri" => "Santri",
+                "santri" | "santri_finance" => "Santri",
                 _ => "",
             };
             let initial: String =
@@ -529,9 +533,10 @@ pub fn nav_for(role: &str) -> &'static [NavDef] {
     match role {
         "parent" => NAV_ORTU,
         "supervisor" => NAV_PAMONG,
-        "teacher" => NAV_GURU,
+        "teacher" => NAV_DEWAN, // 'teacher' digabung ke dewan_guru (migrasi 36)
         "dewan_guru" => NAV_DEWAN,
-        "admin" => NAV_STAF,
+        "admin" | "ketua" => NAV_STAF, // ketua = admin + finance
+        "santri_finance" => NAV_SANTRI,
         _ => NAV_SANTRI, // santri + fallback aman
     }
 }

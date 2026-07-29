@@ -86,7 +86,7 @@ pub fn SesiContent() -> impl IntoView {
                         Ok(d) => {
                             // Staf (admin/pamong/guru=dewan guru) → detail sesi
                             // (kelola); santri → RUANG LIVE (ikut & bertanya).
-                            let is_santri = d.role == "santri";
+                            let is_santri = matches!(d.role.as_str(), "santri" | "santri_finance");
                             let n_up = d.upcoming.len();
                             let n_past = d.past.len();
                             let lists = StoredValue::new((d.upcoming, d.past));

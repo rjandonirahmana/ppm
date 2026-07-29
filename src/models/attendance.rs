@@ -88,6 +88,26 @@ pub fn attendance_delta(
     }
 }
 
+/// Satu santri untuk verifikasi kehadiran PER-SESI (di halaman detail sesi).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionVerifyItem {
+    pub att_id: i64,
+    pub name: String,
+    pub nis: String,
+    /// present|late|absent|permit|sick — untuk label/warna.
+    pub status: String,
+}
+
+/// Data panel verifikasi kehadiran satu sesi (tahap sesuai peran pemanggil).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionVerifyData {
+    /// "pamong" | "final".
+    pub stage: String,
+    /// "Verifikasi Pamong" | "Verifikasi Final".
+    pub stage_label: String,
+    pub items: Vec<SessionVerifyItem>,
+}
+
 /// Satu item riwayat kehadiran (tampilan dashboard/riwayat santri).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AttendanceItem {

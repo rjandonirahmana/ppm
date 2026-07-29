@@ -16,11 +16,11 @@ pub async fn staf_stats(pool: &Pool) -> Result<(i64, i64, i64, i64)> {
     let row = c
         .query_one(
             "SELECT \
-                (SELECT COUNT(*) FROM users WHERE role = 'santri' AND is_active = TRUE), \
-                (SELECT COUNT(*) FROM users WHERE role = 'santri' AND is_active = TRUE \
+                (SELECT COUNT(*) FROM users WHERE role IN ('santri', 'santri_finance') AND is_active = TRUE), \
+                (SELECT COUNT(*) FROM users WHERE role IN ('santri', 'santri_finance') AND is_active = TRUE \
                     AND created_at >= date_trunc('month', NOW())), \
                 (SELECT COUNT(*) FROM attendances a JOIN users u ON u.id = a.user_id \
-                    WHERE u.role = 'santri' AND a.status IN ('present','late') \
+                    WHERE u.role IN ('santri', 'santri_finance') AND a.status IN ('present','late') \
                     AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date), \
                 (SELECT COUNT(*) FROM permit_requests \
                     WHERE guru_status = 'pending' AND parent_status <> 'rejected' AND pamong_status <> 'rejected')",
@@ -32,6 +32,7 @@ pub async fn staf_stats(pool: &Pool) -> Result<(i64, i64, i64, i64)> {
 }
 
 pub struct LiveSesiRow {
+    pub id: i64,
     pub title: String,
     pub teacher: String,
     pub santri_count: i64,
@@ -44,7 +45,7 @@ pub async fn today_sessions(pool: &Pool, limit: i64) -> Result<Vec<LiveSesiRow>>
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT COALESCE(s.title, cs.title, c.name), COALESCE(t.full_name, 'Belum ditentukan'), \
+            "SELECT s.id, COALESCE(s.title, cs.title, c.name), COALESCE(t.full_name, 'Belum ditentukan'), \
                     (SELECT COUNT(*) FROM class_participants cp WHERE cp.class_id = c.id), \
                     s.status, cs.start_time \
              FROM class_sessions s \
@@ -62,11 +63,12 @@ pub async fn today_sessions(pool: &Pool, limit: i64) -> Result<Vec<LiveSesiRow>>
     Ok(rows
         .into_iter()
         .map(|r| LiveSesiRow {
-            title: r.get(0),
-            teacher: r.get(1),
-            santri_count: r.get(2),
-            state: r.get(3),
-            time_label: r.get(4),
+            id: r.get(0),
+            title: r.get(1),
+            teacher: r.get(2),
+            santri_count: r.get(3),
+            state: r.get(4),
+            time_label: r.get(5),
         })
         .collect())
 }
@@ -88,7 +90,7 @@ pub async fn latest_attendance(pool: &Pool, limit: i64) -> Result<Vec<LatestAttR
              JOIN users u ON u.id = a.user_id \
              LEFT JOIN class_schedules cs ON cs.id = a.class_schedule_id \
              LEFT JOIN classes c ON c.id = cs.class_id \
-             WHERE u.role = 'santri' \
+             WHERE u.role IN ('santri', 'santri_finance') \
              ORDER BY a.scanned_at DESC LIMIT $1",
             &[&limit],
         )
@@ -117,11 +119,11 @@ pub async fn analisis_summary(pool: &Pool, teacher_id: Option<i64>) -> Result<(i
                 "SELECT \
                     COALESCE(ROUND(100.0 * COUNT(*) FILTER (WHERE a.status IN ('present','late')) \
                         / NULLIF(COUNT(*), 0)), 0)::INT, \
-                    COALESCE((SELECT ROUND(AVG(points)) FROM users WHERE role = 'santri'), 0)::INT, \
+                    COALESCE((SELECT ROUND(AVG(points)) FROM users WHERE role IN ('santri', 'santri_finance')), 0)::INT, \
                     (SELECT COUNT(*) FROM attendances WHERE pamong_status = 'approved' \
                         AND pamong_at >= NOW() - INTERVAL '30 days') \
                  FROM attendances a JOIN users u ON u.id = a.user_id \
-                 WHERE u.role = 'santri' AND a.scanned_at >= NOW() - INTERVAL '30 days'",
+                 WHERE u.role IN ('santri', 'santri_finance') AND a.scanned_at >= NOW() - INTERVAL '30 days'",
                 &[],
             )
             .await
@@ -133,7 +135,7 @@ pub async fn analisis_summary(pool: &Pool, teacher_id: Option<i64>) -> Result<(i
                         / NULLIF(COUNT(*), 0)), 0)::INT, \
                     COALESCE((SELECT ROUND(AVG(u2.points)) FROM users u2 \
                         JOIN class_participants cp ON cp.user_id = u2.id \
-                        WHERE u2.role = 'santri' AND cp.class_id IN \
+                        WHERE u2.role IN ('santri', 'santri_finance') AND cp.class_id IN \
                             (SELECT DISTINCT class_id FROM class_sessions WHERE teacher_id = $1)), 0)::INT, \
                     (SELECT COUNT(*) FROM attendances a2 \
                         JOIN class_sessions s2 ON s2.id = a2.class_session_id \
@@ -163,7 +165,7 @@ pub async fn attendance_trend_7d(
                 "SELECT d::date, COALESCE(( \
                     SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE a.status IN ('present','late')) / NULLIF(COUNT(*), 0)) \
                     FROM attendances a JOIN users u ON u.id = a.user_id \
-                    WHERE u.role = 'santri' AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = d::date \
+                    WHERE u.role IN ('santri', 'santri_finance') AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = d::date \
                  ), 0)::INT \
                  FROM generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, INTERVAL '1 day') d",
                 &[],
@@ -211,7 +213,7 @@ pub async fn class_ranking(
                     COUNT(DISTINCT cp.user_id) \
                  FROM classes c \
                  LEFT JOIN class_participants cp ON cp.class_id = c.id \
-                 LEFT JOIN users u ON u.id = cp.user_id AND u.role = 'santri' \
+                 LEFT JOIN users u ON u.id = cp.user_id AND u.role IN ('santri', 'santri_finance') \
                  LEFT JOIN class_schedules cs ON cs.class_id = c.id \
                  LEFT JOIN attendances a ON a.class_schedule_id = cs.id \
                     AND a.scanned_at >= NOW() - INTERVAL '30 days' \
@@ -230,7 +232,7 @@ pub async fn class_ranking(
                  FROM classes c \
                  JOIN class_sessions s ON s.class_id = c.id AND s.teacher_id = $1 \
                  LEFT JOIN class_participants cp ON cp.class_id = c.id \
-                 LEFT JOIN users u ON u.id = cp.user_id AND u.role = 'santri' \
+                 LEFT JOIN users u ON u.id = cp.user_id AND u.role IN ('santri', 'santri_finance') \
                  LEFT JOIN attendances a ON a.class_session_id = s.id \
                  GROUP BY c.id, c.name ORDER BY 2 DESC LIMIT $2",
                 &[&tid, &limit],
@@ -309,7 +311,7 @@ pub async fn points_board(
                     (SELECT c.name FROM class_participants cp JOIN classes c ON c.id = cp.class_id \
                         WHERE cp.user_id = u.id LIMIT 1), \
                     u.points \
-                 FROM users u WHERE u.role = 'santri' AND u.is_active = TRUE \
+                 FROM users u WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
                  ORDER BY u.points {order} LIMIT $1"
             );
             c.query(&sql, &[&limit]).await
@@ -324,7 +326,7 @@ pub async fn points_board(
                          LIMIT 1), \
                      u.points \
                  FROM users u \
-                 WHERE u.role = 'santri' AND u.is_active = TRUE \
+                 WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
                    AND EXISTS ( \
                        SELECT 1 FROM class_participants cp WHERE cp.user_id = u.id \
                        AND cp.class_id IN (SELECT DISTINCT class_id FROM class_sessions WHERE teacher_id = $1) \
@@ -373,7 +375,7 @@ pub async fn students_with_classes(pool: &Pool, limit: i64) -> Result<Vec<Studen
     let students = c
         .query(
             "SELECT id, full_name, nis, points FROM users \
-             WHERE role = 'santri' AND is_active = TRUE ORDER BY points DESC LIMIT $1",
+             WHERE role IN ('santri', 'santri_finance') AND is_active = TRUE ORDER BY points DESC LIMIT $1",
             &[&limit],
         )
         .await
@@ -420,7 +422,7 @@ pub async fn points_avg(pool: &Pool, teacher_id: Option<i64>) -> Result<(i32, i6
         None => {
             c.query_one(
                 "SELECT COALESCE(ROUND(AVG(points)), 0)::INT, COUNT(*) \
-                 FROM users WHERE role = 'santri' AND is_active = TRUE",
+                 FROM users WHERE role IN ('santri', 'santri_finance') AND is_active = TRUE",
                 &[],
             )
             .await
@@ -429,7 +431,7 @@ pub async fn points_avg(pool: &Pool, teacher_id: Option<i64>) -> Result<(i32, i6
             c.query_one(
                 "SELECT COALESCE(ROUND(AVG(u.points)), 0)::INT, COUNT(DISTINCT u.id) \
                  FROM users u JOIN class_participants cp ON cp.user_id = u.id \
-                 WHERE u.role = 'santri' AND u.is_active = TRUE \
+                 WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
                    AND cp.class_id IN (SELECT DISTINCT class_id FROM class_sessions WHERE teacher_id = $1)",
                 &[&tid],
             )
@@ -469,7 +471,7 @@ pub async fn recent_points_all(pool: &Pool, limit: i64) -> Result<Vec<(String, S
                  SELECT cp.class_id FROM class_participants cp \
                  WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
              ) \
-             WHERE u.role = 'santri' \
+             WHERE u.role IN ('santri', 'santri_finance') \
              ORDER BY p.created_at DESC LIMIT $1",
             &[&limit],
         )
@@ -625,7 +627,7 @@ pub async fn class_totals(pool: &Pool) -> Result<(i64, i64)> {
     let row = c
         .query_one(
             "SELECT (SELECT COUNT(*) FROM classes WHERE status = 'active'), \
-                    (SELECT COUNT(*) FROM users WHERE role = 'santri' AND is_active = TRUE)",
+                    (SELECT COUNT(*) FROM users WHERE role IN ('santri', 'santri_finance') AND is_active = TRUE)",
             &[],
         )
         .await
@@ -738,7 +740,7 @@ pub async fn class_members(
         .query(
             "SELECT DISTINCT u.id, u.full_name, u.nis \
              FROM class_participants cp JOIN users u ON u.id = cp.user_id \
-             WHERE cp.class_id = $1 AND u.role = 'santri' ORDER BY u.full_name",
+             WHERE cp.class_id = $1 AND u.role IN ('santri', 'santri_finance') ORDER BY u.full_name",
             &[&class_id],
         )
         .await
@@ -1223,12 +1225,52 @@ pub async fn some_students(pool: &Pool, limit: i64) -> Result<Vec<super::parents
                  SELECT cp.class_id FROM class_participants cp \
                  WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
              ) \
-             WHERE u.role = 'santri' AND u.is_active = TRUE \
+             WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
              ORDER BY u.full_name LIMIT $1",
             &[&limit],
         )
         .await
         .context("some_students")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| super::parents::StudentRow {
+            id: r.get(0),
+            full_name: r.get(1),
+            nis: r.get(2),
+            class_name: r.get(3),
+        })
+        .collect())
+}
+
+/// Cari santri untuk DITAMBAHKAN ke `class_id` — mengecualikan yang SUDAH jadi
+/// anggota kelas itu. `q` kosong/pendek → daftar default. Dipakai AddMemberForm.
+pub async fn students_not_in_class(
+    pool: &Pool,
+    class_id: i64,
+    q: &str,
+    limit: i64,
+) -> Result<Vec<super::parents::StudentRow>> {
+    let c = pool.get().await?;
+    let qt = q.trim();
+    let pattern = format!("%{}%", qt);
+    let rows = c
+        .query(
+            "SELECT u.id, u.full_name, u.nis, cl.name \
+             FROM users u \
+             LEFT JOIN classes cl ON cl.id = ( \
+                 SELECT cp.class_id FROM class_participants cp \
+                 WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
+             ) \
+             WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
+               AND u.id NOT IN ( \
+                   SELECT cp2.user_id FROM class_participants cp2 WHERE cp2.class_id = $1 \
+               ) \
+               AND ($2 = '' OR u.full_name ILIKE $3 OR u.nis = $2) \
+             ORDER BY u.full_name LIMIT $4",
+            &[&class_id, &qt, &pattern, &limit],
+        )
+        .await
+        .context("students_not_in_class")?;
     Ok(rows
         .into_iter()
         .map(|r| super::parents::StudentRow {

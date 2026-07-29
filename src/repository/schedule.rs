@@ -354,7 +354,7 @@ pub async fn session_attendance(
         .query(
             "SELECT u.id, u.full_name, u.nis, a.status, a.scanned_at \
              FROM (SELECT DISTINCT user_id FROM class_participants WHERE class_id = $2) cp \
-             JOIN users u ON u.id = cp.user_id AND u.role = 'santri' \
+             JOIN users u ON u.id = cp.user_id AND u.role IN ('santri', 'santri_finance') \
              LEFT JOIN attendances a ON a.user_id = u.id AND a.class_session_id = $1 \
              ORDER BY u.full_name",
             &[&session_id, &class_id],

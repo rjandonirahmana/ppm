@@ -30,7 +30,7 @@ pub fn ProfilPage() -> impl IntoView {
             campus.set(p.campus.clone().unwrap_or_default());
             major.set(p.major.clone().unwrap_or_default());
             gender.set(p.gender.clone().unwrap_or_default());
-            is_santri.set(p.role == "santri");
+            is_santri.set(matches!(p.role.as_str(), "santri" | "santri_finance"));
         }
     });
 

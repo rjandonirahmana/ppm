@@ -23,7 +23,7 @@ pub async fn search_students(pool: &Pool, q: &str, limit: i64) -> Result<Vec<Stu
                  SELECT cp.class_id FROM class_participants cp \
                  WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
              ) \
-             WHERE u.role = 'santri' AND u.is_active = TRUE \
+             WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
                AND (u.full_name ILIKE $1 OR u.nis = $2) \
              ORDER BY u.full_name LIMIT $3",
             &[&pattern, &q.trim(), &limit],
@@ -163,7 +163,7 @@ pub async fn child_info(pool: &Pool, student_id: i64) -> Result<Option<StudentRo
                  SELECT cp.class_id FROM class_participants cp \
                  WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
              ) \
-             WHERE u.id = $1 AND u.role = 'santri'",
+             WHERE u.id = $1 AND u.role IN ('santri', 'santri_finance')",
             &[&student_id],
         )
         .await?;

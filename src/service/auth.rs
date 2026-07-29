@@ -15,11 +15,24 @@ pub struct LoginOk {
     pub redirect: String,
 }
 
+/// Normalisasi input jadi bentuk HP tersimpan (08.. → 62..). Non-digit dibuang.
+/// Dipakai login (cocokkan phone_number) & forgot-password.
+pub fn normalize_phone(s: &str) -> String {
+    let d: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    match d.strip_prefix('0') {
+        Some(rest) => format!("62{rest}"),
+        None => d,
+    }
+}
+
 /// Verifikasi kredensial → JWT (pola sama e-ticketing AuthService::login).
+/// Login UTAMANYA pakai NOMOR HP; username/email/NIS tetap didukung (admin seed).
 /// bcrypt CPU-bound → `spawn_blocking` agar tidak menyumbat worker async.
 pub async fn login(pool: &Pool, jwt: &JwtService, login: &str, password: &str) -> Result<LoginOk> {
-    let Some(user) = repo::find_user_for_login(pool, login.trim()).await? else {
-        bail!("Username/email atau kata sandi salah.");
+    let login = login.trim();
+    let phone = normalize_phone(login);
+    let Some(user) = repo::find_user_for_login(pool, login, &phone).await? else {
+        bail!("Nomor HP atau kata sandi salah.");
     };
 
     let hash = user.password_hash.clone();
@@ -31,7 +44,7 @@ pub async fn login(pool: &Pool, jwt: &JwtService, login: &str, password: &str) -
         "bcrypt verify done"
     );
     if !ok {
-        bail!("Username/email atau kata sandi salah.");
+        bail!("Nomor HP atau kata sandi salah.");
     }
 
     let phone = user.phone_number.clone().unwrap_or_default();
@@ -45,6 +58,38 @@ pub async fn login(pool: &Pool, jwt: &JwtService, login: &str, password: &str) -
         },
         token,
     })
+}
+
+/// Forgot-password via WA: cari user dari nomor HP → buat password baru → kirim
+/// lewat WhatsApp. Best-effort & anti-enumerasi: SELALU balas Ok (tak bocorkan
+/// apakah nomor terdaftar). bcrypt di `spawn_blocking` (CPU-bound).
+pub async fn forgot_password(
+    pool: &Pool,
+    http: &reqwest::Client,
+    waha: &crate::config::WahaConfig,
+    phone: &str,
+) -> Result<()> {
+    let phone = normalize_phone(phone);
+    if phone.len() < 8 {
+        return Ok(()); // input tak masuk akal → diam
+    }
+    let Some(user_id) = repo::find_by_phone(pool, &phone).await? else {
+        return Ok(()); // tak terdaftar → diam (anti-enumerasi)
+    };
+
+    let new_pw = super::registration::generate_random_password();
+    let pw = new_pw.clone();
+    let hash = tokio::task::spawn_blocking(move || bcrypt::hash(&pw, 10)).await??;
+    repo::set_password_hash(pool, user_id, &hash).await?;
+
+    let msg = format!(
+        "🔑 *Reset Password PPM AFM*\nPassword baru Anda: *{new_pw}*\n\nMasuk dengan nomor HP + password ini, lalu segera ganti password di menu Profil."
+    );
+    // Gagal WA tak menggagalkan reset (password sudah diganti); log saja.
+    if let Err(e) = super::registration::send_wa_text(http, waha, &phone, &msg).await {
+        tracing::warn!("forgot_password: WA gagal ke {phone}: {e}");
+    }
+    Ok(())
 }
 
 /// Bootstrap: bila tabel users KOSONG, buat admin awal

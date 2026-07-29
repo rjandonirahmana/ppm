@@ -326,6 +326,7 @@ async fn main() -> Result<()> {
             post(ppm::web::activity_photos::upload),
         )
         .route("/api/guestbook", post(ppm::web::guestbook::checkin))
+        .route("/api/bills/proof", post(ppm::web::bills::upload_proof))
         .layer(axum::Extension(state.clone()));
 
     // ── Unduh laporan PDF/Excel (biner, di luar server-fn) ───────────────────

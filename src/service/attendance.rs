@@ -196,3 +196,67 @@ pub async fn decide_verify(
 ) -> Result<bool> {
     repo::decide_verify(pool, att_id, approver, approve, teacher_id).await
 }
+
+// ── Verifikasi kehadiran PER-SESI (batch) ─────────────────────────────────────
+// Tahap ditentukan dari PERAN: supervisor → pamong (hanya sesi yg ia pamong);
+// dewan_guru/admin → final (semua sesi). Klien kirim SATU request per sesi;
+// server melakukan approve semua yang pending KECUALI `reject_ids`.
+
+use crate::models::{SessionVerifyData, SessionVerifyItem};
+
+fn stage_for(role: &str, user_id: i64) -> (&'static str, &'static str, Option<i64>) {
+    match role {
+        "supervisor" => ("pamong", "Verifikasi Pamong", Some(user_id)),
+        _ => ("final", "Verifikasi Final", None), // dewan_guru/admin/ketua
+    }
+}
+
+pub async fn session_verify(
+    pool: &Pool,
+    session_id: i64,
+    role: &str,
+    user_id: i64,
+) -> Result<SessionVerifyData> {
+    let (stage, stage_label, actor) = stage_for(role, user_id);
+    let rows = repo::session_verify_list(pool, session_id, stage, actor).await?;
+    Ok(SessionVerifyData {
+        stage: stage.to_string(),
+        stage_label: stage_label.to_string(),
+        items: rows
+            .into_iter()
+            .map(|r| SessionVerifyItem {
+                att_id: r.id,
+                name: r.full_name,
+                nis: r.nis.unwrap_or_else(|| "-".into()),
+                status: r.status,
+            })
+            .collect(),
+    })
+}
+
+/// Proses verifikasi seluruh sesi: setujui semua yang pending KECUALI `reject_ids`
+/// (yang ditolak). Loop memakai `decide_pamong`/`decide_verify` yang sudah benar
+/// (poin diberikan sekali di tahap final). Return jumlah yang diproses.
+pub async fn decide_session(
+    pool: &Pool,
+    session_id: i64,
+    role: &str,
+    user_id: i64,
+    reject_ids: &[i64],
+) -> Result<i64> {
+    let (stage, _, actor) = stage_for(role, user_id);
+    let rows = repo::session_verify_list(pool, session_id, stage, actor).await?;
+    let mut n = 0i64;
+    for r in rows {
+        let approve = !reject_ids.contains(&r.id);
+        let ok = if stage == "pamong" {
+            repo::decide_pamong(pool, r.id, user_id, approve, actor).await?
+        } else {
+            repo::decide_verify(pool, r.id, user_id, approve, actor).await?
+        };
+        if ok {
+            n += 1;
+        }
+    }
+    Ok(n)
+}

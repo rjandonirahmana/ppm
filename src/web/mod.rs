@@ -6,6 +6,9 @@ pub mod activity_photos;
 // Check-in tamu dari mesin IoT (server, multipart — di luar server-fn).
 #[cfg(feature = "ssr")]
 pub mod guestbook;
+// Unggah bukti bayar tagihan (server, multipart — di luar server-fn).
+#[cfg(feature = "ssr")]
+pub mod bills;
 pub mod api;
 pub mod app;
 pub mod components;

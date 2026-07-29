@@ -9,6 +9,50 @@ use anyhow::{Context, Result};
 use chrono::NaiveDate;
 use deadpool_postgres::Pool;
 
+/// Target notifikasi izin: penyetuju kelas UTAMA santri (wali kelas selalu;
+/// pamong hanya bila `require_pamong` = verifikasi 2 langkah).
+pub struct PermitNotifyTargets {
+    pub student_name: String,
+    pub require_pamong: bool,
+    pub wali_name: Option<String>,
+    pub wali_phone: Option<String>,
+    pub pamong_name: Option<String>,
+    pub pamong_phone: Option<String>,
+}
+
+/// Ambil wali kelas + pamong (nama & HP) dari kelas UTAMA (is_primary) santri.
+pub async fn permit_notify_targets(
+    pool: &Pool,
+    student_id: i64,
+) -> Result<Option<PermitNotifyTargets>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(
+            "SELECT s.full_name, \
+                    COALESCE(cl.require_pamong, TRUE), \
+                    w.full_name, w.phone_number, \
+                    pm.full_name, pm.phone_number \
+             FROM users s \
+             LEFT JOIN class_participants cp ON cp.user_id = s.id AND cp.is_primary \
+             LEFT JOIN classes cl ON cl.id = cp.class_id \
+             LEFT JOIN users w  ON w.id = cl.wali_kelas_id \
+             LEFT JOIN users pm ON pm.id = cl.pamong_id \
+             WHERE s.id = $1 \
+             LIMIT 1",
+            &[&student_id],
+        )
+        .await
+        .context("permit_notify_targets")?;
+    Ok(row.map(|r| PermitNotifyTargets {
+        student_name: r.get(0),
+        require_pamong: r.get(1),
+        wali_name: r.get(2),
+        wali_phone: r.get(3),
+        pamong_name: r.get(4),
+        pamong_phone: r.get(5),
+    }))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_permit(
     pool: &Pool,

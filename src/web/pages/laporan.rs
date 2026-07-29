@@ -48,14 +48,18 @@ pub fn LaporanPage() -> impl IntoView {
                         {move || {
                             let role = session.and_then(|s| s.get()).flatten().map(|u| u.role);
                             match role.as_deref() {
-                                Some("admin") | Some("supervisor") => {
+                                // ketua = admin (finance).
+                                Some("admin") | Some("ketua") | Some("supervisor") => {
                                     view! { <LaporanAdminBody /> }.into_any()
                                 }
                                 Some("teacher") | Some("dewan_guru") => {
                                     view! { <LaporanGuruBody /> }.into_any()
                                 }
                                 Some("parent") => view! { <LaporanOrtuBody /> }.into_any(),
-                                Some("santri") => view! { <LaporanSantriBody /> }.into_any(),
+                                // santri_finance = santri.
+                                Some("santri") | Some("santri_finance") => {
+                                    view! { <LaporanSantriBody /> }.into_any()
+                                }
                                 _ => view! {
                                     <div class="ppm-empty">"Sesi tidak valid — silakan masuk kembali."</div>
                                 }

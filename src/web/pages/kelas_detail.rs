@@ -616,7 +616,8 @@ fn AddMemberForm(
     let do_search = move || {
         let query = q.get_untracked();
         leptos::task::spawn_local(async move {
-            if let Ok(r) = staff_search_students(query).await {
+            // class_id → server mengecualikan santri yang sudah di kelas ini.
+            if let Ok(r) = staff_search_students(query, class_id).await {
                 results.set(r);
             }
         });
@@ -645,9 +646,9 @@ fn AddMemberForm(
                 Ok(n) => {
                     msg.set(Some((true, format!("{n} santri ditambahkan ke kelas."))));
                     selected.set(Vec::new());
-                    results.set(Vec::new());
                     q.set(String::new());
                     refetch();
+                    do_search(); // refresh daftar → yg baru ditambah hilang dari pilihan
                 }
                 Err(e) => {
                     let m = e.to_string();

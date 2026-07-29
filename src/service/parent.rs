@@ -48,7 +48,7 @@ fn status_today(status: &str) -> &'static str {
         "late" => "Terlambat Masuk",
         "permit" | "sick" => "Izin",
         "absent" => "Tidak Hadir",
-        _ => "Masuk Sekolah",
+        _ => "Hadir",
     }
 }
 

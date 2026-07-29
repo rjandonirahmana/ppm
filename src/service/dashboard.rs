@@ -82,6 +82,7 @@ fn initial_of(name: &str) -> String {
 pub(crate) fn map_live(rows: Vec<crate::repository::LiveSesiRow>) -> Vec<LiveSesi> {
     rows.into_iter()
         .map(|s| LiveSesi {
+            id: s.id,
             title: s.title,
             teacher: s.teacher,
             santri_count: s.santri_count,

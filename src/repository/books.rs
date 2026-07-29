@@ -155,7 +155,7 @@ pub async fn all_students_academic_summary(pool: &Pool) -> Result<Vec<StudentAca
              FROM users u \
              CROSS JOIN books b \
              LEFT JOIN academic_user a ON a.user_id = u.id AND a.book_id = b.id \
-             WHERE u.role = 'santri' AND u.is_active = TRUE AND b.deleted_at IS NULL \
+             WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE AND b.deleted_at IS NULL \
              GROUP BY u.id, u.full_name, u.nis \
              ORDER BY 4 ASC, u.full_name",
             &[],

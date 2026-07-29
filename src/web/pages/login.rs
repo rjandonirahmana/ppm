@@ -16,6 +16,26 @@ pub fn LoginPage() -> impl IntoView {
     let password = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let error = RwSignal::new(Option::<String>::None);
+    // Pesan info (mis. forgot-password terkirim).
+    let info = RwSignal::new(Option::<String>::None);
+
+    // Lupa password: pakai nomor HP yang sudah diketik → kirim password baru via WA.
+    let on_forgot = move |ev: leptos::ev::MouseEvent| {
+        ev.prevent_default();
+        let l = login.get_untracked();
+        if l.trim().len() < 6 {
+            error.set(Some("Isi nomor HP dulu untuk reset password.".into()));
+            return;
+        }
+        info.set(None);
+        error.set(None);
+        leptos::task::spawn_local(async move {
+            let _ = crate::web::api::forgot_password_action(l).await;
+            info.set(Some(
+                "Jika nomor terdaftar, password baru dikirim via WhatsApp. Cek WA Anda.".into(),
+            ));
+        });
+    };
 
     // Sudah punya sesi (JWT cookie masih hidup)? Langsung masuk — tak perlu
     // login ulang. Pakai CONTEXT sesi global dari App (audit poin 4); sliding
@@ -38,7 +58,7 @@ pub fn LoginPage() -> impl IntoView {
         let l = login.get_untracked();
         let p = password.get_untracked();
         if l.trim().is_empty() || p.is_empty() {
-            error.set(Some("Username/email dan kata sandi wajib diisi.".into()));
+            error.set(Some("Nomor HP dan kata sandi wajib diisi.".into()));
             return;
         }
         busy.set(true);
@@ -158,18 +178,26 @@ pub fn LoginPage() -> impl IntoView {
                                         }
                                     })
                             }}
+                            {move || {
+                                info.get().map(|m| view! {
+                                    <div class="flex items-center gap-2 p-3 bg-secondary-container text-on-secondary-container rounded-xl text-body-sm" role="status">
+                                        <span class="material-symbols-outlined text-xl">"chat"</span>
+                                        <span>{m}</span>
+                                    </div>
+                                })
+                            }}
                             <div class="space-y-2">
                                 <label class="text-label-md text-on-surface-variant ml-1" for="username">
-                                    "Username atau Email"
+                                    "Nomor HP"
                                 </label>
                                 <div class="relative group">
-                                    <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">"person"</span>
+                                    <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">"call"</span>
                                     <input
                                         class="w-full pl-12 pr-4 py-4 bg-surface-container-lowest border border-outline-variant rounded-xl focus:border-primary input-focus-ring outline-none transition-all text-body-md"
                                         id="username"
                                         name="username"
-                                        placeholder="admin@ppmafm.sch.id"
-                                        type="text"
+                                        placeholder="08xxxxxxxxxx"
+                                        type="tel"
                                         required=true
                                         prop:value=move || login.get()
                                         on:input=move |ev| login.set(event_target_value(&ev))
@@ -180,7 +208,7 @@ pub fn LoginPage() -> impl IntoView {
                             <div class="space-y-2">
                                 <div class="flex justify-between items-center px-1">
                                     <label class="text-label-md text-on-surface-variant" for="password">"Kata Sandi"</label>
-                                    <a class="text-label-md text-primary font-bold hover:underline" href="#">"Lupa sandi?"</a>
+                                    <a class="text-label-md text-primary font-bold hover:underline cursor-pointer" href="#" on:click=on_forgot>"Lupa sandi?"</a>
                                 </div>
                                 <div class="relative group">
                                     <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">"lock"</span>
@@ -236,7 +264,13 @@ pub fn LoginPage() -> impl IntoView {
                                 "Punya kode referal dari admin? "
                                 <a class="text-primary font-bold hover:underline" href="/register">"Daftar di sini"</a>
                             </p>
-                            <div class="mt-8 flex justify-center gap-8 opacity-50">
+                            <div class="mt-6">
+                                <a class="inline-flex items-center gap-1.5 text-label-md text-primary font-semibold hover:underline" href="/">
+                                    <span class="material-symbols-outlined text-lg">"home"</span>
+                                    "Kembali ke Beranda"
+                                </a>
+                            </div>
+                            <div class="mt-6 flex justify-center gap-8 opacity-50">
                                 <a class="text-label-md hover:text-primary transition-colors" href="#">"Bantuan"</a>
                                 <a class="text-label-md hover:text-primary transition-colors" href="#">"Privasi"</a>
                                 <a class="text-label-md hover:text-primary transition-colors" href="#">"Syarat"</a>

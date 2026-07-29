@@ -59,7 +59,7 @@ pub async fn students_outside(pool: &Pool, limit: i64) -> Result<Vec<OutsideRow>
                  SELECT cp.class_id FROM class_participants cp \
                  WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
              ) \
-             WHERE u.role = 'santri' AND u.is_active = TRUE AND u.gate_status = 'out' \
+             WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE AND u.gate_status = 'out' \
              ORDER BY u.gate_at DESC NULLS LAST LIMIT $1",
             &[&limit],
         )
@@ -81,7 +81,7 @@ pub async fn count_outside(pool: &Pool) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
-            "SELECT COUNT(*) FROM users WHERE role = 'santri' AND is_active = TRUE AND gate_status = 'out'",
+            "SELECT COUNT(*) FROM users WHERE role IN ('santri', 'santri_finance') AND is_active = TRUE AND gate_status = 'out'",
             &[],
         )
         .await

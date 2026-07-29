@@ -25,7 +25,7 @@ pub fn GaleriPage() -> impl IntoView {
         let m = session
             .and_then(|s| s.get())
             .flatten()
-            .map(|u| matches!(u.role.as_str(), "admin" | "dewan_guru"))
+            .map(|u| matches!(u.role.as_str(), "admin" | "ketua" | "dewan_guru"))
             .unwrap_or(false);
         manage.set(m);
     });

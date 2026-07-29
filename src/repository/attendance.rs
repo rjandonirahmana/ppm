@@ -42,7 +42,7 @@ pub async fn weekly_net_points(
         .query(
             "SELECT u.full_name, u.nis, cl.name, SUM(pl.delta)::int AS net \
              FROM point_logs pl \
-             JOIN users u ON u.id = pl.user_id AND u.role = 'santri' \
+             JOIN users u ON u.id = pl.user_id AND u.role IN ('santri', 'santri_finance') \
              LEFT JOIN class_participants cp ON cp.user_id = u.id AND cp.is_primary \
              LEFT JOIN classes cl ON cl.id = cp.class_id \
              WHERE (pl.created_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1 AND $2 \
@@ -100,7 +100,7 @@ pub async fn weekly_counts_by_category(
              JOIN attendances a ON a.user_id = u.id \
                 AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1 AND $2 \
              LEFT JOIN class_schedules sch ON sch.id = a.class_schedule_id \
-             WHERE u.role = 'santri' AND u.is_active = TRUE \
+             WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
              GROUP BY u.id, u.full_name, u.nis, COALESCE(sch.activity_type, 'other') \
              ORDER BY u.full_name",
             &[&start, &end],
@@ -200,7 +200,7 @@ pub async fn weekly_recap(
              FROM users u \
              LEFT JOIN attendances a ON a.user_id = u.id \
                 AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1 AND $2 \
-             WHERE u.role = 'santri' AND u.is_active = TRUE \
+             WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
              GROUP BY u.id, u.full_name, u.nis, u.points \
              ORDER BY u.full_name",
             &[&start, &end],
@@ -324,6 +324,54 @@ pub async fn approved_today(pool: &Pool) -> Result<i64> {
 /// Setujui/tolak (tahap pamong) DALAM SATU TRANSAKSI. Saat disetujui, poin
 /// kehadiran diberikan (models::attendance::point_rule): insert point_logs +
 /// update saldo users.points. Return true bila ada baris ter-update.
+/// Daftar santri satu SESI yang menunggu verifikasi pada `stage` ("pamong" |
+/// "final"), dibatasi kepemilikan bila `actor_id` Some (pamong/wali sesi itu);
+/// None = admin/dewan (semua). Dipakai panel verifikasi per-sesi di detail sesi.
+pub async fn session_verify_list(
+    pool: &Pool,
+    session_id: i64,
+    stage: &str,
+    actor_id: Option<i64>,
+) -> Result<Vec<PendingRow>> {
+    let c = pool.get().await?;
+    let sql = if stage == "pamong" {
+        "SELECT a.id, u.full_name, u.nis, cl.name, a.scanned_at, a.gate_label, a.status \
+         FROM attendances a JOIN users u ON u.id = a.user_id \
+         LEFT JOIN class_sessions cs ON cs.id = a.class_session_id \
+         LEFT JOIN classes cl ON cl.id = cs.class_id \
+         WHERE a.class_session_id = $1 AND a.pamong_status = 'pending' \
+           AND COALESCE(cl.require_pamong, TRUE) = TRUE \
+           AND ($2::bigint IS NULL OR COALESCE(cs.pamong_id, cl.pamong_id) = $2) \
+         ORDER BY u.full_name"
+    } else {
+        "SELECT a.id, u.full_name, u.nis, cl.name, a.scanned_at, a.gate_label, a.status \
+         FROM attendances a JOIN users u ON u.id = a.user_id \
+         LEFT JOIN class_sessions cs ON cs.id = a.class_session_id \
+         LEFT JOIN classes cl ON cl.id = cs.class_id \
+         WHERE a.class_session_id = $1 AND a.verify_status = 'pending' \
+           AND CASE WHEN COALESCE(cl.require_pamong, TRUE) \
+                THEN a.pamong_status = 'approved' ELSE TRUE END \
+           AND ($2::bigint IS NULL OR COALESCE(cs.teacher_id, cl.wali_kelas_id) = $2) \
+         ORDER BY u.full_name"
+    };
+    let rows = c
+        .query(sql, &[&session_id, &actor_id])
+        .await
+        .context("session_verify_list")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| PendingRow {
+            id: r.get(0),
+            full_name: r.get(1),
+            nis: r.get(2),
+            class_name: r.get(3),
+            scanned_at: r.get(4),
+            gate_label: r.get(5),
+            status: r.get(6),
+        })
+        .collect())
+}
+
 pub async fn decide_pamong(
     pool: &Pool,
     att_id: i64,

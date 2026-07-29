@@ -14,6 +14,45 @@ use crate::repository as repo;
 /// Kunci setelan mode persetujuan izin.
 pub const PERMIT_MODE_KEY: &str = "permit_approval_mode";
 
+/// Normalisasi HP untuk chat-ID WAHA (08.. → 62..).
+fn wa_phone(p: &str) -> String {
+    let d: String = p.chars().filter(|c| c.is_ascii_digit()).collect();
+    match d.strip_prefix('0') {
+        Some(rest) => format!("62{rest}"),
+        None => d,
+    }
+}
+
+/// Kirim WA notifikasi izin baru ke penyetuju kelas UTAMA santri. Best-effort
+/// (gagal WA tak menggagalkan pengajuan). `by_parent` = pemohon orang tua.
+///   • Wali kelas (penyetuju final): SELALU diberi tahu.
+///   • Pamong (tahap-1): hanya bila kelas verifikasi 2 langkah (require_pamong).
+pub async fn notify_permit(
+    http: &reqwest::Client,
+    waha: &crate::config::WahaConfig,
+    pool: &Pool,
+    student_id: i64,
+    by_parent: bool,
+) {
+    let t = match repo::permit_notify_targets(pool, student_id).await {
+        Ok(Some(t)) => t,
+        _ => return,
+    };
+    let pemohon = if by_parent { "orang tua" } else { "santri sendiri" };
+    let msg = format!(
+        "🔔 *Pengajuan Izin Baru*\nSantri: {}\nDiajukan oleh: {}\n\nMohon segera diproses di aplikasi PPM AFM.",
+        t.student_name, pemohon
+    );
+    if t.require_pamong {
+        if let Some(phone) = t.pamong_phone.as_deref().filter(|p| !p.is_empty()) {
+            let _ = super::registration::send_wa_text(http, waha, &wa_phone(phone), &msg).await;
+        }
+    }
+    if let Some(phone) = t.wali_phone.as_deref().filter(|p| !p.is_empty()) {
+        let _ = super::registration::send_wa_text(http, waha, &wa_phone(phone), &msg).await;
+    }
+}
+
 /// Mode persetujuan izin saat ini ("two_stage" | "direct_guru"). Default
 /// "two_stage" bila belum diset.
 pub async fn approval_mode(pool: &Pool) -> String {
@@ -77,7 +116,8 @@ pub async fn permit_queue(pool: &Pool, role: &str, user_id: i64) -> Result<Permi
         });
     }
 
-    // Wali kelas (teacher) → hanya kelasnya; dewan guru/admin → semua.
+    // Wali kelas (teacher) → hanya kelasnya; admin → semua (superuser).
+    // Dewan guru tak lagi diberi akses izin santri (gate di api.rs).
     let wali_id = (role == "teacher").then_some(user_id);
     let (pending, decided_today) = tokio::join!(
         repo::pending_guru_permits(pool, wali_id, default_require, 50),

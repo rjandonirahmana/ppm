@@ -812,22 +812,20 @@ pub async fn remove_member(pool: &Pool, class_id: i64, student_id: i64) -> Resul
     Ok(())
 }
 
-/// Cari santri untuk ditambahkan ke kelas. Query pendek/kosong → daftar DEFAULT
-/// (beberapa santri) supaya form tak kosong sebelum mengetik.
-pub async fn search_students(pool: &Pool, q: &str) -> Result<Vec<StudentSearchItem>> {
-    if q.trim().chars().count() < 2 {
-        return Ok(repo::some_students(pool, 15)
-            .await?
-            .into_iter()
-            .map(|s| StudentSearchItem {
-                id: s.id,
-                name: s.full_name,
-                nis: s.nis.unwrap_or_else(|| "-".into()),
-                class_name: s.class_name.unwrap_or_else(|| "-".into()),
-            })
-            .collect());
-    }
-    super::parent::search_students(pool, q).await
+/// Cari santri untuk ditambahkan ke `class_id`. MENGECUALIKAN santri yang sudah
+/// jadi anggota kelas itu (tak perlu ditambah lagi). Query pendek/kosong →
+/// daftar DEFAULT supaya form tak kosong sebelum mengetik.
+pub async fn search_students(pool: &Pool, q: &str, class_id: i64) -> Result<Vec<StudentSearchItem>> {
+    Ok(repo::students_not_in_class(pool, class_id, q, 20)
+        .await?
+        .into_iter()
+        .map(|s| StudentSearchItem {
+            id: s.id,
+            name: s.full_name,
+            nis: s.nis.unwrap_or_else(|| "-".into()),
+            class_name: s.class_name.unwrap_or_else(|| "-".into()),
+        })
+        .collect())
 }
 
 /// Pasang/ubah pengajar sebuah sesi (0 = kosongkan).

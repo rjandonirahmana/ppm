@@ -32,13 +32,28 @@ impl From<Claims> for SessionUser {
 }
 
 /// Rute default per peran setelah login.
+/// Apakah `role` memenuhi salah satu `allowed`? Aturan superset:
+///   • `ketua` = admin PENUH → boleh di mana pun `admin` boleh.
+///   • `santri_finance` = santri PENUH → boleh di mana pun `santri` boleh
+///     (akses finance-nya di-list eksplisit di gate finance).
+/// Dipakai `require_roles` (satu tempat) → tak perlu menambal tiap gate, dan
+/// mencegah user finance ter-forbidden lalu "keluar session" (redirect /login).
+pub fn role_satisfies(role: &str, allowed: &[&str]) -> bool {
+    allowed.contains(&role)
+        || (role == "ketua" && allowed.contains(&"admin"))
+        || (role == "santri_finance" && allowed.contains(&"santri"))
+}
+
 pub fn role_home(role: &str) -> &'static str {
     match role {
-        "admin" => "/staf",
-        "teacher" => "/guru",
-        "dewan_guru" => "/dewan-guru",
+        // Ketua = admin + finance → dashboard staf (admin).
+        "admin" | "ketua" => "/staf",
+        // 'teacher' digabung ke 'dewan_guru' (migrasi 36) — arahkan ke dashboard
+        // yang sama bila ada sisa data lama.
+        "teacher" | "dewan_guru" => "/dewan-guru",
         "supervisor" => "/verifikasi-pamong",
-        "santri" => "/santri",
+        // santri_finance = santri pemegang kunci finance → dashboard santri.
+        "santri" | "santri_finance" => "/santri",
         "parent" => "/orang-tua",
         _ => "/menu",
     }

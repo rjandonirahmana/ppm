@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 /// Sesi live di dashboard staf.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LiveSesi {
+    pub id: i64,
     pub title: String,
     pub teacher: String,
     pub santri_count: i64,

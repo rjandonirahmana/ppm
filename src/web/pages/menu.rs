@@ -16,6 +16,8 @@ const LINKS: &[(&str, &str, &str)] = &[
     ("/profil", "Profil Pengguna", "person"),
     ("/staf", "Dashboard Staf", "badge"),
     ("/galeri", "Galeri Foto Kegiatan", "grid_on"),
+    ("/tagihan", "Tagihan (Finance)", "card_giftcard"),
+    ("/tagihan-saya", "Tagihan Saya (Santri)", "fact_check"),
     ("/guru", "Analisis Guru", "analytics"),
     ("/dewan-guru", "Analisis Dewan Guru", "insights"),
     ("/poin", "Pantauan Poin Santri", "stars"),

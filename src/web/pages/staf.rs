@@ -171,6 +171,7 @@ fn StafBody(d: StafHome) -> impl IntoView {
                     ("stars", "Poin", "/poin"),
                     ("cast_for_education", "Sesi", "/sesi"),
                     ("summarize", "Rekap", "/rekap-mingguan"),
+                    ("card_giftcard", "Tagihan", "/tagihan"),
                     ("grid_on", "Galeri", "/galeri"),
                     ("shield", "Kontrol", "/kontrol-pengguna"),
                     ("settings", "Setelan", "/setelan"),
@@ -231,15 +232,18 @@ fn LiveSesiCard(s: LiveSesi) -> impl IntoView {
     let (label, badge_cls) = live_state_badge(&s.state);
     let border = if s.state == "live" { "border-l-4 border-primary" } else { "border-l-4 border-outline-variant" };
     view! {
-        <div class=format!(
-            "bg-surface-container-lowest p-3 rounded-xl {border} flex items-center justify-between",
-        )>
+        <a
+            href=format!("/sesi/{}", s.id)
+            class=format!(
+                "bg-surface-container-lowest p-3 rounded-xl {border} flex items-center justify-between press",
+            )
+        >
             <div>
                 <p class="font-semibold text-on-background">{s.title}</p>
                 <p class="text-[11px] text-on-surface-variant">{format!("{} • {} santri • {}", s.teacher, s.santri_count, s.time_label)}</p>
             </div>
             <span class=badge_cls>{label}</span>
-        </div>
+        </a>
     }
 }
 

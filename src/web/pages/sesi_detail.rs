@@ -13,9 +13,9 @@ use leptos_router::hooks::use_params_map;
 
 use crate::models::{is_mengaji_category, HafalanItem, SessionAttRow, SessionChatItem, SessionDetailData};
 use crate::web::api::{
-    hafalan_of_class_action, log_hafalan_action, mark_session_bulk, mark_session_present,
-    session_detail_data, set_session_book_action, set_session_live, set_session_pamong_action,
-    set_session_teacher_action,
+    decide_session_action, hafalan_of_class_action, log_hafalan_action, mark_session_bulk,
+    mark_session_present, session_detail_data, session_verify_data, set_session_book_action,
+    set_session_live, set_session_pamong_action, set_session_teacher_action,
 };
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 
@@ -484,7 +484,7 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                             .into_any()
                     }
                     _ => {
-                        // "absensi" (default) — panel dengan aksi massal.
+                        // "absensi" (default) — panel tandai + panel verifikasi sesi.
                         view! {
                             <AbsensiPanel
                                 attendance=d.attendance.clone()
@@ -492,6 +492,7 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                                 can_mark=!is_cancelled
                                 refetch=refetch
                             />
+                            <VerifikasiSesiPanel session_id=session_id refetch=refetch />
                         }
                             .into_any()
                     }
@@ -922,5 +923,122 @@ fn HafalanPanel(class_id: i64, students: Vec<(i64, String)>) -> impl IntoView {
                 }}
             </Suspense>
         </div>
+    }
+}
+
+fn status_short(s: &str) -> &'static str {
+    match s {
+        "present" => "Hadir",
+        "late" => "Telat",
+        "absent" => "Alpa",
+        "permit" => "Izin",
+        "sick" => "Sakit",
+        _ => "-",
+    }
+}
+
+/// Panel verifikasi kehadiran PER-SESI (pamong tahap-1 / dewan guru final).
+/// Centang = setujui (default); hilangkan centang = tolak. Satu klik memproses
+/// SELURUH sesi (bukan per santri). Non-verifier → server forbidden → panel kosong.
+#[component]
+fn VerifikasiSesiPanel(
+    session_id: i64,
+    refetch: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
+    let data = Resource::new(
+        move || session_id,
+        |id| async move { session_verify_data(id).await },
+    );
+    let reject = RwSignal::new(Vec::<i64>::new());
+    let busy = RwSignal::new(false);
+    let msg = RwSignal::new(Option::<String>::None);
+
+    let toggle = move |att_id: i64, will_reject: bool| {
+        reject.update(|v| {
+            if will_reject {
+                if !v.contains(&att_id) {
+                    v.push(att_id);
+                }
+            } else {
+                v.retain(|&x| x != att_id);
+            }
+        });
+    };
+
+    let submit = move |_| {
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        msg.set(None);
+        let rej = reject.get_untracked();
+        leptos::task::spawn_local(async move {
+            match decide_session_action(session_id, rej).await {
+                Ok(n) => {
+                    msg.set(Some(format!("{n} kehadiran diproses.")));
+                    reject.set(Vec::new());
+                    data.refetch();
+                    refetch();
+                }
+                Err(e) => {
+                    let m = e.to_string();
+                    msg.set(Some(m.rsplit(": ").next().unwrap_or(&m).to_string()));
+                }
+            }
+            busy.set(false);
+        });
+    };
+
+    view! {
+        <Suspense fallback=|| ()>
+            {move || {
+                data.get().and_then(|res| res.ok()).and_then(|d| {
+                    (!d.items.is_empty()).then(|| {
+                        let n_total = d.items.len();
+                        view! {
+                            <div class="ppm-card p-4 space-y-3 mt-3">
+                                <div class="flex items-center justify-between">
+                                    <h3 class="text-body-md font-bold text-on-background flex items-center gap-2">
+                                        <span class="material-symbols-outlined text-primary">"how_to_reg"</span>
+                                        {d.stage_label.clone()}
+                                    </h3>
+                                    <span class="text-[11px] text-on-surface-variant">{format!("{n_total} menunggu")}</span>
+                                </div>
+                                <p class="text-[11px] text-on-surface-variant">
+                                    "Centang = disetujui. Hilangkan centang untuk MENOLAK. Lalu verifikasi seluruh sesi sekali klik."
+                                </p>
+                                {move || msg.get().map(|m| view! {
+                                    <div class="p-2.5 bg-secondary-container text-on-secondary-container rounded-lg text-body-sm">{m}</div>
+                                })}
+                                <div class="space-y-1">
+                                    {d.items.iter().map(|it| {
+                                        let att_id = it.att_id;
+                                        view! {
+                                            <label class="flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-surface-container-low">
+                                                <input type="checkbox" prop:checked=true
+                                                    on:change=move |e| toggle(att_id, !event_target_checked(&e)) />
+                                                <span class="flex-1 text-body-sm text-on-surface">{it.name.clone()}</span>
+                                                <span class="text-[10px] text-on-surface-variant">{it.nis.clone()}</span>
+                                                <span class="text-[10px] font-bold text-primary">{status_short(&it.status)}</span>
+                                            </label>
+                                        }
+                                    }).collect_view()}
+                                </div>
+                                <button
+                                    class="w-full py-2.5 bg-primary text-on-primary rounded-xl font-bold text-body-sm press disabled:opacity-60"
+                                    disabled=move || busy.get() on:click=submit
+                                >
+                                    {move || if busy.get() { "Memproses…".to_string() } else {
+                                        let r = reject.get().len();
+                                        if r > 0 { format!("Verifikasi Sesi ({} setuju, {} tolak)", n_total - r, r) }
+                                        else { format!("Setujui Seluruh Sesi ({})", n_total) }
+                                    }}
+                                </button>
+                            </div>
+                        }
+                    })
+                })
+            }}
+        </Suspense>
     }
 }

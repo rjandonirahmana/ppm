@@ -13,7 +13,7 @@ use crate::web::api::{
     kelas_list, update_book_action,
 };
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
-use crate::web::pages::SesiContent;
+use crate::web::pages::{SesiContent, StudentBookPanel};
 
 #[component]
 pub fn KelasPage() -> impl IntoView {
@@ -68,7 +68,7 @@ pub fn KelasPage() -> impl IntoView {
                                     .map(|u| {
                                         matches!(
                                             u.role.as_str(),
-                                            "admin" | "supervisor" | "teacher" | "dewan_guru"
+                                            "admin" | "ketua" | "supervisor" | "teacher" | "dewan_guru"
                                         )
                                     })
                                     .unwrap_or(false);
@@ -97,7 +97,7 @@ pub fn KelasPage() -> impl IntoView {
                                                 .map(|u| {
                                                     matches!(
                                                         u.role.as_str(),
-                                                        "admin" | "supervisor" | "teacher" | "dewan_guru"
+                                                        "admin" | "ketua" | "supervisor" | "teacher" | "dewan_guru"
                                                     )
                                                 })
                                                 .unwrap_or(false);
@@ -832,11 +832,13 @@ fn BookForm(
 #[component]
 fn AcademicAuditTab() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { academic_audit_data().await });
+    // Baris santri mana yang sedang di-expand (progres materi inline).
+    let expanded = RwSignal::new(Option::<i64>::None);
 
     view! {
         <div class="space-y-3 stagger">
             <p class="text-body-sm text-on-surface-variant">
-                "Rata-rata progres tiap santri di semua materi (hadits/Qur'an) — paling tertinggal ditampilkan lebih dulu. Klik baris untuk buka detail di Students."
+                "Rata-rata progres tiap santri di semua materi (hadits/Qur'an) — paling tertinggal ditampilkan lebih dulu. Klik baris untuk lihat progres per materi."
             </p>
             <Suspense fallback=|| {
                 view! {
@@ -862,7 +864,7 @@ fn AcademicAuditTab() -> impl IntoView {
                                         <div class="ppm-card divide-y divide-outline-variant/40">
                                             {items
                                                 .into_iter()
-                                                .map(|s| view! { <AcademicAuditRow s=s /> })
+                                                .map(|s| view! { <AcademicAuditRow s=s expanded=expanded /> })
                                                 .collect_view()}
                                         </div>
                                     }
@@ -878,8 +880,10 @@ fn AcademicAuditTab() -> impl IntoView {
 }
 
 #[component]
-fn AcademicAuditRow(s: StudentAcademicItem) -> impl IntoView {
+fn AcademicAuditRow(s: StudentAcademicItem, expanded: RwSignal<Option<i64>>) -> impl IntoView {
     let pct = s.avg_percentage;
+    let sid = s.user_id;
+    let sname = s.name.clone();
     let bar_color = if pct >= 75 {
         "bg-success"
     } else if pct >= 40 {
@@ -888,20 +892,38 @@ fn AcademicAuditRow(s: StudentAcademicItem) -> impl IntoView {
         "bg-error"
     };
     let progress_label = format!("{}/{} materi dimulai", s.books_started, s.total_books);
-    let href = format!("/students?student={}", s.user_id);
     view! {
-        <a
-            href=href
-            class="p-3 md:px-4 flex items-center gap-3 hover:bg-surface-container-low transition-colors"
-        >
-            <div class="flex-1 min-w-0">
-                <p class="text-body-md font-semibold text-on-background truncate">{s.name}</p>
-                <p class="text-[11px] text-on-surface-variant">{format!("NIS: {} • {progress_label}", s.nis)}</p>
-                <div class="h-1.5 bg-surface-container rounded-full overflow-hidden mt-1.5 max-w-xs">
-                    <div class=format!("h-full {bar_color}") style=format!("width: {pct}%")></div>
+        <div>
+            // Baris klik → toggle expand (progres materi inline, seperti Students).
+            <div
+                class="p-3 md:px-4 flex items-center gap-3 hover:bg-surface-container-low transition-colors cursor-pointer"
+                on:click=move |_| {
+                    expanded.update(|e| *e = if *e == Some(sid) { None } else { Some(sid) });
+                }
+            >
+                <div class="flex-1 min-w-0">
+                    <p class="text-body-md font-semibold text-on-background truncate">{s.name}</p>
+                    <p class="text-[11px] text-on-surface-variant">{format!("NIS: {} • {progress_label}", s.nis)}</p>
+                    <div class="h-1.5 bg-surface-container rounded-full overflow-hidden mt-1.5 max-w-xs">
+                        <div class=format!("h-full {bar_color}") style=format!("width: {pct}%")></div>
+                    </div>
                 </div>
+                <p class="text-body-lg font-bold text-primary shrink-0">{format!("{pct}%")}</p>
+                <span
+                    class="material-symbols-outlined text-on-surface-variant shrink-0 text-[20px] transition-transform"
+                    class:rotate-180=move || expanded.get() == Some(sid)
+                >
+                    "expand_more"
+                </span>
             </div>
-            <p class="text-body-lg font-bold text-primary shrink-0">{format!("{pct}%")}</p>
-        </a>
+            // Panel progres materi (fokus akademik) — reuse dari Students.
+            {move || {
+                (expanded.get() == Some(sid)).then(|| view! {
+                    <div class="px-3 md:px-4 pb-4 bg-surface-container-low/60">
+                        <StudentBookPanel student_id=sid student_name=sname.clone() />
+                    </div>
+                })
+            }}
+        </div>
     }
 }

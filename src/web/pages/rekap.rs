@@ -22,7 +22,7 @@ pub fn RekapMingguanPage() -> impl IntoView {
         session
             .and_then(|s| s.get())
             .flatten()
-            .map(|u| u.role == "admin")
+            .map(|u| matches!(u.role.as_str(), "admin" | "ketua")) // ketua = admin
             .unwrap_or(false)
     };
 

@@ -335,7 +335,7 @@ fn StudentList(
 // ── Progres Buku (migrasi 18) ────────────────────────────────────────────────
 
 #[component]
-fn StudentBookPanel(student_id: i64, student_name: String) -> impl IntoView {
+pub fn StudentBookPanel(student_id: i64, student_name: String) -> impl IntoView {
     let data = Resource::new(
         move || student_id,
         |id| async move { student_book_progress_data(id).await },

@@ -45,6 +45,15 @@ pub fn BerandaPage() -> impl IntoView {
                         <a class="hover:text-primary transition-colors" href="#statistik">"Statistik"</a>
                         <a class="hover:text-primary transition-colors" href="#lokasi">"Lokasi"</a>
                     </div>
+                    <div class="flex items-center gap-2">
+                    // Tombol Buku Tamu (publik) — tamu isi data & dapat kode.
+                    <a
+                        href="/tamu"
+                        class="hidden sm:flex items-center gap-2 px-4 py-2.5 border border-outline-variant text-on-surface rounded-xl text-body-sm font-semibold hover:border-primary hover:text-primary transition-colors"
+                    >
+                        <span class="material-symbols-outlined text-lg">"how_to_reg"</span>
+                        "Buku Tamu"
+                    </a>
                     <Suspense fallback=|| {
                         view! {
                             <a
@@ -73,6 +82,7 @@ pub fn BerandaPage() -> impl IntoView {
                             }
                         }}
                     </Suspense>
+                    </div>
                 </div>
             </nav>
 

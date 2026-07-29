@@ -17,10 +17,11 @@ use crate::web::components::{DeviceFrame, EmptyState, MobileHeader};
 
 const ROLE_OPTIONS: &[(&str, &str)] = &[
     ("admin", "Admin"),
-    ("teacher", "Guru"),
+    ("ketua", "Ketua"),
     ("dewan_guru", "Dewan Guru"),
     ("supervisor", "Pamong"),
     ("santri", "Santri"),
+    ("santri_finance", "Santri (Finance)"),
     ("parent", "Orang Tua"),
 ];
 
@@ -305,7 +306,6 @@ fn InvitePanel() -> impl IntoView {
     const ROLES: &[(&str, &str)] = &[
         ("santri", "Santri"),
         ("parent", "Orang Tua"),
-        ("teacher", "Guru"),
         ("dewan_guru", "Dewan Guru"),
         ("supervisor", "Pamong"),
     ];

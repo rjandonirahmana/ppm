@@ -11,14 +11,22 @@ pub struct LoginRow {
     pub phone_number: Option<String>,
 }
 
-/// Cari user untuk login — cocokkan username ATAU email ATAU NIS.
-pub async fn find_user_for_login(pool: &Pool, login: &str) -> Result<Option<LoginRow>> {
+/// Cari user untuk login — UTAMANYA nomor HP (login = phone), tetap dukung
+/// username/email/NIS sbg fallback (mis. admin seed). `login_phone` = HP hasil
+/// normalisasi 08→62 (bentuk tersimpan di DB).
+pub async fn find_user_for_login(
+    pool: &Pool,
+    login: &str,
+    login_phone: &str,
+) -> Result<Option<LoginRow>> {
     let c = pool.get().await?;
     let row = c
         .query_opt(
             "SELECT id, full_name, role, password_hash, phone_number FROM users \
-             WHERE (username = $1 OR email = $1 OR nis = $1) AND is_active = TRUE",
-            &[&login],
+             WHERE (username = $1 OR email = $1 OR nis = $1 \
+                    OR phone_number = $1 OR phone_number = $2) \
+               AND is_active = TRUE",
+            &[&login, &login_phone],
         )
         .await
         .context("find_user_for_login")?;
@@ -161,7 +169,7 @@ pub async fn reset_semester_points(pool: &Pool, start: i32) -> Result<i64> {
         .execute(
             "WITH r AS ( \
                 UPDATE users SET points = $1, updated_at = NOW() \
-                WHERE role = 'santri' RETURNING id, points \
+                WHERE role IN ('santri', 'santri_finance') RETURNING id, points \
              ), lg AS ( \
                 INSERT INTO point_logs (user_id, delta, reason, category) \
                 SELECT id, 0, 'Reset saldo poin awal semester', 'other' FROM r \
@@ -174,7 +182,7 @@ pub async fn reset_semester_points(pool: &Pool, start: i32) -> Result<i64> {
     // hitung santri terpisah agar akurat.
     let _ = n;
     let row = c
-        .query_one("SELECT COUNT(*) FROM users WHERE role = 'santri'", &[])
+        .query_one("SELECT COUNT(*) FROM users WHERE role IN ('santri', 'santri_finance')", &[])
         .await
         .context("reset_semester_points count")?;
     Ok(row.get(0))
@@ -254,7 +262,7 @@ pub async fn user_counts(pool: &Pool) -> Result<(i64, i64, i64, i64)> {
     let row = c
         .query_one(
             "SELECT COUNT(*), \
-                COUNT(*) FILTER (WHERE role = 'santri'), \
+                COUNT(*) FILTER (WHERE role IN ('santri', 'santri_finance')), \
                 COUNT(*) FILTER (WHERE role IN ('teacher','dewan_guru','supervisor')), \
                 COUNT(*) FILTER (WHERE NOT is_active) \
              FROM users",
@@ -290,6 +298,19 @@ pub async fn find_by_phone(pool: &Pool, phone: &str) -> Result<Option<i64>> {
         .await
         .context("find_by_phone")?;
     Ok(row.map(|r| r.get(0)))
+}
+
+/// Ganti password (forgot-password via WA). Return true bila ada baris terubah.
+pub async fn set_password_hash(pool: &Pool, user_id: i64, hash: &str) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE users SET password_hash = $2 WHERE id = $1",
+            &[&user_id, &hash],
+        )
+        .await
+        .context("set_password_hash")?;
+    Ok(n > 0)
 }
 
 /// Buat user dari alur registrasi (name+phone saja — NIS/username/email diisi
