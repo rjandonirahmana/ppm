@@ -285,6 +285,12 @@ pub struct SessionDetailRow {
     pub book_id: Option<i64>,
     pub book_title: Option<String>,
     pub book_pages: serde_json::Value,
+    /// Materi TARGET/rencana (migrasi 41).
+    pub target_book_id: Option<i64>,
+    pub target_book_title: Option<String>,
+    pub target_pages: serde_json::Value,
+    /// Catatan ayat/hadith aktual (migrasi 41).
+    pub actual_detail: String,
 }
 
 /// Kategori kelas dari sebuah sesi — query ringan (dipakai guard server-side
@@ -311,12 +317,14 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
             "SELECT s.id, s.class_id, COALESCE(s.title, cs.title), c.name, s.session_date, \
                     cs.start_time, cs.end_time, s.status, t.full_name, s.recording_path, \
                     s.recording_size, s.teacher_id, COALESCE(cs.category, c.category), \
-                    s.book_id, b.title, s.book_pages, s.pamong_id \
+                    s.book_id, b.title, s.book_pages, s.pamong_id, \
+                    s.target_book_id, tb.title, s.target_pages, s.actual_detail \
              FROM class_sessions s \
              JOIN classes c ON c.id = s.class_id \
              LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
              LEFT JOIN users t ON t.id = s.teacher_id \
              LEFT JOIN books b ON b.id = s.book_id \
+             LEFT JOIN books tb ON tb.id = s.target_book_id \
              WHERE s.id = $1",
             &[&id],
         )
@@ -340,6 +348,10 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
         book_title: r.get(14),
         book_pages: r.get(15),
         pamong_id: r.get(16),
+        target_book_id: r.get(17),
+        target_book_title: r.get(18),
+        target_pages: r.get(19),
+        actual_detail: r.get(20),
     }))
 }
 
@@ -468,6 +480,28 @@ pub async fn is_class_participant(pool: &Pool, class_id: i64, user_id: i64) -> R
         .await
         .context("is_class_participant")?;
     Ok(row.get(0))
+}
+
+/// Santri sebuah kelas + nomor HP-nya (untuk broadcast jadwal via WhatsApp).
+/// Distinct per santri; HP None/'' = santri belum punya nomor (dilewati di
+/// service). Hanya peran santri (bukan staf yang kebetulan ikut kelas).
+pub async fn class_student_contacts(
+    pool: &Pool,
+    class_id: i64,
+) -> Result<Vec<(String, Option<String>)>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT DISTINCT u.full_name, u.phone_number \
+             FROM class_participants cp \
+             JOIN users u ON u.id = cp.user_id AND u.role IN ('santri', 'santri_finance') \
+             WHERE cp.class_id = $1 \
+             ORDER BY u.full_name",
+            &[&class_id],
+        )
+        .await
+        .context("class_student_contacts")?;
+    Ok(rows.into_iter().map(|r| (r.get(0), r.get(1))).collect())
 }
 
 /// Jumlah peserta unik sebuah kelas (header ruang live).

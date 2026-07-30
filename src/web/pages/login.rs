@@ -58,7 +58,7 @@ pub fn LoginPage() -> impl IntoView {
         let l = login.get_untracked();
         let p = password.get_untracked();
         if l.trim().is_empty() || p.is_empty() {
-            error.set(Some("Nomor HP dan kata sandi wajib diisi.".into()));
+            error.set(Some("Nomor HP / username dan kata sandi wajib diisi.".into()));
             return;
         }
         busy.set(true);
@@ -188,16 +188,17 @@ pub fn LoginPage() -> impl IntoView {
                             }}
                             <div class="space-y-2">
                                 <label class="text-label-md text-on-surface-variant ml-1" for="username">
-                                    "Nomor HP"
+                                    "Nomor HP atau Username"
                                 </label>
                                 <div class="relative group">
-                                    <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">"call"</span>
+                                    <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">"person"</span>
                                     <input
                                         class="w-full pl-12 pr-4 py-4 bg-surface-container-lowest border border-outline-variant rounded-xl focus:border-primary input-focus-ring outline-none transition-all text-body-md"
                                         id="username"
                                         name="username"
-                                        placeholder="08xxxxxxxxxx"
-                                        type="tel"
+                                        placeholder="08xxxxxxxxxx atau username"
+                                        type="text"
+                                        autocomplete="username"
                                         required=true
                                         prop:value=move || login.get()
                                         on:input=move |ev| login.set(event_target_value(&ev))

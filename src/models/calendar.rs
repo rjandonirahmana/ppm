@@ -41,5 +41,25 @@ pub struct CalendarData {
     pub today_day: u32,
     /// "Semua kelas" / "Kelas Anda" / "Kelas anak Anda".
     pub scope_label: String,
+    /// Label semester akademik aktif (mis. "Semester Ganjil 2026/2027"),
+    /// kosong bila admin belum menetapkan (migrasi 40).
+    pub active_semester: String,
     pub items: Vec<CalendarItem>,
+}
+
+/// Satu semester akademik yang didefinisikan admin (migrasi 40).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SemesterItem {
+    pub id: i64,
+    /// "ganjil" | "genap" (mentah).
+    pub kind: String,
+    /// "Ganjil" | "Genap".
+    pub kind_label: String,
+    pub year: i16,
+    /// "Semester Ganjil 2026/2027".
+    pub label: String,
+    /// "2026-07-01".
+    pub start_date: String,
+    pub end_date: String,
+    pub is_active: bool,
 }

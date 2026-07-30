@@ -778,6 +778,33 @@ pub async fn set_session_book(
     Ok(())
 }
 
+/// Set materi TARGET/rencana sesi (migrasi 41). book_id 0 = kosongkan.
+pub async fn set_session_target(
+    pool: &Pool,
+    session_id: i64,
+    book_id: i64,
+    pages_text: &str,
+) -> Result<()> {
+    let book = Some(book_id).filter(|v| *v > 0);
+    let pages = book_pages_value(pool, book, pages_text).await?;
+    if !repo::set_session_target(pool, session_id, book, &pages).await? {
+        bail!("Sesi tidak ditemukan.");
+    }
+    Ok(())
+}
+
+/// Set catatan ayat/hadith AKTUAL sesi (teks bebas, maks 500). Kosong diperbolehkan.
+pub async fn set_session_actual_detail(pool: &Pool, session_id: i64, detail: &str) -> Result<()> {
+    let d = detail.trim();
+    if d.chars().count() > 500 {
+        bail!("Catatan maksimal 500 karakter.");
+    }
+    if !repo::set_session_actual_detail(pool, session_id, d).await? {
+        bail!("Sesi tidak ditemukan.");
+    }
+    Ok(())
+}
+
 pub async fn add_member(pool: &Pool, class_id: i64, schedule_id: i64, student_id: i64) -> Result<()> {
     if schedule_id <= 0 {
         bail!("Pilih jadwal untuk menempatkan santri.");

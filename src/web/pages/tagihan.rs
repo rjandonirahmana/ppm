@@ -9,7 +9,7 @@ use leptos_meta::Title;
 use crate::models::{fmt_rupiah, BillItem, SessionUser, StudentSearchItem};
 use crate::web::api::{
     create_bill_action, delete_bill_action, finance_student_search, mark_bill_paid_action,
-    my_bills_data, unpaid_bills_data,
+    my_bills_data, paid_bills_data, unpaid_bills_data,
 };
 use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
 
@@ -31,52 +31,173 @@ pub fn FinancePage() -> impl IntoView {
 
     let data = Resource::new(|| (), |_| async move { unpaid_bills_data().await });
     let refetch = move || data.refetch();
+    // Tab: "unpaid" (belum bayar + kelola) | "history" (riwayat pembayaran lunas).
+    let tab = RwSignal::new("unpaid".to_string());
+    let paid = Resource::new(|| (), |_| async move { paid_bills_data().await });
 
     view! {
         <Title text="Tagihan Santri — PPM AFM" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
-                <MobileHeader title="Tagihan Santri" subtitle="Santri yang belum membayar" back_href="/staf" />
+                <MobileHeader title="Tagihan Santri" subtitle="Pembayaran santri" />
                 <div class="px-5 pt-5 space-y-4 stagger">
-                    <Show when=move || can_manage.get() fallback=|| ()>
-                        <CreateBillForm refetch=refetch />
+                    // ── Tab bar ─────────────────────────────────────────────
+                    <div class="grid grid-cols-2 gap-1 bg-surface-container rounded-xl p-1">
+                        <FinTab tab=tab value="unpaid" label="Belum Bayar" />
+                        <FinTab tab=tab value="history" label="Riwayat Pembayaran" />
+                    </div>
+
+                    // ── Belum Bayar ─────────────────────────────────────────
+                    <Show when=move || tab.get() == "unpaid" fallback=|| ()>
+                        <Show when=move || can_manage.get() fallback=|| ()>
+                            <CreateBillForm refetch=refetch />
+                        </Show>
+                        <Suspense fallback=|| {
+                            view! { <div class="h-20 bg-surface-container rounded-2xl animate-pulse"></div> }
+                        }>
+                            {move || {
+                                data.get().map(|res| match res {
+                                    Err(e) => view! { <FetchError err=e.to_string() /> }.into_any(),
+                                    Ok(list) => {
+                                        if list.is_empty() {
+                                            view! {
+                                                <EmptyState icon="task_alt" title="Semua lunas 🎉"
+                                                    subtitle="Tak ada tagihan yang belum dibayar." />
+                                            }.into_any()
+                                        } else {
+                                            let total: i64 = list.iter().map(|b| b.price).sum();
+                                            view! {
+                                                <div class="ppm-card p-4 flex items-center justify-between">
+                                                    <span class="text-body-sm text-on-surface-variant">
+                                                        {format!("{} tagihan belum bayar", list.len())}
+                                                    </span>
+                                                    <span class="text-body-md font-bold text-error">{fmt_rupiah(total)}</span>
+                                                </div>
+                                                <div class="space-y-2">
+                                                    {list.into_iter().map(|b| {
+                                                        view! { <UnpaidRow b=b can_manage=can_manage refetch=refetch /> }
+                                                    }).collect_view()}
+                                                </div>
+                                            }.into_any()
+                                        }
+                                    }
+                                })
+                            }}
+                        </Suspense>
                     </Show>
 
-                    <Suspense fallback=|| {
-                        view! { <div class="h-20 bg-surface-container rounded-2xl animate-pulse"></div> }
-                    }>
-                        {move || {
-                            data.get().map(|res| match res {
-                                Err(e) => view! { <FetchError err=e.to_string() /> }.into_any(),
-                                Ok(list) => {
-                                    if list.is_empty() {
-                                        view! {
-                                            <EmptyState icon="task_alt" title="Semua lunas 🎉"
-                                                subtitle="Tak ada tagihan yang belum dibayar." />
-                                        }.into_any()
-                                    } else {
-                                        let total: i64 = list.iter().map(|b| b.price).sum();
-                                        view! {
-                                            <div class="ppm-card p-4 flex items-center justify-between">
-                                                <span class="text-body-sm text-on-surface-variant">
-                                                    {format!("{} tagihan belum bayar", list.len())}
-                                                </span>
-                                                <span class="text-body-md font-bold text-error">{fmt_rupiah(total)}</span>
-                                            </div>
-                                            <div class="space-y-2">
-                                                {list.into_iter().map(|b| {
-                                                    view! { <UnpaidRow b=b can_manage=can_manage refetch=refetch /> }
-                                                }).collect_view()}
-                                            </div>
-                                        }.into_any()
+                    // ── Riwayat Pembayaran (lunas) ──────────────────────────
+                    <Show when=move || tab.get() == "history" fallback=|| ()>
+                        <Suspense fallback=|| {
+                            view! { <div class="h-20 bg-surface-container rounded-2xl animate-pulse"></div> }
+                        }>
+                            {move || {
+                                paid.get().map(|res| match res {
+                                    Err(e) => view! { <FetchError err=e.to_string() /> }.into_any(),
+                                    Ok(list) => {
+                                        if list.is_empty() {
+                                            view! {
+                                                <EmptyState icon="history" title="Belum ada pembayaran"
+                                                    subtitle="Riwayat pembayaran santri akan muncul di sini." />
+                                            }.into_any()
+                                        } else {
+                                            let total: i64 =
+                                                list.iter().map(|b| b.paid_amount.unwrap_or(b.price)).sum();
+                                            view! {
+                                                <div class="ppm-card p-4 flex items-center justify-between">
+                                                    <span class="text-body-sm text-on-surface-variant">
+                                                        {format!("{} pembayaran diterima", list.len())}
+                                                    </span>
+                                                    <span class="text-body-md font-bold text-success">{fmt_rupiah(total)}</span>
+                                                </div>
+                                                <div class="space-y-2">
+                                                    {list.into_iter().map(|b| view! { <PaidRow b=b /> }).collect_view()}
+                                                </div>
+                                            }.into_any()
+                                        }
                                     }
-                                }
-                            })
-                        }}
-                    </Suspense>
+                                })
+                            }}
+                        </Suspense>
+                    </Show>
                 </div>
             </div>
         </DeviceFrame>
+    }
+}
+
+#[component]
+fn FinTab(tab: RwSignal<String>, value: &'static str, label: &'static str) -> impl IntoView {
+    let cls = move || {
+        if tab.get() == value {
+            "py-2 rounded-lg bg-surface-container-lowest text-primary font-bold text-body-sm shadow-sm press"
+        } else {
+            "py-2 rounded-lg text-on-surface-variant font-semibold text-body-sm press"
+        }
+    };
+    view! { <button class=cls on:click=move |_| tab.set(value.to_string())>{label}</button> }
+}
+
+/// Baris riwayat pembayaran (bill lunas): santri, periode, nominal dibayar,
+/// metode, waktu bayar, verifikator, + bukti transfer bila ada.
+#[component]
+fn PaidRow(b: BillItem) -> impl IntoView {
+    let amount = b.paid_amount.unwrap_or(b.price);
+    let method = if b.method.is_empty() { "-".to_string() } else { b.method.clone() };
+    view! {
+        <div class="ppm-card p-4 space-y-2">
+            <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                    <p class="text-body-md font-semibold text-on-background truncate">{b.student_name}</p>
+                    <p class="text-[11px] text-on-surface-variant">{format!("{} • {}", b.nis, b.class_name)}</p>
+                    <p class="text-body-sm text-on-surface-variant mt-0.5">{b.title.clone()}</p>
+                </div>
+                <div class="text-right shrink-0">
+                    <p class="text-body-md font-bold text-success">{fmt_rupiah(amount)}</p>
+                    <span class="text-[10px] font-bold text-success bg-success/10 px-2 py-0.5 rounded-full">"Lunas"</span>
+                </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-on-surface-variant">
+                <span class="inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-[14px]">"event"</span>
+                    {format!("{} → {}", b.started_date, b.expired_date)}
+                </span>
+                {(!b.paid_at.is_empty())
+                    .then({
+                        let pa = b.paid_at.clone();
+                        move || view! {
+                            <span class="inline-flex items-center gap-1">
+                                <span class="material-symbols-outlined text-[14px]">"schedule"</span>
+                                {pa.clone()}
+                            </span>
+                        }
+                    })}
+                <span class="inline-flex items-center gap-1">
+                    <span class="material-symbols-outlined text-[14px]">"payments"</span>
+                    {method}
+                </span>
+            </div>
+            {(!b.verified_by_name.is_empty())
+                .then({
+                    let v = b.verified_by_name.clone();
+                    move || view! {
+                        <p class="text-[11px] text-on-surface-variant">
+                            {format!("Diverifikasi: {}", v)}
+                        </p>
+                    }
+                })}
+            {(!b.proof_url.is_empty())
+                .then({
+                    let url = b.proof_url.clone();
+                    move || view! {
+                        <a href=url.clone() target="_blank"
+                            class="inline-flex items-center gap-1 text-body-sm text-primary font-semibold">
+                            <span class="material-symbols-outlined text-[16px]">"fact_check"</span>
+                            "Lihat bukti transfer"
+                        </a>
+                    }
+                })}
+        </div>
     }
 }
 

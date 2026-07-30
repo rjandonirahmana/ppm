@@ -269,6 +269,10 @@ pub async fn detail_for(
             .into_iter()
             .map(|b| crate::models::BookItem { id: b.id, title: b.title, category: b.category, total_pages: b.total_pages, surahs: Vec::new() })
             .collect(),
+        target_book_id: d.target_book_id,
+        target_book_title: d.target_book_title,
+        target_pages_label: crate::service::books::format_page_ranges(&d.target_pages),
+        actual_detail: d.actual_detail,
     })
 }
 

@@ -21,6 +21,7 @@ pub mod recording;
 pub mod rekap;
 pub mod registration;
 pub mod santri;
+pub mod semester;
 pub mod sessions;
 pub mod storage;
 pub mod telegram;

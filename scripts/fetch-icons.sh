@@ -19,15 +19,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-FILES=$(grep -rl "material-symbols\|icon" src/web --include="*.rs" --include="*.html" || true)
-
-ICONS=$( {
-    grep -rohE 'material-symbols-outlined[^>]*>"?[a-z0-9_]+' src/web/ | grep -oE '[a-z0-9_]+$'
-    perl -0777 -ne 'while (/material-symbols-outlined[^>]*>\s*"([a-z0-9_]+)"/gs) { print "$1\n" }' $FILES
-    grep -rohE 'icon[:=][[:space:]]*"[a-z0-9_]+"' src/web/ | grep -oE '"[a-z0-9_]+"' | tr -d '"'
-    grep -rohE 'data-icon="[a-z0-9_]+"' src/web/ | grep -oE '"[a-z0-9_]+"' | tr -d '"'
-    grep -rohE '\("([a-z0-9_]+)",' src/web/pages/*.rs | grep -oE '"[a-z0-9_]+"' | tr -d '"'
-  } | sort -u | paste -sd, - )
+# Ekstraksi KOMPREHENSIF: tangkap SEMUA token snake_case ber-quote di src/web
+# sebagai KANDIDAT ikon — apa pun posisinya dalam tuple. Ikon dipakai di banyak
+# bentuk: <span ...>"home"</span>, icon="home", ("home", label, path) [staf.rs],
+# (path, label, "home") [menu.rs] — pola per-posisi dulu selalu ada yang bocor.
+# Google css2 MENGABAIKAN nama tak dikenal SELAMA daftar terurut alfabet (sort -u
+# menjamin ini); token non-ikon (status, dsb) jadi cuma sedikit noise tak dipakai.
+ICONS=$(grep -rohE '"[a-z][a-z0-9_]*"' src/web --include="*.rs" | tr -d '"' | sort -u | paste -sd, - )
 echo "Kandidat nama ikon: $(echo "$ICONS" | tr ',' '\n' | grep -c .)"
 
 UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"

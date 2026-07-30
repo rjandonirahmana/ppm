@@ -79,6 +79,7 @@ pub struct ProfilRow {
     pub campus: Option<String>,
     pub major: Option<String>,
     pub gender: Option<String>,
+    pub entry_year: Option<i16>,
 }
 
 /// Data profil lengkap satu user.
@@ -87,7 +88,7 @@ pub async fn profil_row(pool: &Pool, user_id: i64) -> Result<Option<ProfilRow>> 
     let row = c
         .query_opt(
             "SELECT full_name, username, role, email, phone_number, address, nis, points, \
-                    campus, major, gender \
+                    campus, major, gender, entry_year \
              FROM users WHERE id = $1",
             &[&user_id],
         )
@@ -105,24 +106,52 @@ pub async fn profil_row(pool: &Pool, user_id: i64) -> Result<Option<ProfilRow>> 
         campus: r.get(8),
         major: r.get(9),
         gender: r.get(10),
+        entry_year: r.get(11),
     }))
 }
 
-/// Ubah profil mahasiswa (kampus/jurusan/gender) — santri sendiri (migrasi 26).
+/// Ubah profil mahasiswa (kampus/jurusan/gender/tahun masuk) — santri sendiri
+/// (migrasi 26 + 39).
 pub async fn update_profile_extra(
     pool: &Pool,
     user_id: i64,
     campus: Option<&str>,
     major: Option<&str>,
     gender: Option<&str>,
+    entry_year: Option<i16>,
 ) -> Result<()> {
     let c = pool.get().await?;
     c.execute(
-        "UPDATE users SET campus = $2, major = $3, gender = $4 WHERE id = $1",
-        &[&user_id, &campus, &major, &gender],
+        "UPDATE users SET campus = $2, major = $3, gender = $4, entry_year = $5 WHERE id = $1",
+        &[&user_id, &campus, &major, &gender, &entry_year],
     )
     .await
     .context("update_profile_extra")?;
+    Ok(())
+}
+
+/// Ubah kontak (email + alamat) user yang sedang login — semua peran. Email
+/// UNIK di DB; benturan → error khusus agar service bisa pesan ramah.
+pub async fn update_contact(
+    pool: &Pool,
+    user_id: i64,
+    email: Option<&str>,
+    address: Option<&str>,
+) -> Result<()> {
+    let c = pool.get().await?;
+    c.execute(
+        "UPDATE users SET email = $2, address = $3 WHERE id = $1",
+        &[&user_id, &email, &address],
+    )
+    .await
+    .map_err(|e| {
+        // 23505 = unique_violation (email sudah dipakai user lain).
+        if e.code() == Some(&tokio_postgres::error::SqlState::UNIQUE_VIOLATION) {
+            anyhow::anyhow!("Email sudah dipakai akun lain.")
+        } else {
+            anyhow::Error::new(e).context("update_contact")
+        }
+    })?;
     Ok(())
 }
 

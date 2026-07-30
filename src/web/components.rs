@@ -403,6 +403,17 @@ pub const NAV_SANTRI: &[NavDef] = &[
     NavDef { icon: "auto_stories", label: "Akademik", href: "/akademik" },
 ];
 
+/// Nav peran: santri_finance = santri PENUH + akses halaman finance (cek & tandai
+/// pembayaran SEMUA santri di /tagihan). Beranda tetap /santri (dia tetap santri).
+pub const NAV_SANTRI_FINANCE: &[NavDef] = &[
+    NavDef { icon: "space_dashboard", label: "Beranda", href: "/santri" },
+    NavDef { icon: "payments", label: "Tagihan", href: "/tagihan" },
+    NavDef { icon: "history", label: "Riwayat", href: "/riwayat" },
+    NavDef { icon: "groups", label: "Sesi", href: "/sesi" },
+    NavDef { icon: "event_available", label: "Izin", href: "/izin" },
+    NavDef { icon: "auto_stories", label: "Akademik", href: "/akademik" },
+];
+
 // ── Navbar STAF SERAGAM ──────────────────────────────────────────────────────
 // admin / pamong / guru / dewan-guru memakai item YANG SAMA (Beranda · Students ·
 // Kelas · Laporan · User Control) supaya navbar tak "berubah-ubah" antar
@@ -536,7 +547,7 @@ pub fn nav_for(role: &str) -> &'static [NavDef] {
         "teacher" => NAV_DEWAN, // 'teacher' digabung ke dewan_guru (migrasi 36)
         "dewan_guru" => NAV_DEWAN,
         "admin" | "ketua" => NAV_STAF, // ketua = admin + finance
-        "santri_finance" => NAV_SANTRI,
+        "santri_finance" => NAV_SANTRI_FINANCE, // santri + akses finance /tagihan
         _ => NAV_SANTRI, // santri + fallback aman
     }
 }

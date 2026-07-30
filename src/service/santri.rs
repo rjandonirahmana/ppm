@@ -36,9 +36,20 @@ pub(crate) fn semester_start() -> (chrono::DateTime<Utc>, String) {
     (start_utc, label)
 }
 
-/// Awal "semester berjalan" — dipakai async caller lain (signature tetap
-/// `async fn` walau kini pass-through ke `semester_start()`).
-pub(crate) async fn current_semester(_pool: &Pool) -> Result<(chrono::DateTime<Utc>, String)> {
+/// Awal "semester berjalan". Bila admin sudah mendefinisikan semester yang
+/// mencakup HARI INI (migrasi 40) → pakai tanggal mulainya sebagai acuan
+/// (otomatis dari tanggal, tanpa aktivasi manual); jika tidak → fallback ke
+/// perhitungan otomatis `semester_start()` (Jul=Ganjil / Jan=Genap).
+pub(crate) async fn current_semester(pool: &Pool) -> Result<(chrono::DateTime<Utc>, String)> {
+    let today = Utc::now().with_timezone(&wib()).date_naive();
+    if let Ok(Some(s)) = repo::current_semester(pool, today).await {
+        let start_utc = wib()
+            .from_local_datetime(&s.start_date.and_hms_opt(0, 0, 0).expect("00:00 valid"))
+            .single()
+            .map(|d| d.with_timezone(&Utc))
+            .unwrap_or_else(|| Utc::now());
+        return Ok((start_utc, super::semester::semester_label(&s.kind, s.year)));
+    }
     Ok(semester_start())
 }
 
@@ -217,17 +228,19 @@ pub async fn profil(pool: &Pool, user_id: i64) -> Result<ProfilData> {
         campus: p.campus,
         major: p.major,
         gender: p.gender,
+        entry_year: p.entry_year,
         ipk_history,
     })
 }
 
-/// Ubah profil mahasiswa (kampus/jurusan/gender). Kosong → NULL.
+/// Ubah profil mahasiswa (kampus/jurusan/gender/tahun masuk). Kosong → NULL.
 pub async fn update_profile_extra(
     pool: &Pool,
     user_id: i64,
     campus: &str,
     major: &str,
     gender: &str,
+    entry_year: &str,
 ) -> Result<()> {
     let opt = |s: &str| -> Option<String> {
         let t = s.trim();
@@ -237,14 +250,42 @@ pub async fn update_profile_extra(
         "L" | "P" => Some(gender.trim().to_string()),
         _ => None,
     };
+    // Tahun masuk: kosong → NULL; ada isi → wajib tahun 4-digit yang masuk akal.
+    let ey = entry_year.trim();
+    let year: Option<i16> = if ey.is_empty() {
+        None
+    } else {
+        let y: i16 = ey
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Tahun masuk harus berupa angka (mis. 2023)."))?;
+        if !(1990..=2100).contains(&y) {
+            bail!("Tahun masuk tidak masuk akal (1990–2100).");
+        }
+        Some(y)
+    };
     repo::update_profile_extra(
         pool,
         user_id,
         opt(campus).as_deref(),
         opt(major).as_deref(),
         g.as_deref(),
+        year,
     )
     .await
+}
+
+/// Ubah kontak (email + alamat) user yang login — semua peran. Kosong → NULL
+/// (email kosong disimpan NULL agar tak bentrok UNIQUE antar user tanpa email).
+pub async fn update_contact(pool: &Pool, user_id: i64, email: &str, address: &str) -> Result<()> {
+    let email = email.trim();
+    if !email.is_empty() && (!email.contains('@') || !email.contains('.') || email.len() < 5) {
+        bail!("Format email tidak valid.");
+    }
+    let opt = |s: &str| -> Option<String> {
+        let t = s.trim();
+        (!t.is_empty()).then(|| t.to_string())
+    };
+    repo::update_contact(pool, user_id, opt(email).as_deref(), opt(address).as_deref()).await
 }
 
 /// Tambah entri IPK santri. `ipk` teks (0.00–4.00).

@@ -125,6 +125,8 @@ pub struct ProfilData {
     pub major: Option<String>,
     /// "L" | "P" mentah (kosong = belum diisi).
     pub gender: Option<String>,
+    /// Tahun masuk kuliah (mis. 2023) — profil mahasiswa (migrasi 39).
+    pub entry_year: Option<i16>,
     /// Riwayat IPK per semester (terbaru dulu).
     pub ipk_history: Vec<IpkItem>,
 }

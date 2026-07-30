@@ -1201,6 +1201,41 @@ pub async fn set_session_book(
     Ok(n > 0)
 }
 
+/// Set materi TARGET/rencana sesi (migrasi 41). None = kosongkan.
+pub async fn set_session_target(
+    pool: &Pool,
+    session_id: i64,
+    target_book_id: Option<i64>,
+    target_pages: &serde_json::Value,
+) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE class_sessions SET target_book_id = $2, target_pages = $3 WHERE id = $1",
+            &[&session_id, &target_book_id, target_pages],
+        )
+        .await
+        .context("set_session_target")?;
+    Ok(n > 0)
+}
+
+/// Set catatan ayat/hadith AKTUAL sesi (teks bebas, migrasi 41).
+pub async fn set_session_actual_detail(
+    pool: &Pool,
+    session_id: i64,
+    detail: &str,
+) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE class_sessions SET actual_detail = $2 WHERE id = $1",
+            &[&session_id, &detail],
+        )
+        .await
+        .context("set_session_actual_detail")?;
+    Ok(n > 0)
+}
+
 /// Set status sesi (mis. 'cancelled' = libur, 'scheduled' = aktif kembali).
 pub async fn set_session_status(pool: &Pool, session_id: i64, status: &str) -> Result<bool> {
     let c = pool.get().await?;

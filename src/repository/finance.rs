@@ -56,6 +56,18 @@ pub async fn list_unpaid(pool: &Pool, limit: i64) -> Result<Vec<BillItem>> {
     Ok(rows.iter().map(row_to_bill).collect())
 }
 
+/// Riwayat pembayaran: tagihan LUNAS semua santri, terbaru dibayar dulu
+/// (untuk finance). Menyertakan periode, nominal, metode, bukti TF, verifikator.
+pub async fn list_paid(pool: &Pool, limit: i64) -> Result<Vec<BillItem>> {
+    let c = pool.get().await?;
+    let sql = format!(
+        "{BILL_SELECT} WHERE b.status = 'lunas' \
+         ORDER BY b.paid_at DESC NULLS LAST, s.full_name LIMIT $1"
+    );
+    let rows = c.query(&sql, &[&limit]).await.context("list_paid")?;
+    Ok(rows.iter().map(row_to_bill).collect())
+}
+
 /// Tagihan milik satu santri (dashboard santri).
 pub async fn list_for_user(pool: &Pool, user_id: i64) -> Result<Vec<BillItem>> {
     let c = pool.get().await?;

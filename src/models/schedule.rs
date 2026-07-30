@@ -121,12 +121,19 @@ pub struct SessionDetailData {
     pub pamong_id: Option<i64>,
     pub pamong_options: Vec<super::kelas::TeacherOption>,
     pub category: String,
-    /// Materi buku sesi ini (migrasi 20) — None = belum dipilih.
+    /// Materi AKTUAL sesi ini (migrasi 20) — buku + halaman yang benar-benar
+    /// dibahas. None = belum dipilih.
     pub book_id: Option<i64>,
     pub book_title: Option<String>,
     /// "11-20, 45-50" siap tampil DAN siap prefill form edit.
     pub book_pages_label: String,
     pub book_options: Vec<super::books::BookItem>,
+    /// Materi TARGET/rencana sesi ini (migrasi 41) — None = belum diset.
+    pub target_book_id: Option<i64>,
+    pub target_book_title: Option<String>,
+    pub target_pages_label: String,
+    /// Catatan bebas ayat/hadith yang BENAR-BENAR dibahas (migrasi 41).
+    pub actual_detail: String,
     /// Alasan tombol "Mulai Sesi" nonaktif (di luar jendela ±10 menit dari
     /// jadwal), None = boleh mulai. Dihitung server-side (satu sumber
     /// kebenaran — WIB "now" hanya diketahui server).

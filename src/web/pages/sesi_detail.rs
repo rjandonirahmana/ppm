@@ -14,8 +14,9 @@ use leptos_router::hooks::use_params_map;
 use crate::models::{is_mengaji_category, HafalanItem, SessionAttRow, SessionChatItem, SessionDetailData};
 use crate::web::api::{
     decide_session_action, hafalan_of_class_action, log_hafalan_action, mark_session_bulk,
-    mark_session_present, session_detail_data, session_verify_data, set_session_book_action,
-    set_session_live, set_session_pamong_action, set_session_teacher_action,
+    mark_session_present, send_schedule_wa_action, session_detail_data, session_verify_data,
+    set_session_actual_detail_action, set_session_book_action, set_session_live,
+    set_session_pamong_action, set_session_target_action, set_session_teacher_action,
 };
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 
@@ -128,14 +129,45 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
         });
     };
 
-    // ── Materi buku (migrasi 20) ─────────────────────────────────────────
+    // ── Materi buku (migrasi 20+41): TARGET (rencana) + AKTUAL (dibahas) ──────
     let book_options = StoredValue::new(d.book_options.clone());
-    let book_sel = RwSignal::new(d.book_id.unwrap_or(0));
-    let book_pages_sel = RwSignal::new(d.book_pages_label.clone());
     let book_meta = d
         .book_title
         .clone()
         .map(|t| if d.book_pages_label.is_empty() { t } else { format!("{t} · hal {}", d.book_pages_label) });
+
+    // TARGET (rencana materi).
+    let target_sel = RwSignal::new(d.target_book_id.unwrap_or(0));
+    let target_pages_sel = RwSignal::new(d.target_pages_label.clone());
+    let busy_target = RwSignal::new(false);
+    let target_msg = RwSignal::new(Option::<(bool, String)>::None);
+    let save_target = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        if busy_target.get_untracked() {
+            return;
+        }
+        busy_target.set(true);
+        target_msg.set(None);
+        let (bk, bp) = (target_sel.get_untracked(), target_pages_sel.get_untracked());
+        leptos::task::spawn_local(async move {
+            match set_session_target_action(session_id, bk, bp).await {
+                Ok(_) => {
+                    target_msg.set(Some((true, "Target materi tersimpan.".into())));
+                    refetch();
+                }
+                Err(e) => {
+                    let m = e.to_string();
+                    target_msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                }
+            }
+            busy_target.set(false);
+        });
+    };
+
+    // AKTUAL (materi + halaman + catatan ayat/hadith yang benar-benar dibahas).
+    let book_sel = RwSignal::new(d.book_id.unwrap_or(0));
+    let book_pages_sel = RwSignal::new(d.book_pages_label.clone());
+    let actual_detail_sel = RwSignal::new(d.actual_detail.clone());
     let busy_book = RwSignal::new(false);
     let book_msg = RwSignal::new(Option::<(bool, String)>::None);
     let save_book = move |ev: leptos::ev::SubmitEvent| {
@@ -145,11 +177,17 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
         }
         busy_book.set(true);
         book_msg.set(None);
-        let (bk, bp) = (book_sel.get_untracked(), book_pages_sel.get_untracked());
+        let (bk, bp, det) =
+            (book_sel.get_untracked(), book_pages_sel.get_untracked(), actual_detail_sel.get_untracked());
         leptos::task::spawn_local(async move {
-            match set_session_book_action(session_id, bk, bp).await {
+            // Simpan buku+halaman lalu catatan ayat/hadith (dua kolom).
+            let res = match set_session_book_action(session_id, bk, bp).await {
+                Ok(_) => set_session_actual_detail_action(session_id, det).await,
+                Err(e) => Err(e),
+            };
+            match res {
                 Ok(_) => {
-                    book_msg.set(Some((true, "Materi tersimpan.".into())));
+                    book_msg.set(Some((true, "Materi aktual tersimpan.".into())));
                     refetch();
                 }
                 Err(e) => {
@@ -158,6 +196,33 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                 }
             }
             busy_book.set(false);
+        });
+    };
+
+    // ── Kirim jadwal ke Google Calendar santri (via WhatsApp) ───────────────
+    let busy_wa = RwSignal::new(false);
+    let wa_msg = RwSignal::new(Option::<(bool, String)>::None);
+    let send_wa = move |_| {
+        if busy_wa.get_untracked() {
+            return;
+        }
+        busy_wa.set(true);
+        wa_msg.set(None);
+        leptos::task::spawn_local(async move {
+            match send_schedule_wa_action(session_id).await {
+                Ok((sent, skipped)) => {
+                    let mut m = format!("Tautan jadwal terkirim ke {sent} santri.");
+                    if skipped > 0 {
+                        m.push_str(&format!(" {skipped} dilewati (belum ada nomor HP)."));
+                    }
+                    wa_msg.set(Some((true, m)));
+                }
+                Err(e) => {
+                    let m = e.to_string();
+                    wa_msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                }
+            }
+            busy_wa.set(false);
         });
     };
 
@@ -338,11 +403,77 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                                 }
                             </div>
 
-                            // ── Materi buku (migrasi 20) ──────────────────
+                            // ── Materi TARGET / rencana (migrasi 41) ──────
+                            <form class="ppm-card p-4 space-y-2 anim-in" method="post" on:submit=save_target>
+                                <div class="flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-primary text-[18px]">"assignment"</span>
+                                    <label class="text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
+                                        "Materi Target (Rencana)"
+                                    </label>
+                                </div>
+                                <select
+                                    class="w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-60"
+                                    disabled=move || busy_target.get()
+                                    on:change=move |ev| {
+                                        target_sel.set(event_target_value(&ev).parse().unwrap_or(0))
+                                    }
+                                >
+                                    <option value="0" selected=move || target_sel.get() == 0>
+                                        "— Tanpa target —"
+                                    </option>
+                                    {book_options
+                                        .get_value()
+                                        .into_iter()
+                                        .map(|o| {
+                                            let val = o.id.to_string();
+                                            let sel = move || target_sel.get() == o.id;
+                                            view! { <option value=val selected=sel>{o.title}</option> }
+                                        })
+                                        .collect_view()}
+                                </select>
+                                {move || {
+                                    (target_sel.get() > 0)
+                                        .then(|| {
+                                            view! {
+                                                <input
+                                                    type="text"
+                                                    class="w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface"
+                                                    placeholder="Halaman/ayat rencana (mis. 11-20)"
+                                                    prop:value=move || target_pages_sel.get()
+                                                    on:input=move |ev| target_pages_sel.set(event_target_value(&ev))
+                                                />
+                                            }
+                                        })
+                                }}
+                                {move || {
+                                    target_msg
+                                        .get()
+                                        .map(|(ok, t)| {
+                                            let cls = if ok {
+                                                "p-2 bg-secondary-container text-on-secondary-container rounded-lg text-[11px]"
+                                            } else {
+                                                "p-2 bg-error-container text-on-error-container rounded-lg text-[11px]"
+                                            };
+                                            view! { <div class=cls>{t}</div> }
+                                        })
+                                }}
+                                <button
+                                    type="submit"
+                                    class="w-full py-2.5 rounded-lg bg-secondary-container text-primary font-semibold text-body-sm disabled:opacity-60"
+                                    disabled=move || busy_target.get()
+                                >
+                                    {move || if busy_target.get() { "Menyimpan…" } else { "Simpan Target" }}
+                                </button>
+                            </form>
+
+                            // ── Materi AKTUAL / dibahas (migrasi 20+41) ────
                             <form class="ppm-card p-4 space-y-2 anim-in" method="post" on:submit=save_book>
-                                <label class="text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
-                                    "Materi"
-                                </label>
+                                <div class="flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-primary text-[18px]">"task_alt"</span>
+                                    <label class="text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
+                                        "Materi Aktual (Dibahas)"
+                                    </label>
+                                </div>
                                 <select
                                     class="w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-60"
                                     disabled=move || busy_book.get()
@@ -359,11 +490,7 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                                         .map(|o| {
                                             let val = o.id.to_string();
                                             let sel = move || book_sel.get() == o.id;
-                                            view! {
-                                                <option value=val selected=sel>
-                                                    {o.title}
-                                                </option>
-                                            }
+                                            view! { <option value=val selected=sel>{o.title}</option> }
                                         })
                                         .collect_view()}
                                 </select>
@@ -381,6 +508,13 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                                             }
                                         })
                                 }}
+                                <textarea
+                                    class="w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface"
+                                    rows="2"
+                                    placeholder="Ayat/hadith yang benar-benar dibahas (mis. An-Naba' 1-20 / Hadith no. 5-8)"
+                                    prop:value=move || actual_detail_sel.get()
+                                    on:input=move |ev| actual_detail_sel.set(event_target_value(&ev))
+                                ></textarea>
                                 {move || {
                                     book_msg
                                         .get()
@@ -398,9 +532,45 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                                     class="w-full py-2.5 rounded-lg bg-primary text-on-primary font-semibold text-body-sm disabled:opacity-60"
                                     disabled=move || busy_book.get()
                                 >
-                                    {move || if busy_book.get() { "Menyimpan…" } else { "Simpan Materi" }}
+                                    {move || if busy_book.get() { "Menyimpan…" } else { "Simpan Materi Aktual" }}
                                 </button>
                             </form>
+
+                            // ── Kirim jadwal ke Google Calendar santri ──────
+                            <div class="ppm-card p-4 space-y-2 anim-in">
+                                <div class="flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-primary">"event_available"</span>
+                                    <h3 class="text-body-md font-bold text-on-background">
+                                        "Kirim ke Google Calendar"
+                                    </h3>
+                                </div>
+                                <p class="text-[11px] text-on-surface-variant">
+                                    "Kirim tautan jadwal sesi ini ke WhatsApp semua santri kelas. "
+                                    "Santri tap tautannya → langsung tersimpan di Google Calendar mereka."
+                                </p>
+                                {move || {
+                                    wa_msg
+                                        .get()
+                                        .map(|(ok, t)| {
+                                            let cls = if ok {
+                                                "p-2 bg-secondary-container text-on-secondary-container rounded-lg text-[11px]"
+                                            } else {
+                                                "p-2 bg-error-container text-on-error-container rounded-lg text-[11px]"
+                                            };
+                                            view! { <div class=cls>{t}</div> }
+                                        })
+                                }}
+                                <button
+                                    class="w-full py-2.5 rounded-lg bg-primary text-on-primary font-semibold text-body-sm flex items-center justify-center gap-2 press disabled:opacity-60"
+                                    disabled=move || busy_wa.get()
+                                    on:click=send_wa
+                                >
+                                    <span class="material-symbols-outlined text-[18px]">"send"</span>
+                                    {move || {
+                                        if busy_wa.get() { "Mengirim…" } else { "Kirim jadwal ke WA santri" }
+                                    }}
+                                </button>
+                            </div>
                             </div>
                         }
                             .into_any()

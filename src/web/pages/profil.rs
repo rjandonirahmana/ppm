@@ -7,7 +7,8 @@ use leptos_meta::Title;
 
 use crate::models::ProfilData;
 use crate::web::api::{
-    add_ipk_action, delete_ipk_action, logout_action, profil_data, update_profile_action,
+    add_ipk_action, delete_ipk_action, logout_action, profil_data, update_contact_action,
+    update_profile_action,
 };
 use crate::web::components::{DeviceFrame, MobileHeader};
 
@@ -19,17 +20,27 @@ pub fn ProfilPage() -> impl IntoView {
     let campus = RwSignal::new(String::new());
     let major = RwSignal::new(String::new());
     let gender = RwSignal::new(String::new());
+    let entry_year = RwSignal::new(String::new());
     let is_santri = RwSignal::new(false);
     let sem_input = RwSignal::new(String::new());
     let ipk_input = RwSignal::new(String::new());
     let msg = RwSignal::new(String::new());
     let saving = RwSignal::new(false);
 
+    // Form kontak (email + alamat) — semua peran.
+    let email = RwSignal::new(String::new());
+    let address = RwSignal::new(String::new());
+    let contact_msg = RwSignal::new(String::new());
+    let saving_contact = RwSignal::new(false);
+
     Effect::new(move |_| {
         if let Some(Ok(p)) = data.get() {
             campus.set(p.campus.clone().unwrap_or_default());
             major.set(p.major.clone().unwrap_or_default());
             gender.set(p.gender.clone().unwrap_or_default());
+            entry_year.set(p.entry_year.map(|y| y.to_string()).unwrap_or_default());
+            email.set(p.email.clone().unwrap_or_default());
+            address.set(p.address.clone().unwrap_or_default());
             is_santri.set(matches!(p.role.as_str(), "santri" | "santri_finance"));
         }
     });
@@ -38,14 +49,42 @@ pub fn ProfilPage() -> impl IntoView {
         saving.set(true);
         msg.set(String::new());
         leptos::task::spawn_local(async move {
-            let r = update_profile_action(campus.get_untracked(), major.get_untracked(), gender.get_untracked()).await;
+            let r = update_profile_action(
+                campus.get_untracked(),
+                major.get_untracked(),
+                gender.get_untracked(),
+                entry_year.get_untracked(),
+            )
+            .await;
             saving.set(false);
             match r {
                 Ok(_) => {
                     msg.set("Data mahasiswa tersimpan.".into());
                     data.refetch();
                 }
-                Err(e) => msg.set(e.to_string()),
+                Err(e) => {
+                    let m = e.to_string();
+                    msg.set(m.rsplit(": ").next().unwrap_or(&m).to_string());
+                }
+            }
+        });
+    };
+
+    let save_contact = move |_| {
+        saving_contact.set(true);
+        contact_msg.set(String::new());
+        leptos::task::spawn_local(async move {
+            let r = update_contact_action(email.get_untracked(), address.get_untracked()).await;
+            saving_contact.set(false);
+            match r {
+                Ok(_) => {
+                    contact_msg.set("Kontak tersimpan.".into());
+                    data.refetch();
+                }
+                Err(e) => {
+                    let m = e.to_string();
+                    contact_msg.set(m.rsplit(": ").next().unwrap_or(&m).to_string());
+                }
             }
         });
     };
@@ -113,6 +152,46 @@ pub fn ProfilPage() -> impl IntoView {
                     </div>
 
                     <div class="space-y-5 md:col-span-2">
+                        // ── Ubah Kontak (email + alamat) — semua peran ────────
+                        <div class="ppm-card p-5">
+                            <div class="flex items-center gap-2 mb-4">
+                                <span class="material-symbols-outlined text-on-background">"contact_mail"</span>
+                                <h2 class="text-body-lg font-bold text-on-background">"Ubah Kontak"</h2>
+                            </div>
+                            <div class="space-y-3 md:grid md:grid-cols-2 md:gap-3 md:space-y-0">
+                                <label class="block">
+                                    <span class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">"Email"</span>
+                                    <input
+                                        class="mt-1 w-full rounded-xl border border-outline-variant bg-surface px-3 py-2.5 text-body-md text-on-background focus:outline-none focus:ring-2 focus:ring-primary"
+                                        placeholder="nama@email.com"
+                                        type="email"
+                                        inputmode="email"
+                                        prop:value=move || email.get()
+                                        on:input=move |e| email.set(event_target_value(&e))
+                                    />
+                                </label>
+                                <label class="block">
+                                    <span class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">"Alamat"</span>
+                                    <input
+                                        class="mt-1 w-full rounded-xl border border-outline-variant bg-surface px-3 py-2.5 text-body-md text-on-background focus:outline-none focus:ring-2 focus:ring-primary"
+                                        placeholder="Alamat domisili"
+                                        prop:value=move || address.get()
+                                        on:input=move |e| address.set(event_target_value(&e))
+                                    />
+                                </label>
+                            </div>
+                            <button
+                                class="mt-4 w-full md:w-auto px-5 py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-body-md cursor-pointer press disabled:opacity-60"
+                                prop:disabled=move || saving_contact.get()
+                                on:click=save_contact
+                            >
+                                {move || if saving_contact.get() { "Menyimpan…" } else { "Simpan Kontak" }}
+                            </button>
+                            <Show when=move || !contact_msg.get().is_empty()>
+                                <p class="mt-3 text-body-sm text-on-surface-variant">{move || contact_msg.get()}</p>
+                            </Show>
+                        </div>
+
                         // ── Data Mahasiswa + Riwayat IPK (santri isi sendiri) ─
                         <Show when=move || is_santri.get()>
                             <div class="ppm-card p-5">
@@ -150,6 +229,16 @@ pub fn ProfilPage() -> impl IntoView {
                                             <option value="L">"Laki-laki"</option>
                                             <option value="P">"Perempuan"</option>
                                         </select>
+                                    </label>
+                                    <label class="block">
+                                        <span class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">"Tahun Masuk"</span>
+                                        <input
+                                            class="mt-1 w-full rounded-xl border border-outline-variant bg-surface px-3 py-2.5 text-body-md text-on-background focus:outline-none focus:ring-2 focus:ring-primary"
+                                            placeholder="mis. 2023"
+                                            inputmode="numeric"
+                                            prop:value=move || entry_year.get()
+                                            on:input=move |e| entry_year.set(event_target_value(&e))
+                                        />
                                     </label>
                                 </div>
                                 <button

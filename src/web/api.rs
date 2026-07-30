@@ -394,16 +394,34 @@ pub async fn profil_data() -> Result<ProfilData, ServerFnError> {
         .map_err(err)
 }
 
-/// Ubah profil mahasiswa milik sendiri (kampus/jurusan/gender).
+/// Ubah profil mahasiswa milik sendiri (kampus/jurusan/gender/tahun masuk).
 #[server(UpdateProfileExtra, "/api-fn")]
 pub async fn update_profile_action(
     campus: String,
     major: String,
     gender: String,
+    entry_year: String,
 ) -> Result<(), ServerFnError> {
     let sess = require_session().await?;
     let state = app_state().await?;
-    crate::service::santri::update_profile_extra(&state.pool, sess.id, &campus, &major, &gender)
+    crate::service::santri::update_profile_extra(
+        &state.pool,
+        sess.id,
+        &campus,
+        &major,
+        &gender,
+        &entry_year,
+    )
+    .await
+    .map_err(err)
+}
+
+/// Ubah kontak (email + alamat) milik sendiri — semua peran.
+#[server(UpdateContact, "/api-fn")]
+pub async fn update_contact_action(email: String, address: String) -> Result<(), ServerFnError> {
+    let sess = require_session().await?;
+    let state = app_state().await?;
+    crate::service::santri::update_contact(&state.pool, sess.id, &email, &address)
         .await
         .map_err(err)
 }
@@ -442,6 +460,39 @@ pub async fn academic_calendar_data(
     crate::service::calendar::calendar_data(&state.pool, &sess, year, month)
         .await
         .map_err(err)
+}
+
+// ── Semester akademik (migrasi 40) — admin/dewan guru ─────────────────────────
+
+/// Daftar semester akademik yang didefinisikan (admin/dewan guru).
+#[server(GetSemesters, "/api-fn")]
+pub async fn semesters_data() -> Result<Vec<crate::models::SemesterItem>, ServerFnError> {
+    require_roles(&["admin", "dewan_guru"]).await?;
+    let state = app_state().await?;
+    crate::service::semester::list_semesters(&state.pool).await.map_err(err)
+}
+
+/// Buat semester baru (ganjil/genap, tahun, rentang tanggal). Return id.
+#[server(CreateSemester, "/api-fn")]
+pub async fn create_semester_action(
+    kind: String,
+    year: String,
+    start_date: String,
+    end_date: String,
+) -> Result<i64, ServerFnError> {
+    require_roles(&["admin", "dewan_guru"]).await?;
+    let state = app_state().await?;
+    crate::service::semester::create_semester(&state.pool, &kind, &year, &start_date, &end_date)
+        .await
+        .map_err(err)
+}
+
+/// Hapus sebuah semester.
+#[server(DeleteSemester, "/api-fn")]
+pub async fn delete_semester_action(id: i64) -> Result<(), ServerFnError> {
+    require_roles(&["admin", "dewan_guru"]).await?;
+    let state = app_state().await?;
+    crate::service::semester::delete_semester(&state.pool, id).await.map_err(err)
 }
 
 /// Daftar sesi kelas. Santri → sesi kelasnya sendiri; admin/pamong/dewan guru →
@@ -876,6 +927,33 @@ pub async fn set_session_book_action(
         .map_err(err)
 }
 
+/// Set materi TARGET/rencana sesi (migrasi 41). book_id 0 = kosongkan.
+#[server(SetSessionTarget, "/api-fn")]
+pub async fn set_session_target_action(
+    session_id: i64,
+    book_id: i64,
+    book_pages: String,
+) -> Result<(), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::set_session_target(&state.pool, session_id, book_id, &book_pages)
+        .await
+        .map_err(err)
+}
+
+/// Set catatan ayat/hadith AKTUAL sesi (teks bebas, migrasi 41).
+#[server(SetSessionActualDetail, "/api-fn")]
+pub async fn set_session_actual_detail_action(
+    session_id: i64,
+    detail: String,
+) -> Result<(), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::set_session_actual_detail(&state.pool, session_id, &detail)
+        .await
+        .map_err(err)
+}
+
 /// Tambah santri ke kelas (pada jadwal terpilih).
 #[server(AddMember, "/api-fn")]
 pub async fn add_member_action(
@@ -986,6 +1064,17 @@ pub async fn set_session_pamong_action(session_id: i64, pamong_id: i64) -> Resul
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
     crate::service::kelas::set_session_pamong(&state.pool, session_id, pamong_id)
+        .await
+        .map_err(err)
+}
+
+/// Kirim jadwal sesi ke Google Calendar santri via WhatsApp (tautan "Tambah ke
+/// Google Calendar"). Staf. Return (terkirim, dilewati_tanpa_HP).
+#[server(SendScheduleWa, "/api-fn")]
+pub async fn send_schedule_wa_action(session_id: i64) -> Result<(i64, i64), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::calendar::send_schedule_wa(&state.pool, &state.http, &state.waha, session_id)
         .await
         .map_err(err)
 }
@@ -1177,6 +1266,15 @@ pub async fn unpaid_bills_data() -> Result<Vec<crate::models::BillItem>, ServerF
     crate::repository::list_unpaid(&state.pool, 500).await.map_err(err)
 }
 
+/// Riwayat pembayaran santri yang SUDAH lunas (finance) — periode, nominal,
+/// metode, bukti TF, terbaru dibayar dulu.
+#[server(GetPaidBills, "/api-fn")]
+pub async fn paid_bills_data() -> Result<Vec<crate::models::BillItem>, ServerFnError> {
+    require_roles(FINANCE_ROLES).await?;
+    let state = app_state().await?;
+    crate::repository::list_paid(&state.pool, 500).await.map_err(err)
+}
+
 /// Buat tagihan untuk seorang santri (admin/ketua). Tanggal "YYYY-MM-DD".
 #[server(CreateBill, "/api-fn")]
 pub async fn create_bill_action(
@@ -1350,7 +1448,7 @@ pub async fn set_student_book_progress_action(
 /// punya orang lain.
 #[server(GetOwnBookProgress, "/api-fn")]
 pub async fn own_book_progress_data() -> Result<Vec<crate::models::BookProgressItem>, ServerFnError> {
-    let sess = require_roles(&["santri"]).await?;
+    let sess = require_roles(&["santri", "santri_finance"]).await?;
     let state = app_state().await?;
     crate::service::books::student_progress(&state.pool, sess.id)
         .await
@@ -1364,7 +1462,7 @@ pub async fn set_own_book_progress_action(
     book_id: i64,
     unit_status: String,
 ) -> Result<(), ServerFnError> {
-    let sess = require_roles(&["santri"]).await?;
+    let sess = require_roles(&["santri", "santri_finance"]).await?;
     let state = app_state().await?;
     crate::service::books::set_unit_status(&state.pool, sess.id, sess.id, book_id, &unit_status)
         .await
