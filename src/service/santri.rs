@@ -250,16 +250,17 @@ pub async fn update_profile_extra(
         "L" | "P" => Some(gender.trim().to_string()),
         _ => None,
     };
-    // Tahun masuk: kosong → NULL; ada isi → wajib tahun 4-digit yang masuk akal.
+    // Tahun masuk PPM (bukan tahun masuk kuliah — lihat migrasi 47): kosong →
+    // NULL; ada isi → wajib tahun 4-digit yang masuk akal.
     let ey = entry_year.trim();
     let year: Option<i16> = if ey.is_empty() {
         None
     } else {
         let y: i16 = ey
             .parse()
-            .map_err(|_| anyhow::anyhow!("Tahun masuk harus berupa angka (mis. 2023)."))?;
+            .map_err(|_| anyhow::anyhow!("Tahun masuk PPM harus berupa angka (mis. 2024)."))?;
         if !(1990..=2100).contains(&y) {
-            bail!("Tahun masuk tidak masuk akal (1990–2100).");
+            bail!("Tahun masuk PPM tidak masuk akal (1990–2100).");
         }
         Some(y)
     };

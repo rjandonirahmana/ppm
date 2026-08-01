@@ -199,27 +199,43 @@ pub async fn create_invite_action(
 /// Cek link masih hidup (pre-auth) — balas label peran siap-tampil, bukan
 /// nilai peran mentah.
 #[server(ValidateInviteAction, "/api-fn")]
-pub async fn validate_invite_action(token: String) -> Result<String, ServerFnError> {
+pub async fn validate_invite_action(
+    token: String,
+) -> Result<crate::models::InviteInfo, ServerFnError> {
     let state = app_state().await?;
     let mut redis = state.redis.clone();
     let role = crate::service::registration::invite_role(&mut redis, &token)
         .await
         .map_err(err)?
         .ok_or_else(|| ServerFnError::new("Link registrasi tidak valid atau sudah kedaluwarsa."))?;
-    Ok(crate::service::registration::describe_role(&role))
+    // Peran MENTAH sengaja tak dikirim ke klien — cukup label siap-tampil plus
+    // penanda apakah form perlu meminta data mahasiswa (migrasi 47).
+    Ok(crate::models::InviteInfo {
+        role_label: crate::service::registration::describe_role(&role),
+        needs_student_profile: crate::models::needs_student_profile(&role),
+    })
 }
 
 /// Ajukan registrasi (pre-auth) — generate password+OTP, kirim WA.
 #[server(RegisterAction, "/api-fn")]
+#[allow(clippy::too_many_arguments)]
 pub async fn register_action(
     token: String,
     name: String,
     phone: String,
+    gender: String,
+    campus: String,
+    major: String,
+    entry_year: String,
 ) -> Result<(), ServerFnError> {
     let state = app_state().await?;
     let mut redis = state.redis.clone();
+    // Diabaikan bila peran undangan bukan santri (divalidasi di service).
+    let profile = crate::service::registration::StudentProfile {
+        gender, campus, major, entry_year,
+    };
     crate::service::registration::initiate_register(
-        &state.pool, &mut redis, &state.http, &state.waha, &token, &name, &phone,
+        &state.pool, &mut redis, &state.http, &state.waha, &token, &name, &phone, &profile,
     )
     .await
     .map_err(err)
@@ -227,15 +243,23 @@ pub async fn register_action(
 
 /// Kirim ulang OTP (pre-auth).
 #[server(ResendOtpAction, "/api-fn")]
+#[allow(clippy::too_many_arguments)]
 pub async fn resend_otp_action(
     token: String,
     name: String,
     phone: String,
+    gender: String,
+    campus: String,
+    major: String,
+    entry_year: String,
 ) -> Result<(), ServerFnError> {
     let state = app_state().await?;
     let mut redis = state.redis.clone();
+    let profile = crate::service::registration::StudentProfile {
+        gender, campus, major, entry_year,
+    };
     crate::service::registration::resend_otp(
-        &state.pool, &mut redis, &state.http, &state.waha, &token, &name, &phone,
+        &state.pool, &mut redis, &state.http, &state.waha, &token, &name, &phone, &profile,
     )
     .await
     .map_err(err)
@@ -1268,15 +1292,6 @@ pub async fn paid_bills_data() -> Result<Vec<crate::models::BillItem>, ServerFnE
     require_roles(FINANCE_ROLES).await?;
     let state = app_state().await?;
     crate::repository::list_paid(&state.pool, 500).await.map_err(err)
-}
-
-/// Riwayat pembayaran terbaru (10 transaksi) untuk ditampilkan di kalender
-/// (ketua/santri_finance).
-#[server(GetRecentPaidBills, "/api-fn")]
-pub async fn recent_paid_bills_data() -> Result<Vec<crate::models::BillItem>, ServerFnError> {
-    require_roles(FINANCE_ROLES).await?;
-    let state = app_state().await?;
-    crate::repository::list_paid(&state.pool, 10).await.map_err(err)
 }
 
 /// Buat tagihan untuk seorang santri (admin/ketua). Tanggal "YYYY-MM-DD".

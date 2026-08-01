@@ -231,11 +231,12 @@ pub fn ProfilPage() -> impl IntoView {
                                         </select>
                                     </label>
                                     <label class="block">
-                                        <span class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">"Tahun Masuk"</span>
+                                        <span class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">"Tahun Masuk PPM"</span>
                                         <input
                                             class="mt-1 w-full rounded-xl border border-outline-variant bg-surface px-3 py-2.5 text-body-md text-on-background focus:outline-none focus:ring-2 focus:ring-primary"
-                                            placeholder="mis. 2023"
+                                            placeholder="mis. 2024"
                                             inputmode="numeric"
+                                            maxlength="4"
                                             prop:value=move || entry_year.get()
                                             on:input=move |e| entry_year.set(event_target_value(&e))
                                         />

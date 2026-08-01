@@ -20,8 +20,15 @@ pub fn RegisterPage() -> impl IntoView {
     // "code" (masukkan kode) | "form" (nama+HP) | "otp" (kode OTP)
     let stage = RwSignal::new("code".to_string());
     let role_label = RwSignal::new(String::new());
+    // Peran undangan = santri? → form minta profil mahasiswa (migrasi 47).
+    let need_student = RwSignal::new(false);
     let name = RwSignal::new(String::new());
     let phone = RwSignal::new(String::new());
+    // Profil mahasiswa — hanya dipakai bila `need_student`.
+    let gender = RwSignal::new(String::new());
+    let campus = RwSignal::new(String::new());
+    let major = RwSignal::new(String::new());
+    let entry_year = RwSignal::new(String::new());
     let otp = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let error = RwSignal::new(Option::<String>::None);
@@ -46,8 +53,9 @@ pub fn RegisterPage() -> impl IntoView {
         error.set(None);
         leptos::task::spawn_local(async move {
             match validate_invite_action(k).await {
-                Ok(label) => {
-                    role_label.set(label);
+                Ok(info) => {
+                    role_label.set(info.role_label);
+                    need_student.set(info.needs_student_profile);
                     stage.set("form".into());
                 }
                 Err(e) => error.set(Some(strip(e))),
@@ -78,11 +86,29 @@ pub fn RegisterPage() -> impl IntoView {
             error.set(Some("Nama & nomor WhatsApp wajib diisi.".into()));
             return;
         }
+        let (g, c, m, y) = (
+            gender.get_untracked(),
+            campus.get_untracked(),
+            major.get_untracked(),
+            entry_year.get_untracked(),
+        );
+        // Cek di klien supaya salah isi ketahuan tanpa menunggu server; server
+        // tetap memvalidasi ulang (jangan percaya klien).
+        if need_student.get_untracked() {
+            if g.is_empty() {
+                error.set(Some("Pilih jenis kelamin.".into()));
+                return;
+            }
+            if c.trim().is_empty() || m.trim().is_empty() || y.trim().is_empty() {
+                error.set(Some("Kampus, jurusan & tahun masuk PPM wajib diisi.".into()));
+                return;
+            }
+        }
         busy.set(true);
         error.set(None);
         info.set(None);
         leptos::task::spawn_local(async move {
-            match register_action(k, n, p).await {
+            match register_action(k, n, p, g, c, m, y).await {
                 Ok(_) => {
                     stage.set("otp".into());
                     info.set(Some("Kode OTP & password dikirim ke WhatsApp kamu.".into()));
@@ -128,10 +154,16 @@ pub fn RegisterPage() -> impl IntoView {
             return;
         }
         let (k, n, p) = (code.get_untracked(), name.get_untracked(), phone.get_untracked());
+        let (g, c, m, y) = (
+            gender.get_untracked(),
+            campus.get_untracked(),
+            major.get_untracked(),
+            entry_year.get_untracked(),
+        );
         busy.set(true);
         error.set(None);
         leptos::task::spawn_local(async move {
-            match resend_otp_action(k, n, p).await {
+            match resend_otp_action(k, n, p, g, c, m, y).await {
                 Ok(_) => info.set(Some("OTP dikirim ulang ke WhatsApp.".into())),
                 Err(e) => error.set(Some(strip(e))),
             }
@@ -292,6 +324,60 @@ pub fn RegisterPage() -> impl IntoView {
                                                 on:input=move |ev| phone.set(event_target_value(&ev))
                                             />
                                         </label>
+                                        // ── Profil mahasiswa — hanya peran santri ──
+                                        <Show when=move || need_student.get() fallback=|| ()>
+                                            <div class="pt-1 space-y-3">
+                                                <p class="text-label-md text-on-surface-variant border-t border-outline-variant/50 pt-3">
+                                                    "Data santri"
+                                                </p>
+                                                <label class="space-y-1 block">
+                                                    <span class="text-label-md text-on-surface-variant">"Jenis kelamin"</span>
+                                                    <select
+                                                        class=field
+                                                        prop:value=move || gender.get()
+                                                        on:change=move |ev| gender.set(event_target_value(&ev))
+                                                    >
+                                                        <option value="">"Pilih…"</option>
+                                                        <option value="L">"Laki-laki"</option>
+                                                        <option value="P">"Perempuan"</option>
+                                                    </select>
+                                                </label>
+                                                <label class="space-y-1 block">
+                                                    <span class="text-label-md text-on-surface-variant">"Kampus"</span>
+                                                    <input
+                                                        type="text"
+                                                        class=field
+                                                        placeholder="mis. Universitas Indonesia"
+                                                        prop:value=move || campus.get()
+                                                        on:input=move |ev| campus.set(event_target_value(&ev))
+                                                    />
+                                                </label>
+                                                <label class="space-y-1 block">
+                                                    <span class="text-label-md text-on-surface-variant">"Jurusan"</span>
+                                                    <input
+                                                        type="text"
+                                                        class=field
+                                                        placeholder="mis. Teknik Informatika"
+                                                        prop:value=move || major.get()
+                                                        on:input=move |ev| major.set(event_target_value(&ev))
+                                                    />
+                                                </label>
+                                                <label class="space-y-1 block">
+                                                    <span class="text-label-md text-on-surface-variant">
+                                                        "Tahun masuk PPM"
+                                                    </span>
+                                                    <input
+                                                        type="text"
+                                                        class=field
+                                                        placeholder="mis. 2024"
+                                                        inputmode="numeric"
+                                                        maxlength="4"
+                                                        prop:value=move || entry_year.get()
+                                                        on:input=move |ev| entry_year.set(event_target_value(&ev))
+                                                    />
+                                                </label>
+                                            </div>
+                                        </Show>
                                         <p class="text-[11px] text-on-surface-variant">
                                             "OTP & password akun akan dikirim ke WhatsApp ini."
                                         </p>

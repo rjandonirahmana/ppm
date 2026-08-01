@@ -53,6 +53,60 @@ struct PendingRegistration {
     role: String,
     password: String,
     otp: String,
+    // Profil mahasiswa — hanya terisi untuk peran santri (migrasi 47).
+    // Default serde agar payload lama di Redis (dari sebelum deploy) tetap
+    // bisa di-parse selama 10 menit masa transisi, bukan bikin OTP gagal.
+    #[serde(default)]
+    gender: String,
+    #[serde(default)]
+    campus: String,
+    #[serde(default)]
+    major: String,
+    #[serde(default)]
+    entry_year: Option<i16>,
+}
+
+/// Profil mahasiswa yang diminta saat registrasi santri. Kosong untuk peran
+/// lain (guru, pamong, orang tua) — mereka tak punya data ini.
+#[derive(Default)]
+pub struct StudentProfile {
+    /// "L" | "P".
+    pub gender: String,
+    pub campus: String,
+    pub major: String,
+    /// Tahun masuk PPM (bukan tahun masuk kuliah) — lihat migrasi 47.
+    pub entry_year: String,
+}
+
+/// Validasi profil mahasiswa. Dipanggil hanya bila peran undangan = santri;
+/// keempat isian WAJIB (keputusan produk: santri tanpa data ini menyulitkan
+/// pendataan angkatan & pelaporan).
+fn validate_student_profile(p: &StudentProfile) -> Result<(String, String, String, i16)> {
+    let gender = p.gender.trim();
+    if !matches!(gender, "L" | "P") {
+        bail!("Pilih jenis kelamin (laki-laki atau perempuan).");
+    }
+    let campus = p.campus.trim();
+    if campus.chars().count() < 2 {
+        bail!("Nama kampus wajib diisi.");
+    }
+    let major = p.major.trim();
+    if major.chars().count() < 2 {
+        bail!("Jurusan wajib diisi.");
+    }
+    let ey = p.entry_year.trim();
+    if ey.is_empty() {
+        bail!("Tahun masuk PPM wajib diisi.");
+    }
+    let year: i16 = ey
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Tahun masuk PPM harus berupa angka (mis. 2024)."))?;
+    if !(1990..=2100).contains(&year) {
+        bail!("Tahun masuk PPM tidak masuk akal (1990–2100).");
+    }
+    // Potong sesuai lebar kolom (VARCHAR(150)) agar tak ditolak DB di akhir alur.
+    let cut = |s: &str| -> String { s.chars().take(150).collect() };
+    Ok((gender.to_string(), cut(campus), cut(major), year))
 }
 
 /// Buat link undangan baru (admin/pamong/dewan guru) — token acak (16 byte,
@@ -116,6 +170,7 @@ pub async fn initiate_register(
     token: &str,
     name: &str,
     phone: &str,
+    profile: &StudentProfile,
 ) -> Result<()> {
     let Some(role) = invite_role(redis, token).await? else {
         bail!("Link registrasi tidak valid atau sudah kedaluwarsa.");
@@ -126,6 +181,13 @@ pub async fn initiate_register(
         bail!("Nama wajib diisi (minimal 2 karakter).");
     }
     let phone = normalize_local(phone)?;
+
+    // Santri wajib melengkapi profil mahasiswa; peran lain tak diminta apa pun.
+    let student = if crate::models::needs_student_profile(&role) {
+        Some(validate_student_profile(profile)?)
+    } else {
+        None
+    };
 
     if repo::find_by_phone(pool, &phone).await?.is_some() {
         bail!("Nomor HP ini sudah terdaftar. Silakan masuk lewat halaman Login.");
@@ -142,12 +204,20 @@ pub async fn initiate_register(
     let password = generate_random_password();
     let otp = format!("{:06}", rand::rng().random_range(100_000..=999_999));
 
+    let (gender, campus, major, entry_year) = match student {
+        Some((g, c, m, y)) => (g, c, m, Some(y)),
+        None => (String::new(), String::new(), String::new(), None),
+    };
     let pending = PendingRegistration {
         name: name.to_string(),
         phone: phone.clone(),
         role,
         password: password.clone(),
         otp: otp.clone(),
+        gender,
+        campus,
+        major,
+        entry_year,
     };
     let json = serde_json::to_string(&pending)?;
     let _: () = redis
@@ -170,8 +240,9 @@ pub async fn resend_otp(
     token: &str,
     name: &str,
     phone: &str,
+    profile: &StudentProfile,
 ) -> Result<()> {
-    initiate_register(pool, redis, http, waha, token, name, phone).await
+    initiate_register(pool, redis, http, waha, token, name, phone, profile).await
 }
 
 /// Cocokkan OTP → buat user (baru di sini Postgres tersentuh) → hapus kedua
@@ -226,9 +297,22 @@ pub async fn verify_register(
     let password = pending.password.clone();
     let hashed = tokio::task::spawn_blocking(move || bcrypt::hash(&password, 10)).await??;
 
-    let user_id =
-        repo::insert_registered_user(pool, &pending.name, &pending.phone, &pending.role, &hashed)
-            .await?;
+    let opt = |s: &str| -> Option<String> {
+        let t = s.trim();
+        (!t.is_empty()).then(|| t.to_string())
+    };
+    let user_id = repo::insert_registered_user(
+        pool,
+        &pending.name,
+        &pending.phone,
+        &pending.role,
+        &hashed,
+        opt(&pending.gender).as_deref(),
+        opt(&pending.campus).as_deref(),
+        opt(&pending.major).as_deref(),
+        pending.entry_year,
+    )
+    .await?;
 
     let token = jwt.sign(user_id, &pending.name, &pending.phone, &pending.role)?;
     Ok(crate::service::auth::LoginOk {

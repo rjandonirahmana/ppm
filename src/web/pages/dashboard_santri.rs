@@ -7,7 +7,7 @@ use leptos_meta::Title;
 
 use crate::models::{AttendanceItem, SantriHome, SessionUser};
 use crate::web::api::{connection_requests, respond_connection_action, santri_home};
-use crate::web::components::{FetchError, DeviceFrame, NotifBell};
+use crate::web::components::{DeviceFrame, FetchError, NotifBell};
 
 /// Warna aksen per jenis kehadiran (border kiri kartu + ikon).
 fn kind_colors(kind: &str) -> (&'static str, &'static str, &'static str, &'static str) {
@@ -359,37 +359,33 @@ fn FinanceTools() -> impl IntoView {
     };
 
     view! {
+        // Sama seperti SemesterManager: baca resource sesi di dalam Suspense.
+        <Suspense fallback=|| ()>
         <Show when=is_finance fallback=|| ()>
             <section>
                 <h2 class="text-headline-sm text-on-background mb-3">"Alat Keuangan"</h2>
-                <div class="grid grid-cols-2 gap-3">
-                    <a
-                        href="/tagihan"
-                        class="ppm-card p-4 flex items-center gap-3 press hover:border-primary transition-colors"
-                    >
-                        <span class="w-11 h-11 ppm-tile shrink-0">
-                            <span class="material-symbols-outlined">"payments"</span>
-                        </span>
-                        <div class="min-w-0">
-                            <p class="text-body-md font-semibold text-on-background">"Pembayaran"</p>
-                            <p class="text-[11px] text-on-surface-variant">"Cek & verifikasi"</p>
-                        </div>
-                    </a>
-                    <a
-                        href="/kalender"
-                        class="ppm-card p-4 flex items-center gap-3 press hover:border-primary transition-colors"
-                    >
-                        <span class="w-11 h-11 ppm-tile shrink-0">
-                            <span class="material-symbols-outlined">"receipt_long"</span>
-                        </span>
-                        <div class="min-w-0">
-                            <p class="text-body-md font-semibold text-on-background">"Riwayat"</p>
-                            <p class="text-[11px] text-on-surface-variant">"Pembayaran masuk"</p>
-                        </div>
-                    </a>
-                </div>
+                // Satu pintu saja: /tagihan sudah punya tab "Belum Bayar" &
+                // "Riwayat Pembayaran" di dalamnya — tak perlu kartu terpisah.
+                <a
+                    href="/tagihan"
+                    class="ppm-card p-4 flex items-center gap-3 press hover:border-primary transition-colors"
+                >
+                    <span class="w-11 h-11 ppm-tile shrink-0">
+                        <span class="material-symbols-outlined">"payments"</span>
+                    </span>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-body-md font-semibold text-on-background">"Pembayaran Santri"</p>
+                        <p class="text-[11px] text-on-surface-variant">
+                            "Cek, verifikasi & riwayat pembayaran"
+                        </p>
+                    </div>
+                    <span class="material-symbols-outlined text-on-surface-variant shrink-0">
+                        "chevron_right"
+                    </span>
+                </a>
             </section>
         </Show>
+        </Suspense>
     }
 }
 

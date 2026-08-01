@@ -5,7 +5,11 @@
 //! selama rentang izin. Contoh: izin 2 hari melewati kelas A (wali X), B & C
 //! (wali Y) → 2 baris, satu ke wali X satu ke wali Y.
 //!
-//! Alur per-baris: Pamong kelas (bila `require_pamong`) → Wali Kelas (FINAL).
+//! Alur per-baris: Pamong kelas (bila `require_pamong` DAN kelas itu punya
+//! pamong) → Wali Kelas (FINAL). Kelas ber-`require_pamong` tapi `pamong_id`
+//! masih NULL TIDAK memblokir izin — tahap pamong dilewati, izin langsung ke
+//! wali kelas. Tanpa ini izin macet permanen: tak ada pamong yang cocok untuk
+//! menyetujui, sementara tahap final menuntut `pamong_status = 'approved'`.
 //! Orang tua TIDAK lagi jadi penyetuju (kolom parent_* dihapus di migrasi 46) —
 //! izin adalah urusan akademik; orang tua cukup dinotifikasi.
 
@@ -338,6 +342,7 @@ pub async fn pending_guru_permits(
              WHERE p.guru_status = 'pending' \
                 AND p.pamong_status <> 'rejected' \
                 AND CASE WHEN COALESCE(tc.require_pamong, cl.require_pamong, $2) \
+                              AND COALESCE(tc.pamong_id, cl.pamong_id) IS NOT NULL \
                          THEN p.pamong_status = 'approved' \
                          ELSE TRUE END \
                 AND ($3::bigint IS NULL \
@@ -408,6 +413,11 @@ pub async fn decide_guru_permit(
                         (SELECT c.require_pamong FROM class_participants cp \
                             JOIN classes c ON c.id = cp.class_id \
                             WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1), $5) \
+                          AND COALESCE( \
+                        (SELECT c.pamong_id FROM classes c WHERE c.id = p.class_id), \
+                        (SELECT c.pamong_id FROM class_participants cp \
+                            JOIN classes c ON c.id = cp.class_id \
+                            WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1)) IS NOT NULL \
                      THEN p.pamong_status = 'approved' \
                      ELSE TRUE END \
                 AND ($4::bigint IS NULL OR COALESCE( \

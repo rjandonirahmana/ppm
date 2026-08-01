@@ -58,3 +58,21 @@ pub fn role_home(role: &str) -> &'static str {
         _ => "/menu",
     }
 }
+
+/// true bila peran ini santri → wajib melengkapi profil mahasiswa saat daftar
+/// (gender, kampus, jurusan, tahun masuk PPM). Santri PPM = mahasiswa kampus
+/// sekitar, jadi data ini bagian dari identitas dasarnya, bukan pelengkap.
+pub fn needs_student_profile(role: &str) -> bool {
+    matches!(role, "santri" | "santri_finance")
+}
+
+/// Hasil validasi kode referal untuk halaman registrasi. Sengaja TIDAK membawa
+/// nama peran mentah — klien cukup tahu labelnya dan apakah form perlu meminta
+/// data mahasiswa.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InviteInfo {
+    /// "Santri" / "Dewan Guru" / … — untuk "Anda akan didaftarkan sebagai: …".
+    pub role_label: String,
+    /// true → tampilkan isian gender/kampus/jurusan/tahun masuk PPM.
+    pub needs_student_profile: bool,
+}

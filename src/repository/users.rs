@@ -191,25 +191,32 @@ pub async fn delete_ipk(pool: &Pool, user_id: i64, id: i64) -> Result<bool> {
 }
 
 /// Reset saldo poin SEMUA santri ke nilai awal semester (PRD: 300). Return
-/// jumlah santri ter-reset. Mencatat log per santri agar jejak reset terlihat.
+/// jumlah santri ter-reset.
+///
+/// PENTING: `users.points` dipegang trigger `trg_point_logs_balance` (migrasi
+/// 32) — SATU-SATUNYA sumber kebenarannya adalah SUM(point_logs.delta). Karena
+/// itu reset TIDAK menulis `users.points` langsung (dulu begitu, dan bikin
+/// saldo menyimpang dari jumlah log: sekali ada log lama dihapus, trigger
+/// mengurangi delta-nya dari angka yang sudah di-reset sembarang → hasil salah).
+///
+/// Gantinya: catat SATU log penyeimbang per santri sebesar selisih ke nilai
+/// target, lalu biarkan trigger yang memindahkan saldo. Log-nya jadi bermakna
+/// (delta = perubahan sebenarnya, bukan 0) dan jejak reset terlihat di riwayat.
 pub async fn reset_semester_points(pool: &Pool, start: i32) -> Result<i64> {
     let c = pool.get().await?;
-    let n = c
-        .execute(
-            "WITH r AS ( \
-                UPDATE users SET points = $1, updated_at = NOW() \
-                WHERE role IN ('santri', 'santri_finance') RETURNING id, points \
-             ), lg AS ( \
-                INSERT INTO point_logs (user_id, delta, reason, category) \
-                SELECT id, 0, 'Reset saldo poin awal semester', 'other' FROM r \
-             ) SELECT 1",
-            &[&start],
-        )
-        .await
-        .context("reset_semester_points")?;
-    // execute() untuk statement diakhiri SELECT tak mengembalikan rowcount UPDATE;
-    // hitung santri terpisah agar akurat.
-    let _ = n;
+    // Hanya santri yang saldonya BEDA dari target yang dicatat — yang sudah pas
+    // tak perlu log kosong. Trigger memproses per baris, jadi saldo akhir = $1.
+    c.execute(
+        "INSERT INTO point_logs (user_id, delta, reason, category) \
+         SELECT id, $1 - points, 'Reset saldo poin awal semester', 'other' \
+           FROM users \
+          WHERE role IN ('santri', 'santri_finance') AND points <> $1",
+        &[&start],
+    )
+    .await
+    .context("reset_semester_points")?;
+    // Jumlah santri terdampak = semua santri (yang sudah pas pun kini bernilai
+    // target), supaya angka yang dilaporkan ke admin tetap bermakna.
     let row = c
         .query_one("SELECT COUNT(*) FROM users WHERE role IN ('santri', 'santri_finance')", &[])
         .await
@@ -353,22 +360,30 @@ pub async fn set_password_hash(pool: &Pool, user_id: i64, hash: &str) -> Result<
     Ok(n > 0)
 }
 
-/// Buat user dari alur registrasi (name+phone saja — NIS/username/email diisi
-/// admin belakangan lewat /students atau /kontrol-pengguna, sama seperti akun
-/// lain yang dikelola admin).
+/// Buat user dari alur registrasi. NIS/username/email tetap diisi admin
+/// belakangan lewat /students atau /kontrol-pengguna.
+///
+/// `gender`/`campus`/`major`/`entry_year` hanya terisi untuk peran santri
+/// (migrasi 47) — peran lain mengirim None. `entry_year` = tahun masuk PPM.
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_registered_user(
     pool: &Pool,
     name: &str,
     phone: &str,
     role: &str,
     password_hash: &str,
+    gender: Option<&str>,
+    campus: Option<&str>,
+    major: Option<&str>,
+    entry_year: Option<i16>,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
-            "INSERT INTO users (full_name, phone_number, role, password_hash) \
-             VALUES ($1, $2, $3, $4) RETURNING id",
-            &[&name, &phone, &role, &password_hash],
+            "INSERT INTO users \
+                (full_name, phone_number, role, password_hash, gender, campus, major, entry_year) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+            &[&name, &phone, &role, &password_hash, &gender, &campus, &major, &entry_year],
         )
         .await
         .context("insert_registered_user")?;

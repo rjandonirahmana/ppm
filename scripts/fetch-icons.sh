@@ -25,7 +25,13 @@ cd "$(dirname "$0")/.."
 # (path, label, "home") [menu.rs] — pola per-posisi dulu selalu ada yang bocor.
 # Google css2 MENGABAIKAN nama tak dikenal SELAMA daftar terurut alfabet (sort -u
 # menjamin ini); token non-ikon (status, dsb) jadi cuma sedikit noise tak dipakai.
-ICONS=$(grep -rohE '"[a-z][a-z0-9_]*"' src/web --include="*.rs" | tr -d '"' | sort -u | paste -sd, - )
+# KUTIP GANDA **dan** TUNGGAL. Jangan hanya yang ganda: nama ikon juga muncul
+# di JS inline dgn kutip tunggal (mis. login.rs: ic.textContent='visibility_off').
+# Ikon yang terlewat TIDAK tampil sbg teks utuh — ligatur mencocokkan PREFIX yg
+# ada di font ('visibility'), lalu sisanya bocor jadi teks: "👁_off". Gejalanya
+# menyesatkan, jadi jangan persempit pola ini lagi.
+ICONS=$(grep -rohE "[\"'][a-z][a-z0-9_]*[\"']" src/web --include="*.rs" \
+        | tr -d "\"'" | sort -u | paste -sd, - )
 echo "Kandidat nama ikon: $(echo "$ICONS" | tr ',' '\n' | grep -c .)"
 
 UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"

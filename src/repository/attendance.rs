@@ -641,6 +641,9 @@ pub async fn decide_verify(
                 AND CASE WHEN COALESCE( \
                         (SELECT cl.require_pamong FROM class_sessions cs \
                             JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = a.class_session_id), TRUE) \
+                          AND (SELECT COALESCE(cs.pamong_id, cl.pamong_id) FROM class_sessions cs \
+                                JOIN classes cl ON cl.id = cs.class_id \
+                                WHERE cs.id = a.class_session_id) IS NOT NULL \
                      THEN a.pamong_status = 'approved' ELSE TRUE END \
                 AND ($4::bigint IS NULL OR \
                     (SELECT COALESCE(cs.teacher_id, cl.wali_kelas_id) FROM class_sessions cs \
@@ -817,6 +820,9 @@ pub async fn run_auto_verify_final(pool: &Pool) -> Result<i64> {
                   AND CASE WHEN COALESCE( \
                           (SELECT cl.require_pamong FROM class_sessions cs \
                               JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = a.class_session_id), TRUE) \
+                            AND (SELECT COALESCE(cs.pamong_id, cl.pamong_id) FROM class_sessions cs \
+                                  JOIN classes cl ON cl.id = cs.class_id \
+                                  WHERE cs.id = a.class_session_id) IS NOT NULL \
                        THEN a.pamong_status = 'approved' AND a.pamong_at < NOW() - INTERVAL '1 day' \
                        ELSE a.scanned_at < NOW() - INTERVAL '1 day' END \
                 RETURNING a.user_id, a.status, a.class_schedule_id \

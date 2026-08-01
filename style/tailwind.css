@@ -60,6 +60,15 @@ body{font-family:'Work Sans',sans-serif;background-color:#f9f9ff;}
     word-wrap: normal;
     direction: ltr;
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    /* Nama ikon dirender lewat LIGATUR ("mic_off" → satu glyph). Browser
+       memang menyalakan `liga` secara default, TAPI beberapa mesin render
+       (WebKit, dan Chrome saat elemen kena letter-spacing dari utility)
+       mematikannya — akibatnya ligatur panjang gagal terbentuk dan sisa
+       nama muncul sebagai teks ("🔔_off"). Nyalakan eksplisit, sama seperti
+       CSS resmi Google. */
+    font-feature-settings: 'liga';
+    -webkit-font-feature-settings: 'liga';
+    -webkit-font-smoothing: antialiased;
   }
 }
 
