@@ -1275,6 +1275,15 @@ pub async fn paid_bills_data() -> Result<Vec<crate::models::BillItem>, ServerFnE
     crate::repository::list_paid(&state.pool, 500).await.map_err(err)
 }
 
+/// Riwayat pembayaran terbaru (10 transaksi) untuk ditampilkan di kalender
+/// (ketua/santri_finance).
+#[server(GetRecentPaidBills, "/api-fn")]
+pub async fn recent_paid_bills_data() -> Result<Vec<crate::models::BillItem>, ServerFnError> {
+    require_roles(FINANCE_ROLES).await?;
+    let state = app_state().await?;
+    crate::repository::list_paid(&state.pool, 10).await.map_err(err)
+}
+
 /// Buat tagihan untuk seorang santri (admin/ketua). Tanggal "YYYY-MM-DD".
 #[server(CreateBill, "/api-fn")]
 pub async fn create_bill_action(

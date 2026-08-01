@@ -553,8 +553,9 @@ pub async fn insert_attendance(
     let row = c
         .query_one(
             "INSERT INTO attendances \
-             (user_id, class_session_id, class_schedule_id, device_id, gate_label, status, method, note) \
-             VALUES ($1, $2, $3, $4, $5, $6, 'rfid', $7) RETURNING id",
+             (user_id, class_session_id, class_schedule_id, device_id, gate_label, status, method, note, scan_date) \
+             VALUES ($1, $2, $3, $4, $5, $6, 'rfid', $7, (NOW() AT TIME ZONE 'Asia/Jakarta')::date) \
+             RETURNING id",
             &[&user_id, &session_id, &schedule_id, &device_id, &gate_label, &status, &note],
         )
         .await
@@ -730,9 +731,9 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
              ins AS ( \
                 INSERT INTO attendances \
                     (user_id, class_session_id, class_schedule_id, status, method, \
-                     pamong_status, pamong_at, verify_status, verified_at, note, gate_label, scanned_at) \
+                     pamong_status, pamong_at, verify_status, verified_at, note, gate_label, scanned_at, scan_date) \
                 SELECT DISTINCT cp.user_id, s.id, s.class_schedule_id, 'absent', 'manual', \
-                       'approved', NOW(), 'approved', NOW(), 'Auto: tidak hadir', 'system', NOW() \
+                       'approved', NOW(), 'approved', NOW(), 'Auto: tidak hadir', 'system', NOW(), s.session_date \
                 FROM class_sessions s \
                 LEFT JOIN class_schedules sch ON sch.id = s.class_schedule_id \
                 JOIN class_participants cp \

@@ -9,11 +9,12 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{CalendarItem, SemesterItem, SessionUser};
+use crate::models::{BillItem, CalendarItem, SemesterItem, SessionUser, fmt_rupiah};
 use crate::web::api::{
     academic_calendar_data, create_semester_action, delete_semester_action, semesters_data,
+    recent_paid_bills_data,
 };
-use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
+use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
 
 const HARI: [&str; 7] = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 
@@ -237,6 +238,7 @@ pub fn KalenderPage() -> impl IntoView {
                                 })
                         }}
                     </Suspense>
+                    <PaymentHistory />
                 </div>
             </div>
         </DeviceFrame>
@@ -464,6 +466,99 @@ fn SemesterRow(s: SemesterItem, del: impl Fn(i64) + Copy + Send + 'static) -> im
             >
                 <span class="material-symbols-outlined text-[18px]">"delete"</span>
             </button>
+        </div>
+    }
+}
+
+/// Komponen Riwayat Pembayaran yang ditampilkan di bawah kalender untuk
+/// ketua & santri_finance. Menampilkan 10 pembayaran terakhir (ringkas).
+#[component]
+fn PaymentHistory() -> impl IntoView {
+    let session = use_context::<Resource<Option<SessionUser>>>();
+    let is_finance = move || {
+        session
+            .and_then(|s| s.get())
+            .flatten()
+            .map(|u| matches!(u.role.as_str(), "ketua" | "santri_finance"))
+            .unwrap_or(false)
+    };
+
+    let data = Resource::new(|| (), |_| async move { recent_paid_bills_data().await });
+
+    view! {
+        <Show when=is_finance fallback=|| ()>
+            <div class="space-y-3">
+                <div class="flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary text-[20px]">"receipt_long"</span>
+                    <h3 class="text-title-sm font-semibold text-on-background">"Riwayat Pembayaran"</h3>
+                </div>
+                <Suspense fallback=|| {
+                    view! { <div class="h-20 bg-surface-container rounded-2xl animate-pulse"></div> }
+                }>
+                    {move || {
+                        data.get()
+                            .map(|res| match res {
+                                Err(e) => {
+                                    view! { <FetchError err=e.to_string() /> }.into_any()
+                                }
+                                Ok(list) => {
+                                    if list.is_empty() {
+                                        view! {
+                                            <EmptyState
+                                                icon="history"
+                                                title="Belum ada pembayaran"
+                                                subtitle="Riwayat pembayaran santri akan muncul di sini."
+                                            />
+                                        }
+                                        .into_any()
+                                    } else {
+                                        let total: i64 = list
+                                            .iter()
+                                            .map(|b| b.paid_amount.unwrap_or(b.price))
+                                            .sum();
+                                        view! {
+                                            <div class="ppm-card p-4 flex items-center justify-between">
+                                                <span class="text-body-sm text-on-surface-variant">
+                                                    {format!("{} pembayaran terakhir", list.len())}
+                                                </span>
+                                                <span class="text-body-md font-bold text-success">
+                                                    {fmt_rupiah(total)}
+                                                </span>
+                                            </div>
+                                            <div class="space-y-2">
+                                                {list
+                                                    .into_iter()
+                                                    .map(|b| view! { <PaymentHistoryRow b=b /> })
+                                                    .collect_view()}
+                                            </div>
+                                        }
+                                        .into_any()
+                                    }
+                                }
+                            })
+                    }}
+                </Suspense>
+            </div>
+        </Show>
+    }
+}
+
+/// Baris dalam history pembayaran (compact view untuk kalender).
+#[component]
+fn PaymentHistoryRow(b: BillItem) -> impl IntoView {
+    let amount = b.paid_amount.unwrap_or(b.price);
+    view! {
+        <div class="ppm-card p-3 flex items-center justify-between gap-2">
+            <div class="min-w-0 flex-1">
+                <p class="text-body-sm font-semibold text-on-background truncate">{b.student_name}</p>
+                <p class="text-[10px] text-on-surface-variant truncate">
+                    {format!("{} • {}", b.nis, b.title)}
+                </p>
+            </div>
+            <div class="text-right shrink-0">
+                <p class="text-body-md font-bold text-success">{fmt_rupiah(amount)}</p>
+                <p class="text-[9px] text-on-surface-variant">{b.paid_at.clone()}</p>
+            </div>
         </div>
     }
 }
