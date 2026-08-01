@@ -21,9 +21,15 @@ impl From<anyhow::Error> for ScanError {
     }
 }
 
-/// Proses satu scan kartu dari perangkat gerbang:
-/// device → santri → jadwal aktif → present/late → simpan (dedup per hari).
-/// Scan di luar jadwal tetap dicatat sebagai log gerbang (schedule NULL).
+/// Proses satu tap kartu. PERANGKAT yang menentukan perilaku (migrasi 49):
+///   • kategori `gate_utama` → toggle KELUAR/MASUK area pondok. Bukan absensi.
+///   • kategori lain → absensi kelas: cocokkan jadwal aktif santri →
+///     present/late → simpan (dedup per hari). Tap di luar jadwal tetap
+///     tercatat sbg log gerbang (schedule NULL).
+///
+/// Pencocokan jadwal TIDAK terikat perangkat — satu jadwal bisa di-tap di
+/// perangkat mana pun (selain gate_utama). Kolom `class_schedules.room_id`
+/// hanya keterangan ruang, tak dipakai saat scan.
 pub async fn record_scan(
     pool: &Pool,
     req: &RfidScanRequest,
@@ -31,11 +37,35 @@ pub async fn record_scan(
     let Some(device) = repo::find_device_by_key(pool, &req.api_key).await? else {
         return Err(ScanError::BadApiKey);
     };
-    let gate = device.location.unwrap_or(device.device_name);
 
     let Some((user_id, name)) = repo::find_user_by_card(pool, req.card).await? else {
         return Err(ScanError::UnknownCard);
     };
+
+    // GERBANG UTAMA: penanda orangnya keluar/masuk area pondok, BUKAN kehadiran
+    // kelas. Firmware tak perlu tahu bedanya — satu build yang selalu POST ke
+    // /api/rfid/scan sudah cukup; kategori perangkat yang memutuskan. Ganti
+    // peran perangkat = ubah kategori di admin, tanpa flash ulang.
+    if crate::models::is_main_gate(&device.category) {
+        let direction = repo::toggle_gate(pool, user_id, Some(device.id)).await?;
+        let message = if direction == "out" {
+            "keluar area pondok"
+        } else {
+            "masuk area pondok"
+        };
+        tracing::info!(user_id, card = req.card, gate = %device.device_name, direction,
+            "gerbang utama: keluar/masuk area");
+        return Ok(RfidScanResponse {
+            ok: true,
+            message: message.into(),
+            student: Some(name),
+            // Diawali "gate_" supaya jelas BUKAN status absensi kelas
+            // (present/late/…) — firmware & log tak salah tafsir.
+            status: Some(format!("gate_{direction}")),
+        });
+    }
+
+    let gate = device.location.unwrap_or(device.device_name);
 
     // Jadwal pesantren dicatat dalam waktu lokal (WIB).
     let now = Utc::now().with_timezone(&wib());

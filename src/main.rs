@@ -164,7 +164,7 @@ async fn main() -> Result<()> {
     }
 
     // ── Job AUTO-ABSENT / "Alpa" (task internal) ─────────────────────────────
-    // Tiap 10 menit: tandai 'absent' utk santri tanpa kejelasan (bukan hadir/
+    // Tiap 24 JAM: tandai 'absent' utk santri tanpa kejelasan (bukan hadir/
     // izin) pada sesi yang sudah TUNTAS (termasuk sesi ad-hoc tanpa jadwal —
     // lihat repository::run_auto_absent). Set-based & idempotent (aman
     // dijalankan berulang). Bisa diganti cron eksternal via endpoint di

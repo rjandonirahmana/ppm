@@ -60,10 +60,14 @@ CREATE INDEX IF NOT EXISTS idx_bills_status_user
     ON bills (status, user_id, paid_at DESC)
     WHERE deleted_at IS NULL;
 
--- ═ 8) ACADEMIC_USER — Progress santri per course (rapor, rekapitulasi) ═════════
--- Kode: WHERE user_id = $1 ORDER BY course_id
-CREATE INDEX IF NOT EXISTS idx_academic_user_progress
-    ON academic_user (user_id, curriculum_id);
+-- ═ 8) ACADEMIC_USER — Progres materi per santri ═══════════════════════════════
+-- CATATAN: tabel ini berkolom `book_id` (migrasi 18), BUKAN `curriculum_id`.
+-- Versi awal migrasi ini menyebut curriculum_id → seluruh rantai migrasi gagal.
+--
+-- Migrasi 18 SUDAH membuat idx_academic_user_user (user_id) dan
+-- idx_academic_user_book (book_id), plus UNIQUE (user_id, book_id) yang sudah
+-- berfungsi sebagai index komposit. Jadi tak ada index tambahan yang perlu —
+-- bagian ini sengaja dikosongkan agar tak ada index kembar yang percuma.
 
 -- ═ CLEANUP: Terdeteksi index redundan (optional, bisa comment kalau uncertain) ═
 -- Jika idx_att_user_status_date dibuat, mungkin idx_att_user_date bisa di-drop:

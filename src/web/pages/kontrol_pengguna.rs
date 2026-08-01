@@ -501,6 +501,9 @@ fn RfidPanel() -> impl IntoView {
     let name = RwSignal::new(String::new());
     let serial = RwSignal::new(String::new());
     let location = RwSignal::new(String::new());
+    // Kategori menentukan PERILAKU tap (migrasi 49) — gate_utama = keluar/masuk
+    // area pondok, selainnya = absensi kelas. Default "custom" (absensi).
+    let category = RwSignal::new("custom".to_string());
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
 
@@ -511,14 +514,20 @@ fn RfidPanel() -> impl IntoView {
         }
         busy.set(true);
         msg.set(None);
-        let (n, s, l) = (name.get_untracked(), serial.get_untracked(), location.get_untracked());
+        let (n, s, l, cat) = (
+            name.get_untracked(),
+            serial.get_untracked(),
+            location.get_untracked(),
+            category.get_untracked(),
+        );
         leptos::task::spawn_local(async move {
-            // api_key dikosongkan → server generate otomatis.
-            match create_rfid_device_action(n, s, l, String::new()).await {
+            // api_key dikosongkan → server generate otomatis (16 digit).
+            match create_rfid_device_action(n, s, l, String::new(), cat).await {
                 Ok(_) => {
                     name.set(String::new());
                     serial.set(String::new());
                     location.set(String::new());
+                    category.set("custom".to_string());
                     show_form.set(false);
                     data.refetch();
                 }
@@ -591,6 +600,25 @@ fn RfidPanel() -> impl IntoView {
                                         on:input=move |ev| location.set(event_target_value(&ev))
                                     />
                                 </div>
+                                <select
+                                    class=field
+                                    prop:value=move || category.get()
+                                    on:change=move |ev| category.set(event_target_value(&ev))
+                                >
+                                    {crate::models::DEVICE_CATEGORIES
+                                        .iter()
+                                        .map(|(v, l)| view! { <option value=*v>{*l}</option> })
+                                        .collect_view()}
+                                </select>
+                                <p class="text-[11px] text-on-surface-variant">
+                                    {move || {
+                                        if category.get() == "gate_utama" {
+                                            "Tap di perangkat ini menandai santri KELUAR/MASUK area pondok — bukan absensi kelas."
+                                        } else {
+                                            "Tap di perangkat ini dicatat sebagai absensi kelas sesuai jadwal santri saat itu."
+                                        }
+                                    }}
+                                </p>
                                 <button
                                     type="submit"
                                     class="w-full py-2.5 rounded-lg bg-primary text-on-primary font-semibold text-body-sm disabled:opacity-60"
@@ -655,6 +683,7 @@ fn RfidRow(d: RfidDeviceItem, refetch: impl Fn() + Copy + Send + 'static) -> imp
     let e_name = RwSignal::new(d.device_name.clone());
     let e_serial = RwSignal::new(d.serial_number.clone());
     let e_loc = RwSignal::new(d.location.clone());
+    let e_cat = RwSignal::new(d.category.clone());
 
     let save = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -662,9 +691,14 @@ fn RfidRow(d: RfidDeviceItem, refetch: impl Fn() + Copy + Send + 'static) -> imp
             return;
         }
         busy.set(true);
-        let (n, s, l) = (e_name.get_untracked(), e_serial.get_untracked(), e_loc.get_untracked());
+        let (n, s, l, cat) = (
+            e_name.get_untracked(),
+            e_serial.get_untracked(),
+            e_loc.get_untracked(),
+            e_cat.get_untracked(),
+        );
         leptos::task::spawn_local(async move {
-            if update_rfid_device_action(id, n, s, l).await.is_ok() {
+            if update_rfid_device_action(id, n, s, l, cat).await.is_ok() {
                 editing.set(false);
                 refetch();
             }
@@ -696,6 +730,16 @@ fn RfidRow(d: RfidDeviceItem, refetch: impl Fn() + Copy + Send + 'static) -> imp
     };
 
     let name_ro = d.device_name.clone();
+    let cat_ro = d.category.clone();
+    let cat_label = crate::models::device_category_label(&d.category);
+    // Gerbang utama diberi warna beda: perilakunya menyimpang dari perangkat
+    // lain (keluar/masuk area, bukan absensi) — jangan sampai tertukar saat
+    // admin menyapu daftar.
+    let cat_cls = if crate::models::is_main_gate(&cat_ro) {
+        "text-[10px] font-bold px-2 py-0.5 rounded-full bg-warning/15 text-warning shrink-0"
+    } else {
+        "text-[10px] font-bold px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant shrink-0"
+    };
     let meta = {
         let mut parts = Vec::new();
         if !d.location.is_empty() {
@@ -736,6 +780,26 @@ fn RfidRow(d: RfidDeviceItem, refetch: impl Fn() + Copy + Send + 'static) -> imp
                                     on:input=move |ev| e_loc.set(event_target_value(&ev))
                                 />
                             </div>
+                            <select
+                                class=field
+                                prop:value=move || e_cat.get()
+                                on:change=move |ev| e_cat.set(event_target_value(&ev))
+                            >
+                                {crate::models::DEVICE_CATEGORIES
+                                    .iter()
+                                    .map(|(v, l)| view! { <option value=*v>{*l}</option> })
+                                    .collect_view()}
+                            </select>
+                            {move || {
+                                (e_cat.get() == "gate_utama")
+                                    .then(|| {
+                                        view! {
+                                            <p class="text-[11px] text-warning">
+                                                "Tap di sini menandai KELUAR/MASUK area pondok — tidak dicatat sebagai absensi kelas."
+                                            </p>
+                                        }
+                                    })
+                            }}
                             <div class="grid grid-cols-2 gap-2">
                                 <button
                                     type="button"
@@ -761,10 +825,15 @@ fn RfidRow(d: RfidDeviceItem, refetch: impl Fn() + Copy + Send + 'static) -> imp
                     view! {
                         <div class="flex items-center gap-3">
                             <span class="w-9 h-9 rounded-lg bg-secondary-container text-primary flex items-center justify-center shrink-0">
-                                <span class="material-symbols-outlined text-[18px]">"meeting_room"</span>
+                                <span class="material-symbols-outlined text-[18px]">
+                                    {if crate::models::is_main_gate(&cat_ro) { "door_open" } else { "meeting_room" }}
+                                </span>
                             </span>
                             <div class="flex-1 min-w-0">
-                                <p class="text-body-sm font-semibold text-on-background truncate">{name}</p>
+                                <div class="flex items-center gap-1.5 min-w-0">
+                                    <p class="text-body-sm font-semibold text-on-background truncate">{name}</p>
+                                    <span class=cat_cls>{cat_label}</span>
+                                </div>
                                 {(!meta.is_empty())
                                     .then(|| {
                                         view! {

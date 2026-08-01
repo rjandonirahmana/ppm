@@ -19,11 +19,35 @@ pub async fn reset_semester_points(pool: &Pool) -> Result<i64> {
 }
 
 /// api_key acak (32 hex) untuk perangkat RFID baru.
+/// api_key perangkat RFID — DIGIT SAJA, 16 angka (migrasi 49). Dulu 32 hex;
+/// diubah karena kunci ini diketik manual di captive portal firmware ESP8266,
+/// dan huruf hex mudah keliru (0/O, b/6). 16 digit ≈ 53 bit: ruang 10^16 masih
+/// jauh di luar jangkauan tebak-tebakan lewat jaringan.
+///
+/// Digit pertama dijaga bukan 0 supaya kunci tak terpotong bila ada firmware /
+/// spreadsheet yang memperlakukannya sebagai bilangan.
 fn gen_api_key() -> String {
     use rand::RngExt;
-    let mut bytes = [0u8; 16];
-    rand::rng().fill(&mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    let mut rng = rand::rng();
+    let mut key = String::with_capacity(16);
+    key.push(char::from_digit(rng.random_range(1..=9), 10).expect("1..9 valid"));
+    for _ in 1..16 {
+        key.push(char::from_digit(rng.random_range(0..=9), 10).expect("0..9 valid"));
+    }
+    key
+}
+
+/// Validasi kategori perangkat terhadap daftar sah (= CHECK constraint DB).
+/// Kosong → 'custom' (perilaku absensi kelas biasa).
+fn norm_category(c: &str) -> Result<String> {
+    let c = c.trim();
+    if c.is_empty() {
+        return Ok("custom".to_string());
+    }
+    if !crate::models::DEVICE_CATEGORIES.iter().any(|(v, _)| *v == c) {
+        bail!("Kategori perangkat tidak dikenal.");
+    }
+    Ok(c.to_string())
 }
 
 /// Daftar perangkat RFID (ruang) untuk manajemen admin + dropdown jadwal.
@@ -37,6 +61,7 @@ pub async fn rfid_devices(pool: &Pool) -> Result<Vec<RfidDeviceItem>> {
             serial_number: d.serial_number.unwrap_or_default(),
             location: d.location.unwrap_or_default(),
             api_key: d.api_key,
+            category: d.category,
         })
         .collect())
 }
@@ -48,6 +73,7 @@ pub async fn create_rfid_device(
     serial_number: &str,
     location: &str,
     api_key: &str,
+    category: &str,
 ) -> Result<i64> {
     let name = device_name.trim();
     if name.is_empty() {
@@ -57,12 +83,14 @@ pub async fn create_rfid_device(
     let loc = location.trim();
     let key = api_key.trim();
     let key = if key.is_empty() { gen_api_key() } else { key.to_string() };
+    let cat = norm_category(category)?;
     repo::create_device(
         pool,
         name,
         (!serial.is_empty()).then_some(serial),
         (!loc.is_empty()).then_some(loc),
         &key,
+        &cat,
     )
     .await
 }
@@ -73,6 +101,7 @@ pub async fn update_rfid_device(
     device_name: &str,
     serial_number: &str,
     location: &str,
+    category: &str,
 ) -> Result<()> {
     let name = device_name.trim();
     if name.is_empty() {
@@ -80,12 +109,14 @@ pub async fn update_rfid_device(
     }
     let serial = serial_number.trim();
     let loc = location.trim();
+    let cat = norm_category(category)?;
     if !repo::update_device(
         pool,
         id,
         name,
         (!serial.is_empty()).then_some(serial),
         (!loc.is_empty()).then_some(loc),
+        &cat,
     )
     .await?
     {

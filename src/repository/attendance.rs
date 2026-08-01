@@ -454,16 +454,21 @@ pub async fn semester_stats(
     Ok((row.get(0), row.get(1), row.get(2), row.get(3)))
 }
 
-/// Scan terakhir HARI INI (judul kelas + waktu) — banner "Kehadiran Terdeteksi".
+/// Scan terakhir HARI INI: (judul kelas, waktu, status) — banner "Kehadiran
+/// Terdeteksi" & label status hari ini di pantauan orang tua.
+///
+/// `status` IKUT dikembalikan (dulu tidak) karena pemanggilnya butuh membedakan
+/// hadir vs terlambat; tanpa itu service/parent.rs terpaksa menebak "present"
+/// dan santri yang telat tetap terlihat tepat waktu di mata orang tuanya.
 pub async fn latest_scan_today(
     pool: &Pool,
     user_id: i64,
     today: NaiveDate,
-) -> Result<Option<(Option<String>, DateTime<Utc>)>> {
+) -> Result<Option<(Option<String>, DateTime<Utc>, String)>> {
     let c = pool.get().await?;
     let row = c
         .query_opt(
-            "SELECT COALESCE(cs.title, c.name), a.scanned_at \
+            "SELECT COALESCE(cs.title, c.name), a.scanned_at, a.status \
              FROM attendances a \
              LEFT JOIN class_schedules cs ON cs.id = a.class_schedule_id \
              LEFT JOIN classes c ON c.id = cs.class_id \
@@ -474,7 +479,7 @@ pub async fn latest_scan_today(
         )
         .await
         .context("latest_scan_today")?;
-    Ok(row.map(|r| (r.get(0), r.get(1))))
+    Ok(row.map(|r| (r.get(0), r.get(1), r.get(2))))
 }
 
 /// Hitungan bulan berjalan per-status: (hadir(present), terlambat(late), absen).

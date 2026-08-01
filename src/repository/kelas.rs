@@ -19,7 +19,7 @@ pub async fn staf_stats(pool: &Pool) -> Result<(i64, i64, i64, i64)> {
                 (SELECT COUNT(*) FROM users WHERE role IN ('santri', 'santri_finance') AND is_active = TRUE), \
                 (SELECT COUNT(*) FROM users WHERE role IN ('santri', 'santri_finance') AND is_active = TRUE \
                     AND created_at >= date_trunc('month', NOW())), \
-                (SELECT COUNT(*) FROM attendances a JOIN users u ON u.id = a.user_id \
+                (SELECT COUNT(DISTINCT a.user_id) FROM attendances a JOIN users u ON u.id = a.user_id \
                     WHERE u.role IN ('santri', 'santri_finance') AND a.status IN ('present','late') \
                     AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date), \
                 (SELECT COUNT(*) FROM permit_requests \
@@ -269,7 +269,8 @@ pub async fn teacher_insight(pool: &Pool, limit: i64) -> Result<Vec<TeacherInsig
              FROM users t \
              JOIN class_sessions s ON s.teacher_id = t.id \
              LEFT JOIN attendances a ON a.class_session_id = s.id \
-             WHERE t.role = 'teacher' AND s.session_date >= CURRENT_DATE - INTERVAL '30 days' \
+             WHERE t.role IN ('teacher', 'dewan_guru') \
+               AND s.session_date >= CURRENT_DATE - INTERVAL '30 days' \
              GROUP BY t.id, t.full_name ORDER BY 3 DESC LIMIT $1",
             &[&limit],
         )

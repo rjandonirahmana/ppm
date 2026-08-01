@@ -12,6 +12,32 @@ pub struct RfidDeviceItem {
     pub serial_number: String,
     pub location: String,
     pub api_key: String,
+    /// gate_utama|gedung_putra|gedung_putri|masjid|custom (migrasi 49).
+    pub category: String,
+}
+
+/// Kategori perangkat RFID: (nilai DB, label tampilan). SATU sumber kebenaran —
+/// dipakai dropdown admin & label baris. Sinkron dgn CHECK constraint migrasi 49.
+pub const DEVICE_CATEGORIES: &[(&str, &str)] = &[
+    ("gate_utama", "Gerbang Utama"),
+    ("gedung_putra", "Gedung Putra"),
+    ("gedung_putri", "Gedung Putri"),
+    ("masjid", "Masjid"),
+    ("custom", "Lainnya"),
+];
+
+pub fn device_category_label(c: &str) -> &'static str {
+    DEVICE_CATEGORIES
+        .iter()
+        .find(|(v, _)| *v == c)
+        .map(|(_, l)| *l)
+        .unwrap_or("Lainnya")
+}
+
+/// true bila perangkat ini GERBANG UTAMA — tap di sini berarti santri
+/// KELUAR/MASUK area PPM (toggle status), BUKAN absensi kelas terjadwal.
+pub fn is_main_gate(category: &str) -> bool {
+    category == "gate_utama"
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

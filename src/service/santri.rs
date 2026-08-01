@@ -119,7 +119,7 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
     let pct = if total > 0 { ((hadir * 100) / total) as i32 } else { 0 };
     let points = home?.map(|h| h.points).unwrap_or(0);
 
-    let detected = detected?.map(|(title, ts)| {
+    let detected = detected?.map(|(title, ts, _status)| {
         let t = ts.with_timezone(&wib());
         format!(
             "{} • {} WIB",

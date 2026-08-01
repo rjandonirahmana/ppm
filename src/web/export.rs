@@ -25,7 +25,17 @@ pub struct ExportQ {
 
 async fn build_doc(state: &AppState, claims: &Claims) -> Result<ReportDoc, StatusCode> {
     let now = fmt_dt_full(chrono::Utc::now());
-    match claims.role.as_str() {
+    // Cocokkan lewat role_satisfies, JANGAN string mentah: `ketua` setara admin
+    // dan `santri_finance` setara santri (models::role_satisfies). Dengan match
+    // mentah keduanya jatuh ke `_` → 403, padahal berhak mengekspor.
+    let role = if crate::models::role_satisfies(&claims.role, &["admin"]) {
+        "admin"
+    } else if crate::models::role_satisfies(&claims.role, &["santri"]) {
+        "santri"
+    } else {
+        claims.role.as_str()
+    };
+    match role {
         "admin" | "supervisor" => {
             let (admin, outside) = tokio::join!(
                 crate::service::laporan::laporan_admin(&state.pool),

@@ -31,10 +31,11 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
                 // Ganti Play CDN: tanpa compile Tailwind di browser. Tema & CSS
                 // kustom ada di style/tailwind.css + tailwind.config.js.
                 // HashedStylesheet (bukan <link href="/pkg/ppm.css"> statis) —
-                // WAJIB krn hash-files=true (Cargo.toml): nama file css berubah
-                // tiap build (mis. ppm.abcd1234.css), komponen ini baca hash.txt
-                // saat request & rakit href yang benar (leptos_meta docs: <link>
-                // statis "does *not* work with... hash-files").
+                // hash-files = FALSE (Cargo.toml, Jul 2026) → nama file /pkg TETAP.
+                // HashedStylesheet tetap dipakai karena aman di kedua mode: saat
+                // hash mati ia menghasilkan tautan biasa. KONSEKUENSI mode ini:
+                // nama file tak berubah antar rilis, jadi browser bisa memakai
+                // CSS/JS lama dari cache — invalidasi diurus di layer proxy/CDN.
                 <HashedStylesheet options=options.clone() id="leptos" />
 
                 // ── Interaktivitas: scroll-reveal + count-up angka ───────────

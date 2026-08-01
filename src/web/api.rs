@@ -1686,11 +1686,12 @@ pub async fn create_rfid_device_action(
     serial_number: String,
     location: String,
     api_key: String,
+    category: String,
 ) -> Result<i64, ServerFnError> {
     require_roles(&["admin"]).await?;
     let state = app_state().await?;
     crate::service::admin::create_rfid_device(
-        &state.pool, &device_name, &serial_number, &location, &api_key,
+        &state.pool, &device_name, &serial_number, &location, &api_key, &category,
     )
     .await
     .map_err(err)
@@ -1703,12 +1704,15 @@ pub async fn update_rfid_device_action(
     device_name: String,
     serial_number: String,
     location: String,
+    category: String,
 ) -> Result<(), ServerFnError> {
     require_roles(&["admin"]).await?;
     let state = app_state().await?;
-    crate::service::admin::update_rfid_device(&state.pool, id, &device_name, &serial_number, &location)
-        .await
-        .map_err(err)
+    crate::service::admin::update_rfid_device(
+        &state.pool, id, &device_name, &serial_number, &location, &category,
+    )
+    .await
+    .map_err(err)
 }
 
 /// Ganti api_key perangkat (admin) → return key baru.

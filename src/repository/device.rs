@@ -7,13 +7,16 @@ pub struct DeviceRow {
     pub id: i64,
     pub device_name: String,
     pub location: Option<String>,
+    /// Menentukan PERILAKU tap (migrasi 49): 'gate_utama' → keluar/masuk area
+    /// pondok; selainnya → absensi kelas.
+    pub category: String,
 }
 
 pub async fn find_device_by_key(pool: &Pool, api_key: &str) -> Result<Option<DeviceRow>> {
     let c = pool.get().await?;
     let row = c
         .query_opt(
-            "SELECT id, device_name, location FROM rfid_devices WHERE api_key = $1",
+            "SELECT id, device_name, location, category FROM rfid_devices WHERE api_key = $1",
             &[&api_key],
         )
         .await?;
@@ -21,6 +24,7 @@ pub async fn find_device_by_key(pool: &Pool, api_key: &str) -> Result<Option<Dev
         id: r.get(0),
         device_name: r.get(1),
         location: r.get(2),
+        category: r.get(3),
     }))
 }
 
@@ -31,14 +35,15 @@ pub struct DeviceFull {
     pub serial_number: Option<String>,
     pub location: Option<String>,
     pub api_key: String,
+    pub category: String,
 }
 
 pub async fn list_devices(pool: &Pool) -> Result<Vec<DeviceFull>> {
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT id, device_name, serial_number, location, api_key \
-             FROM rfid_devices ORDER BY device_name",
+            "SELECT id, device_name, serial_number, location, api_key, category \
+             FROM rfid_devices ORDER BY category, device_name",
             &[],
         )
         .await
@@ -51,6 +56,7 @@ pub async fn list_devices(pool: &Pool) -> Result<Vec<DeviceFull>> {
             serial_number: r.get(2),
             location: r.get(3),
             api_key: r.get(4),
+            category: r.get(5),
         })
         .collect())
 }
@@ -61,13 +67,14 @@ pub async fn create_device(
     serial_number: Option<&str>,
     location: Option<&str>,
     api_key: &str,
+    category: &str,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
-            "INSERT INTO rfid_devices (device_name, serial_number, location, api_key) \
-             VALUES ($1, $2, $3, $4) RETURNING id",
-            &[&device_name, &serial_number, &location, &api_key],
+            "INSERT INTO rfid_devices (device_name, serial_number, location, api_key, category) \
+             VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            &[&device_name, &serial_number, &location, &api_key, &category],
         )
         .await
         .context("create_device")?;
@@ -80,13 +87,15 @@ pub async fn update_device(
     device_name: &str,
     serial_number: Option<&str>,
     location: Option<&str>,
+    category: &str,
 ) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
         .execute(
-            "UPDATE rfid_devices SET device_name = $2, serial_number = $3, location = $4 \
+            "UPDATE rfid_devices SET device_name = $2, serial_number = $3, location = $4, \
+                    category = $5 \
              WHERE id = $1",
-            &[&id, &device_name, &serial_number, &location],
+            &[&id, &device_name, &serial_number, &location, &category],
         )
         .await
         .context("update_device")?;

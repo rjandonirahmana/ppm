@@ -65,12 +65,13 @@ async fn monitor_child(pool: &Pool, child_id: i64) -> Result<Option<ChildMonitor
         repo::list_my_permits(pool, child_id, 3),
     );
 
-    // Status hari ini: pakai scan terakhir; label dari status absensi terakhir?
-    // MVP: scan ada → "Masuk Sekolah" + jam + gerbang (gate di riwayat terakhir).
-    let today_status = scan?.map(|(title, ts)| {
+    // Status hari ini dari scan terakhir. Label mengikuti status ASLI absensi —
+    // dulu dipatok "present", sehingga anak yang TERLAMBAT tetap terlihat tepat
+    // waktu di mata orang tuanya.
+    let today_status = scan?.map(|(title, ts, status)| {
         let t = ts.with_timezone(&wib());
         TodayStatus {
-            label: status_today("present").to_string(),
+            label: status_today(&status).to_string(),
             time: format!("{} WIB", t.format("%H:%M")),
             gate: title.unwrap_or_else(|| "Gerbang Utama".into()),
         }
