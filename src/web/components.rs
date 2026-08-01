@@ -562,3 +562,76 @@ pub fn nav_for(role: &str) -> &'static [NavDef] {
 pub fn DeviceFrame(children: Children) -> impl IntoView {
     view! { <div class="ppm-stage">{children()}</div> }
 }
+
+/// Higher-Order Component: Guard halaman yang wajib authenticated.
+/// Otomatis redirect ke /login jika session tidak ada/invalid.
+/// Menggantikan `Effect::new(|_| { if !authed { redirect("/login") }})`
+/// yang duplikat di 10+ halaman.
+///
+/// # Usage
+/// ```leptos
+/// <AuthGuard>
+///     <YourPageComponent />
+/// </AuthGuard>
+/// ```
+#[component]
+pub fn AuthGuard(#[prop(into)] children: ChildrenFn) -> impl IntoView {
+    let session = use_context::<Resource<Option<SessionUser>>>();
+
+    Effect::new(move |_| {
+        if let Some(s) = session {
+            let is_authed = s.get().flatten().is_some();
+            if !is_authed {
+                #[cfg(target_arch = "wasm32")]
+                if let Some(w) = web_sys::window() {
+                    let _ = w.location().replace("/login");
+                }
+            }
+        }
+    });
+
+    view! { <Suspense>{children()}</Suspense> }
+}
+
+/// Guard dengan role requirement.
+/// Redirect ke /login jika tidak authenticated, atau /forbidden jika role tidak match.
+///
+/// # Usage
+/// ```leptos
+/// <RoleGuard required_roles=vec!["admin", "ketua"]>
+///     <AdminOnlyComponent />
+/// </RoleGuard>
+/// ```
+#[component]
+pub fn RoleGuard(
+    #[prop(into)] required_roles: Vec<&'static str>,
+    #[prop(into)] children: ChildrenFn,
+) -> impl IntoView {
+    let session = use_context::<Resource<Option<SessionUser>>>();
+
+    Effect::new(move |_| {
+        if let Some(s) = session {
+            match s.get().flatten() {
+                None => {
+                    #[cfg(target_arch = "wasm32")]
+                    if let Some(w) = web_sys::window() {
+                        let _ = w.location().replace("/login");
+                    }
+                }
+                Some(user) => {
+                    let has_role = required_roles
+                        .iter()
+                        .any(|&r| crate::models::role_satisfies(&user.role, &[r]));
+                    if !has_role {
+                        #[cfg(target_arch = "wasm32")]
+                        if let Some(w) = web_sys::window() {
+                            let _ = w.location().replace("/forbidden");
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    view! { <Suspense>{children()}</Suspense> }
+}
