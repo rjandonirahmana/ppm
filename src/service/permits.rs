@@ -156,3 +156,89 @@ pub async fn decide_permit(
     }
     Ok(())
 }
+
+/// Auto-create permit requests per wali kelas unik yang affected.
+///
+/// Logika:
+/// 1. Query class_schedules yang overlap dengan izin periode (start_date..end_date)
+/// 2. Group by wali_kelas_id → kumpulkan kelas unique per guru/wali
+/// 3. Buat permit_request per wali_kelas_id dengan link class_id (first affected class)
+/// 4. Setiap permit perlu approval dari:
+///    - Pamong kelas (jika require_pamong)
+///    - Wali kelas bersangkutan (final)
+///
+/// Return: list of created permit_ids + detail (class_name, wali_name) untuk notifikasi
+pub async fn auto_create_permits_per_wali(
+    pool: &Pool,
+    student_id: i64,
+    requested_by: i64,
+    permit_kind: &str,
+    start_date: chrono::NaiveDate,
+    end_date: chrono::NaiveDate,
+    reason: &str,
+) -> Result<Vec<(i64, String, String)>> {
+    use chrono::NaiveDate;
+
+    let c = pool.get().await?;
+
+    // Query: kelas yang affected dalam rentang izin, grouped by wali_kelas_id unik
+    let rows = c
+        .query(
+            "SELECT DISTINCT \
+                    c.id, c.name, c.wali_kelas_id, u.full_name, c.require_pamong \
+             FROM class_schedules cs \
+             JOIN classes c ON c.id = cs.class_id \
+             LEFT JOIN users u ON u.id = c.wali_kelas_id \
+             JOIN class_participants cp ON cp.class_schedule_id = cs.id \
+             WHERE cp.user_id = $1 \
+                AND cs.status = 'active' \
+                AND cs.start_date <= $3 \
+                AND cs.end_date >= $2 \
+             ORDER BY c.wali_kelas_id, c.name",
+            &[&student_id, &start_date, &end_date],
+        )
+        .await?;
+
+    let mut created = Vec::new();
+    let mut last_wali_id: Option<i64> = None;
+
+    for row in rows {
+        let class_id: i64 = row.get(0);
+        let class_name: String = row.get(1);
+        let wali_id: Option<i64> = row.get(2);
+        let wali_name: String = row.get(3);
+        let _require_pamong: bool = row.get(4);
+
+        // Skip jika sudah ada permit untuk wali_id ini (group by wali, buat 1 per wali saja)
+        if last_wali_id == wali_id {
+            continue;
+        }
+        last_wali_id = wali_id;
+
+        // Create permit_request untuk wali_id ini
+        let permit_row = c
+            .query_one(
+                "INSERT INTO permit_requests \
+                    (user_id, requested_by, type, reason, start_date, end_date, class_id, wali_kelas_id, \
+                     pamong_status, guru_status) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', 'pending') \
+                 RETURNING id",
+                &[
+                    &student_id,
+                    &requested_by,
+                    &permit_kind,
+                    &reason,
+                    &start_date,
+                    &end_date,
+                    &class_id,
+                    &wali_id,
+                ],
+            )
+            .await?;
+
+        let permit_id: i64 = permit_row.get(0);
+        created.push((permit_id, class_name, wali_name));
+    }
+
+    Ok(created)
+}
