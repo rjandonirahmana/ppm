@@ -1,9 +1,13 @@
 //! repository/permits.rs — Query tabel permit_requests (izin/sakit/keperluan).
 //!
-//! Migrasi 17: dua tahap — Orang Tua (parent_status) → Pamong (pamong_status).
-//! Permohonan diajukan SANTRI sendiri butuh konfirmasi orang tua dulu
-//! (parent_status='pending'); diajukan LANGSUNG oleh orang tua otomatis lolos
-//! tahap ini (parent_status='approved' saat insert).
+//! Migrasi 46 — izin PER-KELAS. Satu pengajuan izin memecah diri jadi beberapa
+//! baris `permit_requests`: satu untuk tiap WALI KELAS yang kelasnya dilewati
+//! selama rentang izin. Contoh: izin 2 hari melewati kelas A (wali X), B & C
+//! (wali Y) → 2 baris, satu ke wali X satu ke wali Y.
+//!
+//! Alur per-baris: Pamong kelas (bila `require_pamong`) → Wali Kelas (FINAL).
+//! Orang tua TIDAK lagi jadi penyetuju (kolom parent_* dihapus di migrasi 46) —
+//! izin adalah urusan akademik; orang tua cukup dinotifikasi.
 
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
@@ -20,10 +24,15 @@ pub struct PermitNotifyTargets {
     pub pamong_phone: Option<String>,
 }
 
-/// Ambil wali kelas + pamong (nama & HP) dari kelas UTAMA (is_primary) santri.
+/// Ambil wali kelas + pamong (nama & HP) penyetuju izin.
+///
+/// `class_id` Some = kelas TUJUAN izin (migrasi 46) — dipakai saat satu ajuan
+/// terpecah ke beberapa wali; None = fallback ke kelas UTAMA (is_primary)
+/// santri, untuk izin lama atau santri tanpa kelas terjadwal.
 pub async fn permit_notify_targets(
     pool: &Pool,
     student_id: i64,
+    class_id: Option<i64>,
 ) -> Result<Option<PermitNotifyTargets>> {
     let c = pool.get().await?;
     let row = c
@@ -33,13 +42,14 @@ pub async fn permit_notify_targets(
                     w.full_name, w.phone_number, \
                     pm.full_name, pm.phone_number \
              FROM users s \
-             LEFT JOIN class_participants cp ON cp.user_id = s.id AND cp.is_primary \
-             LEFT JOIN classes cl ON cl.id = cp.class_id \
+             LEFT JOIN class_participants cp \
+                 ON cp.user_id = s.id AND cp.is_primary AND $2::bigint IS NULL \
+             LEFT JOIN classes cl ON cl.id = COALESCE($2::bigint, cp.class_id) \
              LEFT JOIN users w  ON w.id = cl.wali_kelas_id \
              LEFT JOIN users pm ON pm.id = cl.pamong_id \
              WHERE s.id = $1 \
              LIMIT 1",
-            &[&student_id],
+            &[&student_id, &class_id],
         )
         .await
         .context("permit_notify_targets")?;
@@ -53,6 +63,63 @@ pub async fn permit_notify_targets(
     }))
 }
 
+/// Satu kelas yang dilewati selama rentang izin, beserta penanggung jawabnya.
+/// Dipakai `service::permits::auto_create_permits_per_wali` untuk memecah satu
+/// pengajuan jadi beberapa `permit_requests` (satu per wali kelas unik).
+pub struct AffectedClass {
+    pub class_id: i64,
+    pub class_name: String,
+    pub wali_kelas_id: Option<i64>,
+    pub wali_name: Option<String>,
+    pub require_pamong: bool,
+}
+
+/// Kelas yang jadwalnya BERSINGGUNGAN dengan rentang izin [start, end] dan
+/// santri terdaftar sebagai peserta. Terurut per wali kelas agar pemanggil bisa
+/// mengelompokkan tanpa sorting ulang.
+///
+/// Catatan: memakai `class_schedules` (jadwal periodik) — sesi yang sudah
+/// dimaterialisasi (`class_sessions`) tak dipakai karena izin bisa diajukan
+/// untuk tanggal yang sesinya belum di-generate.
+pub async fn affected_classes(
+    pool: &Pool,
+    student_id: i64,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+) -> Result<Vec<AffectedClass>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT DISTINCT cl.id, cl.name, cl.wali_kelas_id, w.full_name, \
+                    COALESCE(cl.require_pamong, TRUE) \
+             FROM class_schedules cs \
+             JOIN classes cl ON cl.id = cs.class_id \
+             LEFT JOIN users w ON w.id = cl.wali_kelas_id \
+             JOIN class_participants cp \
+                 ON (cp.class_schedule_id = cs.id OR cp.class_id = cl.id) \
+                AND cp.user_id = $1 \
+             WHERE cs.status = 'active' \
+               AND COALESCE(cs.start_date, $2) <= $3 \
+               AND COALESCE(cs.end_date, $3) >= $2 \
+             ORDER BY cl.wali_kelas_id NULLS LAST, cl.name",
+            &[&student_id, &start_date, &end_date],
+        )
+        .await
+        .context("affected_classes")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| AffectedClass {
+            class_id: r.get(0),
+            class_name: r.get(1),
+            wali_kelas_id: r.get(2),
+            wali_name: r.get(3),
+            require_pamong: r.get(4),
+        })
+        .collect())
+}
+
+/// Sisipkan SATU baris izin yang ditujukan ke satu kelas + wali kelas tertentu.
+/// Dipanggil berulang oleh `auto_create_permits_per_wali` (sekali per wali unik).
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_permit(
     pool: &Pool,
@@ -62,15 +129,25 @@ pub async fn insert_permit(
     start_date: NaiveDate,
     end_date: Option<NaiveDate>,
     reason: &str,
-    parent_status: &str,
+    class_id: Option<i64>,
+    wali_kelas_id: Option<i64>,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
             "INSERT INTO permit_requests \
-                (user_id, requested_by, type, reason, start_date, end_date, parent_status) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
-            &[&user_id, &requested_by, &kind, &reason, &start_date, &end_date, &parent_status],
+                (user_id, requested_by, type, reason, start_date, end_date, class_id, wali_kelas_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+            &[
+                &user_id,
+                &requested_by,
+                &kind,
+                &reason,
+                &start_date,
+                &end_date,
+                &class_id,
+                &wali_kelas_id,
+            ],
         )
         .await
         .context("insert_permit")?;
@@ -81,20 +158,24 @@ pub struct PermitRow {
     pub kind: String,
     pub start_date: NaiveDate,
     pub end_date: Option<NaiveDate>,
-    pub parent_status: String,
     pub pamong_status: String,
     pub guru_status: String,
-    /// Rute lewat pamong? Diturunkan dari kelas UTAMA santri (migrasi 29).
+    /// Rute lewat pamong? Diturunkan dari KELAS tujuan izin (migrasi 46),
+    /// fallback ke kelas utama santri untuk baris lama hasil backfill.
     pub require_pamong: bool,
+    /// Nama kelas yang izin ini tujukan — supaya santri tahu izinnya terpecah
+    /// ke mana saja ("Menunggu Wali Kelas — Fiqih Lanjutan").
+    pub class_name: Option<String>,
 }
 
 pub async fn list_my_permits(pool: &Pool, user_id: i64, limit: i64) -> Result<Vec<PermitRow>> {
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT p.type, p.start_date, p.end_date, p.parent_status, p.pamong_status, \
-                    p.guru_status, COALESCE(cl.require_pamong, TRUE) \
+            "SELECT p.type, p.start_date, p.end_date, p.pamong_status, p.guru_status, \
+                    COALESCE(tc.require_pamong, cl.require_pamong, TRUE), tc.name \
              FROM permit_requests p \
+             LEFT JOIN classes tc ON tc.id = p.class_id \
              LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
              LEFT JOIN classes cl ON cl.id = cp.class_id \
              WHERE p.user_id = $1 ORDER BY p.created_at DESC LIMIT $2",
@@ -108,85 +189,19 @@ pub async fn list_my_permits(pool: &Pool, user_id: i64, limit: i64) -> Result<Ve
             kind: r.get(0),
             start_date: r.get(1),
             end_date: r.get(2),
-            parent_status: r.get(3),
-            pamong_status: r.get(4),
-            guru_status: r.get(5),
-            require_pamong: r.get(6),
+            pamong_status: r.get(3),
+            guru_status: r.get(4),
+            require_pamong: r.get(5),
+            class_name: r.get(6),
         })
         .collect())
 }
 
-// ── Tahap 1: konfirmasi ORANG TUA ────────────────────────────────────────────
+// CATATAN (migrasi 46): tahap konfirmasi ORANG TUA DIHAPUS. Fungsi
+// `pending_parent_confirms` & `confirm_parent_permit` ikut dihapus — orang tua
+// kini hanya MELIHAT izin anaknya (lihat repository/parents.rs), tak memutus.
 
-pub struct PendingParentRow {
-    pub id: i64,
-    pub child_name: String,
-    pub kind: String,
-    pub start_date: NaiveDate,
-    pub end_date: Option<NaiveDate>,
-    pub reason: String,
-}
-
-/// Permit anak (yang TERHUBUNG ke `parent_id`) diajukan SANTRI SENDIRI
-/// (requested_by = user_id) dan masih menunggu konfirmasi orang tua.
-pub async fn pending_parent_confirms(pool: &Pool, parent_id: i64) -> Result<Vec<PendingParentRow>> {
-    let c = pool.get().await?;
-    let rows = c
-        .query(
-            "SELECT p.id, u.full_name, p.type, p.start_date, p.end_date, p.reason \
-             FROM permit_requests p \
-             JOIN users u ON u.id = p.user_id \
-             JOIN parent_connections pc ON pc.student_id = p.user_id AND pc.parent_id = $1 \
-             WHERE p.requested_by = p.user_id AND p.parent_status = 'pending' \
-                AND pc.status = 'connected' \
-             ORDER BY p.created_at DESC",
-            &[&parent_id],
-        )
-        .await
-        .context("pending_parent_confirms")?;
-    Ok(rows
-        .into_iter()
-        .map(|r| PendingParentRow {
-            id: r.get(0),
-            child_name: r.get(1),
-            kind: r.get(2),
-            start_date: r.get(3),
-            end_date: r.get(4),
-            reason: r.get(5),
-        })
-        .collect())
-}
-
-/// Konfirmasi/tolak izin oleh orang tua. Guard kepemilikan LANGSUNG di query
-/// (parent_connections terhubung ke santri pemilik izin) — bukan cuma di
-/// layer service — supaya orang tua tak bisa menebak `permit_id` milik anak
-/// orang lain. Return true bila baris ter-update.
-pub async fn confirm_parent_permit(
-    pool: &Pool,
-    permit_id: i64,
-    approve: bool,
-    parent_id: i64,
-) -> Result<bool> {
-    let status = if approve { "approved" } else { "rejected" };
-    let c = pool.get().await?;
-    let n = c
-        .execute(
-            "UPDATE permit_requests p SET parent_status = $2, parent_confirmed_by = $3, \
-                parent_confirmed_at = NOW() \
-             WHERE p.id = $1 AND p.parent_status = 'pending' \
-                AND p.requested_by = p.user_id \
-                AND EXISTS ( \
-                    SELECT 1 FROM parent_connections pc \
-                    WHERE pc.student_id = p.user_id AND pc.parent_id = $3 AND pc.status = 'connected' \
-                )",
-            &[&permit_id, &status, &parent_id],
-        )
-        .await
-        .context("confirm_parent_permit")?;
-    Ok(n > 0)
-}
-
-// ── Tahap 2: PAMONG/dewan guru ────────────────────────────────────────────────
+// ── Tahap 1: PAMONG kelas ─────────────────────────────────────────────────────
 
 pub struct PendingPamongRow {
     pub id: i64,
@@ -200,9 +215,11 @@ pub struct PendingPamongRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Antrean pamong: izin dari kelas yang WAJIB via pamong (require_pamong),
-/// sudah lolos tahap orang tua, menunggu keputusan pamong. `default_require`
-/// = fallback untuk santri tanpa kelas utama.
+/// Antrean pamong: izin yang menuju KELAS yang wajib via pamong
+/// (`require_pamong`), menunggu keputusan pamong kelas itu. Guard `pamong_id`
+/// memakai pamong KELAS TUJUAN izin (`p.class_id`), bukan kelas utama santri —
+/// inilah inti migrasi 46: izin ke kelas X hanya boleh diputus pamong kelas X.
+/// `default_require` = fallback bila izin lama belum punya `class_id`.
 pub async fn pending_pamong_permits(
     pool: &Pool,
     default_require: bool,
@@ -212,14 +229,15 @@ pub async fn pending_pamong_permits(
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT p.id, u.full_name, u.nis, cl.name, \
+            "SELECT p.id, u.full_name, u.nis, COALESCE(tc.name, cl.name), \
                 p.type, p.start_date, p.end_date, p.reason, p.created_at \
              FROM permit_requests p JOIN users u ON u.id = p.user_id \
+             LEFT JOIN classes tc ON tc.id = p.class_id \
              LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
              LEFT JOIN classes cl ON cl.id = cp.class_id \
-             WHERE p.parent_status = 'approved' AND p.pamong_status = 'pending' \
-                AND COALESCE(cl.require_pamong, $2) = TRUE \
-                AND ($3::bigint IS NULL OR cl.pamong_id = $3) \
+             WHERE p.pamong_status = 'pending' AND p.guru_status = 'pending' \
+                AND COALESCE(tc.require_pamong, cl.require_pamong, $2) = TRUE \
+                AND ($3::bigint IS NULL OR COALESCE(tc.pamong_id, cl.pamong_id) = $3) \
              ORDER BY p.created_at ASC LIMIT $1",
             &[&limit, &default_require, &pamong_id],
         )
@@ -247,11 +265,12 @@ pub async fn pamong_permits_decided_today(pool: &Pool, pamong_id: Option<i64>) -
     let row = c
         .query_one(
             "SELECT COUNT(*) FROM permit_requests p \
+             LEFT JOIN classes tc ON tc.id = p.class_id \
              LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
              LEFT JOIN classes cl ON cl.id = cp.class_id \
              WHERE p.pamong_status <> 'pending' \
                 AND (p.pamong_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date \
-                AND ($1::bigint IS NULL OR cl.pamong_id = $1)",
+                AND ($1::bigint IS NULL OR COALESCE(tc.pamong_id, cl.pamong_id) = $1)",
             &[&pamong_id],
         )
         .await
@@ -259,9 +278,9 @@ pub async fn pamong_permits_decided_today(pool: &Pool, pamong_id: Option<i64>) -
     Ok(row.get(0))
 }
 
-/// Setujui/tolak izin oleh pamong (tahap 1). Guard: kelas UTAMA santri WAJIB via
-/// pamong (require_pamong) — pamong tak bisa memproses izin kelas yang langsung
-/// ke wali kelas. `default_require` = fallback santri tanpa kelas utama.
+/// Setujui/tolak izin oleh pamong (tahap 1). Guard: KELAS TUJUAN izin
+/// (`p.class_id`) wajib via pamong (`require_pamong`) DAN pamong kelas itu =
+/// `pamong_id`. Izin lama tanpa `class_id` jatuh ke kelas utama santri.
 pub async fn decide_pamong_permit(
     pool: &Pool,
     permit_id: i64,
@@ -275,15 +294,17 @@ pub async fn decide_pamong_permit(
     let n = c
         .execute(
             "UPDATE permit_requests p SET pamong_status = $2, pamong_by = $3, pamong_at = NOW() \
-             WHERE p.id = $1 AND p.parent_status = 'approved' AND p.pamong_status = 'pending' \
+             WHERE p.id = $1 AND p.pamong_status = 'pending' AND p.guru_status = 'pending' \
                 AND COALESCE( \
+                    (SELECT c.require_pamong FROM classes c WHERE c.id = p.class_id), \
                     (SELECT c.require_pamong FROM class_participants cp \
                         JOIN classes c ON c.id = cp.class_id \
                         WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1), $4) = TRUE \
-                AND ($5::bigint IS NULL OR \
+                AND ($5::bigint IS NULL OR COALESCE( \
+                    (SELECT c.pamong_id FROM classes c WHERE c.id = p.class_id), \
                     (SELECT c.pamong_id FROM class_participants cp \
                         JOIN classes c ON c.id = cp.class_id \
-                        WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1) = $5)",
+                        WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1)) = $5)",
             &[&permit_id, &status, &staff_id, &default_require, &pamong_id],
         )
         .await
@@ -293,10 +314,12 @@ pub async fn decide_pamong_permit(
 
 // ── Tahap FINAL: WALI KELAS (guru penyetuju akhir) ────────────────────────────
 
-/// Prasyarat + rute wali kelas per-permit: kelas UTAMA santri menentukan apakah
-/// perlu pamong dulu (require_pamong) & siapa wali kelasnya. `wali_id` Some =
-/// hanya izin yang wali kelasnya = guru ini (teacher); None = semua (dewan
-/// guru/admin oversight). `default_require` = fallback tanpa kelas utama.
+/// Antrean wali kelas: izin yang DITUJUKAN ke guru ini (`p.wali_kelas_id`).
+/// Prasyarat: bila kelas tujuan `require_pamong`, pamong harus sudah approve;
+/// bila tidak, izin langsung masuk antrean wali kelas.
+///
+/// `wali_id` Some = hanya izin milik guru ini; None = semua (dewan guru/admin
+/// oversight). `default_require` = fallback bila izin lama tak punya `class_id`.
 pub async fn pending_guru_permits(
     pool: &Pool,
     wali_id: Option<i64>,
@@ -306,16 +329,19 @@ pub async fn pending_guru_permits(
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT p.id, u.full_name, u.nis, cl.name, \
+            "SELECT p.id, u.full_name, u.nis, COALESCE(tc.name, cl.name), \
                 p.type, p.start_date, p.end_date, p.reason, p.created_at \
              FROM permit_requests p JOIN users u ON u.id = p.user_id \
+             LEFT JOIN classes tc ON tc.id = p.class_id \
              LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
              LEFT JOIN classes cl ON cl.id = cp.class_id \
              WHERE p.guru_status = 'pending' \
-                AND CASE WHEN COALESCE(cl.require_pamong, $2) \
+                AND p.pamong_status <> 'rejected' \
+                AND CASE WHEN COALESCE(tc.require_pamong, cl.require_pamong, $2) \
                          THEN p.pamong_status = 'approved' \
-                         ELSE p.parent_status = 'approved' END \
-                AND ($3::bigint IS NULL OR cl.wali_kelas_id = $3) \
+                         ELSE TRUE END \
+                AND ($3::bigint IS NULL \
+                     OR COALESCE(p.wali_kelas_id, tc.wali_kelas_id, cl.wali_kelas_id) = $3) \
              ORDER BY p.created_at ASC LIMIT $1",
             &[&limit, &default_require, &wali_id],
         )
@@ -344,11 +370,13 @@ pub async fn guru_permits_decided_today(pool: &Pool, wali_id: Option<i64>) -> Re
     let row = c
         .query_one(
             "SELECT COUNT(*) FROM permit_requests p \
+             LEFT JOIN classes tc ON tc.id = p.class_id \
              LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
              LEFT JOIN classes cl ON cl.id = cp.class_id \
              WHERE p.guru_status <> 'pending' \
                 AND (p.guru_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date \
-                AND ($1::bigint IS NULL OR cl.wali_kelas_id = $1)",
+                AND ($1::bigint IS NULL \
+                     OR COALESCE(p.wali_kelas_id, tc.wali_kelas_id, cl.wali_kelas_id) = $1)",
             &[&wali_id],
         )
         .await
@@ -356,9 +384,10 @@ pub async fn guru_permits_decided_today(pool: &Pool, wali_id: Option<i64>) -> Re
     Ok(row.get(0))
 }
 
-/// Keputusan FINAL wali kelas. Guard: prasyarat per-permit (require_pamong →
-/// pamong approved; else parent approved) + guru_status pending + (wali_id None
-/// ATAU wali kelas kelas utama santri = wali_id).
+/// Keputusan FINAL wali kelas atas SATU baris izin (satu kelas tujuan).
+/// Guard: bila kelas tujuan `require_pamong` maka pamong wajib sudah approve;
+/// `guru_status` masih pending; dan (wali_id None ATAU wali kelas tujuan =
+/// wali_id). Izin lama tanpa `class_id` jatuh ke kelas utama santri.
 pub async fn decide_guru_permit(
     pool: &Pool,
     permit_id: i64,
@@ -373,16 +402,20 @@ pub async fn decide_guru_permit(
         .execute(
             "UPDATE permit_requests p SET guru_status = $2, guru_by = $3, guru_at = NOW() \
              WHERE p.id = $1 AND p.guru_status = 'pending' \
+                AND p.pamong_status <> 'rejected' \
                 AND CASE WHEN COALESCE( \
+                        (SELECT c.require_pamong FROM classes c WHERE c.id = p.class_id), \
                         (SELECT c.require_pamong FROM class_participants cp \
                             JOIN classes c ON c.id = cp.class_id \
                             WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1), $5) \
                      THEN p.pamong_status = 'approved' \
-                     ELSE p.parent_status = 'approved' END \
-                AND ($4::bigint IS NULL OR \
+                     ELSE TRUE END \
+                AND ($4::bigint IS NULL OR COALESCE( \
+                     p.wali_kelas_id, \
+                     (SELECT c.wali_kelas_id FROM classes c WHERE c.id = p.class_id), \
                      (SELECT c.wali_kelas_id FROM class_participants cp \
                         JOIN classes c ON c.id = cp.class_id \
-                        WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1) = $4)",
+                        WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1)) = $4)",
             &[&permit_id, &status, &staff_id, &wali_id, &default_require],
         )
         .await

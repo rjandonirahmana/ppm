@@ -43,9 +43,13 @@ pub struct PermitItem {
     pub kind_label: String,
     /// "12 – 13 Nov 2025"
     pub range_label: String,
-    /// "Menunggu Orang Tua" / "Menunggu Pengurus" / "Disetujui" / "Ditolak…"
+    /// Kelas tujuan izin ini (migrasi 46). Kosong = izin lama / santri tanpa
+    /// kelas terjadwal. Ditampilkan agar santri paham kenapa satu ajuan muncul
+    /// beberapa baris: tiap wali kelas memutus sendiri.
+    pub class_label: String,
+    /// "Menunggu Pamong" / "Menunggu Wali Kelas" / "Disetujui" / "Ditolak…"
     pub status_label: String,
-    /// pending_parent|pending_pamong|approved|rejected → warna badge.
+    /// pending_pamong|pending_guru|approved|rejected → warna badge.
     pub status_kind: String,
 }
 
@@ -60,21 +64,20 @@ pub fn permit_kind_label(kind: &str) -> &'static str {
 }
 
 /// Label + kind gabungan multi-tahap untuk satu baris permit_requests — dipakai
-/// tampilan santri & orang tua. Alur: Orang Tua → (Pamong, hanya bila kelas
-/// UTAMA santri `require_pamong`) → Wali Kelas (keputusan FINAL). `require_pamong`
-/// diturunkan per-permit dari kelas utama santri (migrasi 29).
+/// tampilan santri & orang tua. Alur (migrasi 46): Pamong Kelas (hanya bila
+/// kelas `require_pamong`) → Wali Kelas (keputusan FINAL).
+///
+/// Orang tua TIDAK lagi jadi penyetuju — izin adalah urusan akademik antara
+/// santri dan penanggung jawab kelas yang ditinggalkan. Orang tua tetap
+/// menerima notifikasi, tapi tak memblokir alur.
+///
+/// `require_pamong` diturunkan per-permit dari KELAS yang izin ini tujukan
+/// (kolom `class_id`), bukan lagi dari kelas utama santri.
 pub fn permit_stage(
-    parent_status: &str,
     pamong_status: &str,
     guru_status: &str,
     require_pamong: bool,
 ) -> (&'static str, &'static str) {
-    // Tahap orang tua.
-    match parent_status {
-        "rejected" => return ("Ditolak Orang Tua", "rejected"),
-        "pending" => return ("Menunggu Orang Tua", "pending_parent"),
-        _ => {}
-    }
     // Keputusan final wali kelas (terminal — didahulukan agar aman saat rute berubah).
     match guru_status {
         "approved" => return ("Disetujui", "approved"),

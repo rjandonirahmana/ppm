@@ -1,8 +1,16 @@
-//! service/permits.rs — Antrean izin sisi staf. Alur global bisa dikonfigurasi
-//! admin (setelan `permit_approval_mode`):
-//!   * two_stage   → Orang Tua → PAMONG (tahap 1) → GURU (final).
-//!   * direct_guru → Orang Tua → GURU (final, pamong dilewati).
-//! Tahap konfirmasi orang tua ada di service::parent.
+//! service/permits.rs — Pengajuan & antrean izin.
+//!
+//! Migrasi 46 — izin PER-KELAS. Satu pengajuan dipecah jadi beberapa baris
+//! `permit_requests`, satu untuk tiap WALI KELAS yang kelasnya dilewati selama
+//! rentang izin (lihat `split_permit_per_wali`). Tiap baris jalan sendiri:
+//!   * two_stage   → PAMONG kelas (tahap 1) → WALI KELAS (final).
+//!   * direct_guru → WALI KELAS (final, pamong dilewati).
+//! Mode default bisa dikonfigurasi admin (setelan `permit_approval_mode`), tapi
+//! `require_pamong` per-kelas yang menang bila diset.
+//!
+//! Orang tua BUKAN penyetuju lagi — mereka hanya dinotifikasi & bisa melihat.
+
+use std::collections::HashMap;
 
 use anyhow::{bail, Result};
 use deadpool_postgres::Pool;
@@ -23,33 +31,44 @@ fn wa_phone(p: &str) -> String {
     }
 }
 
-/// Kirim WA notifikasi izin baru ke penyetuju kelas UTAMA santri. Best-effort
-/// (gagal WA tak menggagalkan pengajuan). `by_parent` = pemohon orang tua.
+/// Kirim WA notifikasi izin baru ke penyetuju TIAP baris hasil pemecahan izin
+/// (migrasi 46). Best-effort — gagal WA tak menggagalkan pengajuan.
+///
+/// Pesan menyebut kelas mana saja yang jadi tanggung jawab penerima, supaya
+/// wali kelas langsung tahu konteksnya tanpa membuka aplikasi.
 ///   • Wali kelas (penyetuju final): SELALU diberi tahu.
-///   • Pamong (tahap-1): hanya bila kelas verifikasi 2 langkah (require_pamong).
-pub async fn notify_permit(
+///   • Pamong (tahap-1): hanya bila kelas itu verifikasi 2 langkah.
+pub async fn notify_permit_splits(
     http: &reqwest::Client,
     waha: &crate::config::WahaConfig,
     pool: &Pool,
     student_id: i64,
+    splits: &[PermitSplit],
     by_parent: bool,
 ) {
-    let t = match repo::permit_notify_targets(pool, student_id).await {
-        Ok(Some(t)) => t,
-        _ => return,
-    };
     let pemohon = if by_parent { "orang tua" } else { "santri sendiri" };
-    let msg = format!(
-        "🔔 *Pengajuan Izin Baru*\nSantri: {}\nDiajukan oleh: {}\n\nMohon segera diproses di aplikasi PPM AFM.",
-        t.student_name, pemohon
-    );
-    if t.require_pamong {
-        if let Some(phone) = t.pamong_phone.as_deref().filter(|p| !p.is_empty()) {
+    for sp in splits {
+        let t = match repo::permit_notify_targets(pool, student_id, sp.class_id).await {
+            Ok(Some(t)) => t,
+            _ => continue,
+        };
+        let kelas = if sp.class_names.is_empty() {
+            String::new()
+        } else {
+            format!("\nKelas terdampak: {}", sp.class_names.join(", "))
+        };
+        let msg = format!(
+            "🔔 *Pengajuan Izin Baru*\nSantri: {}\nDiajukan oleh: {}{}\n\nMohon segera diproses di aplikasi PPM AFM.",
+            t.student_name, pemohon, kelas
+        );
+        if t.require_pamong {
+            if let Some(phone) = t.pamong_phone.as_deref().filter(|p| !p.is_empty()) {
+                let _ = super::registration::send_wa_text(http, waha, &wa_phone(phone), &msg).await;
+            }
+        }
+        if let Some(phone) = t.wali_phone.as_deref().filter(|p| !p.is_empty()) {
             let _ = super::registration::send_wa_text(http, waha, &wa_phone(phone), &msg).await;
         }
-    }
-    if let Some(phone) = t.wali_phone.as_deref().filter(|p| !p.is_empty()) {
-        let _ = super::registration::send_wa_text(http, waha, &wa_phone(phone), &msg).await;
     }
 }
 
@@ -157,88 +176,94 @@ pub async fn decide_permit(
     Ok(())
 }
 
-/// Auto-create permit requests per wali kelas unik yang affected.
+/// Pecah SATU pengajuan izin jadi beberapa baris `permit_requests` — satu untuk
+/// tiap WALI KELAS yang kelasnya dilewati selama rentang izin (migrasi 46).
 ///
-/// Logika:
-/// 1. Query class_schedules yang overlap dengan izin periode (start_date..end_date)
-/// 2. Group by wali_kelas_id → kumpulkan kelas unique per guru/wali
-/// 3. Buat permit_request per wali_kelas_id dengan link class_id (first affected class)
-/// 4. Setiap permit perlu approval dari:
-///    - Pamong kelas (jika require_pamong)
-///    - Wali kelas bersangkutan (final)
+/// Contoh: izin 2 hari melewati kelas A (wali X), B & C (wali Y) → 2 baris:
+/// satu ke wali X (kelas A), satu ke wali Y (kelas B & C digabung, karena
+/// penyetujunya orang yang sama — tak perlu minta dua kali ke orang yang sama).
 ///
-/// Return: list of created permit_ids + detail (class_name, wali_name) untuk notifikasi
-pub async fn auto_create_permits_per_wali(
+/// Bila santri tak punya kelas terjadwal di rentang itu, dibuat SATU baris
+/// tanpa `class_id` (fallback ke kelas utama santri saat approval) supaya izin
+/// tetap tercatat dan tak hilang diam-diam.
+///
+/// Return: `(permit_id, daftar nama kelas, nama wali)` per baris — dipakai
+/// pemanggil untuk menyusun pesan notifikasi yang menyebut kelas mana saja.
+pub async fn split_permit_per_wali(
     pool: &Pool,
     student_id: i64,
     requested_by: i64,
-    permit_kind: &str,
+    kind: &str,
     start_date: chrono::NaiveDate,
-    end_date: chrono::NaiveDate,
+    end_date: Option<chrono::NaiveDate>,
     reason: &str,
-) -> Result<Vec<(i64, String, String)>> {
-    use chrono::NaiveDate;
+) -> Result<Vec<PermitSplit>> {
+    // end_date None = izin sehari → rentang [start, start].
+    let range_end = end_date.unwrap_or(start_date);
+    let affected = repo::affected_classes(pool, student_id, start_date, range_end).await?;
 
-    let c = pool.get().await?;
-
-    // Query: kelas yang affected dalam rentang izin, grouped by wali_kelas_id unik
-    let rows = c
-        .query(
-            "SELECT DISTINCT \
-                    c.id, c.name, c.wali_kelas_id, u.full_name, c.require_pamong \
-             FROM class_schedules cs \
-             JOIN classes c ON c.id = cs.class_id \
-             LEFT JOIN users u ON u.id = c.wali_kelas_id \
-             JOIN class_participants cp ON cp.class_schedule_id = cs.id \
-             WHERE cp.user_id = $1 \
-                AND cs.status = 'active' \
-                AND cs.start_date <= $3 \
-                AND cs.end_date >= $2 \
-             ORDER BY c.wali_kelas_id, c.name",
-            &[&student_id, &start_date, &end_date],
+    // Tak ada kelas terjadwal → satu baris tanpa class_id (fallback approval
+    // memakai kelas utama santri, sama seperti perilaku sebelum migrasi 46).
+    if affected.is_empty() {
+        let id = repo::insert_permit(
+            pool, student_id, requested_by, kind, start_date, end_date, reason, None, None,
         )
         .await?;
-
-    let mut created = Vec::new();
-    let mut last_wali_id: Option<i64> = None;
-
-    for row in rows {
-        let class_id: i64 = row.get(0);
-        let class_name: String = row.get(1);
-        let wali_id: Option<i64> = row.get(2);
-        let wali_name: String = row.get(3);
-        let _require_pamong: bool = row.get(4);
-
-        // Skip jika sudah ada permit untuk wali_id ini (group by wali, buat 1 per wali saja)
-        if last_wali_id == wali_id {
-            continue;
-        }
-        last_wali_id = wali_id;
-
-        // Create permit_request untuk wali_id ini
-        let permit_row = c
-            .query_one(
-                "INSERT INTO permit_requests \
-                    (user_id, requested_by, type, reason, start_date, end_date, class_id, wali_kelas_id, \
-                     pamong_status, guru_status) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', 'pending') \
-                 RETURNING id",
-                &[
-                    &student_id,
-                    &requested_by,
-                    &permit_kind,
-                    &reason,
-                    &start_date,
-                    &end_date,
-                    &class_id,
-                    &wali_id,
-                ],
-            )
-            .await?;
-
-        let permit_id: i64 = permit_row.get(0);
-        created.push((permit_id, class_name, wali_name));
+        return Ok(vec![PermitSplit {
+            permit_id: id,
+            class_id: None,
+            class_names: Vec::new(),
+            wali_name: None,
+        }]);
     }
 
-    Ok(created)
+    // Kelompokkan per wali kelas. Kunci `Option<i64>` — kelas tanpa wali
+    // (wali_kelas_id NULL) jadi satu grup sendiri yang diputus dewan guru/admin.
+    let mut order: Vec<Option<i64>> = Vec::new();
+    let mut groups: HashMap<Option<i64>, Vec<&repo::AffectedClass>> = HashMap::new();
+    for c in &affected {
+        let e = groups.entry(c.wali_kelas_id).or_default();
+        if e.is_empty() {
+            order.push(c.wali_kelas_id);
+        }
+        e.push(c);
+    }
+
+    let mut out = Vec::with_capacity(order.len());
+    for wali_id in order {
+        let classes = &groups[&wali_id];
+        // class_id yang disimpan = kelas PERTAMA grup ini; dipakai approval untuk
+        // menentukan require_pamong & pamong penanggung jawab.
+        let first = classes[0];
+        let permit_id = repo::insert_permit(
+            pool,
+            student_id,
+            requested_by,
+            kind,
+            start_date,
+            end_date,
+            reason,
+            Some(first.class_id),
+            wali_id,
+        )
+        .await?;
+        out.push(PermitSplit {
+            permit_id,
+            class_id: Some(first.class_id),
+            class_names: classes.iter().map(|c| c.class_name.clone()).collect(),
+            wali_name: first.wali_name.clone(),
+        });
+    }
+    Ok(out)
+}
+
+/// Satu baris hasil pemecahan izin — dipakai untuk notifikasi & pesan ke santri.
+pub struct PermitSplit {
+    pub permit_id: i64,
+    /// Kelas acuan approval (menentukan require_pamong & pamong penanggung
+    /// jawab). None = santri tak punya kelas terjadwal di rentang izin.
+    pub class_id: Option<i64>,
+    /// Kelas-kelas yang jadi tanggung jawab wali ini selama rentang izin.
+    pub class_names: Vec<String>,
+    pub wali_name: Option<String>,
 }

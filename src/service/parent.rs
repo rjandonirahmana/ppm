@@ -8,7 +8,7 @@ use deadpool_postgres::Pool;
 use super::fmt::{fmt_ago, fmt_range, wib};
 use crate::models::{
     permit_kind_label, permit_stage, ChildChip, ChildMonitor, ChildRiwayat, ConnRequest,
-    ParentHome, ParentPermitItem, PendingConn, PendingParentConfirm, PermitItem,
+    ParentHome, ParentPermitItem, PendingConn, PermitItem,
     StudentSearchItem, TodayStatus,
 };
 use crate::repository as repo;
@@ -88,10 +88,11 @@ async fn monitor_child(pool: &Pool, child_id: i64) -> Result<Option<ChildMonitor
         .into_iter()
         .map(|p| {
             let (status_label, status_kind) =
-                permit_stage(&p.parent_status, &p.pamong_status, &p.guru_status, p.require_pamong);
+                permit_stage(&p.pamong_status, &p.guru_status, p.require_pamong);
             PermitItem {
                 kind_label: permit_kind_label(&p.kind).into(),
                 range_label: fmt_range(p.start_date, p.end_date),
+                class_label: p.class_name.unwrap_or_default(),
                 status_label: status_label.into(),
                 status_kind: status_kind.into(),
             }
@@ -146,23 +147,10 @@ pub async fn parent_home(pool: &Pool, parent_id: i64, child: Option<i64>) -> Res
         None => None,
     };
 
-    let pending_permits = repo::pending_parent_confirms(pool, parent_id)
-        .await?
-        .into_iter()
-        .map(|p| PendingParentConfirm {
-            id: p.id,
-            child_name: p.child_name,
-            kind_label: permit_kind_label(&p.kind).into(),
-            range_label: fmt_range(p.start_date, p.end_date),
-            reason: p.reason,
-        })
-        .collect();
-
     Ok(ParentHome {
         children,
         pending,
         monitor,
-        pending_permits,
     })
 }
 
@@ -191,7 +179,7 @@ pub async fn children_permits(pool: &Pool, parent_id: i64) -> Result<Vec<ParentP
         .into_iter()
         .map(|p| {
             let (status_label, status_kind) =
-                permit_stage(&p.parent_status, &p.pamong_status, &p.guru_status, p.require_pamong);
+                permit_stage(&p.pamong_status, &p.guru_status, p.require_pamong);
             ParentPermitItem {
                 child_name: p.child_name,
                 kind_label: permit_kind_label(&p.kind).into(),
@@ -214,27 +202,16 @@ pub async fn submit_child_permit(
     start: &str,
     end: &str,
     reason: &str,
-) -> Result<()> {
+) -> Result<Vec<super::permits::PermitSplit>> {
     if !repo::is_connected(pool, parent_id, child_id).await? {
         bail!("forbidden");
     }
     super::santri::submit_permit(pool, child_id, parent_id, kind, start, end, reason).await
 }
 
-/// Konfirmasi/tolak izin ANAK yang diajukan santri sendiri (guard: harus
-/// terhubung — dicek via kepemilikan baris `pending_parent_confirms`, jadi
-/// cukup cocokkan `parent_id` di UPDATE, lihat repository::permits).
-pub async fn confirm_child_permit(
-    pool: &Pool,
-    parent_id: i64,
-    permit_id: i64,
-    approve: bool,
-) -> Result<()> {
-    if !repo::confirm_parent_permit(pool, permit_id, approve, parent_id).await? {
-        bail!("Izin tidak ditemukan atau sudah diproses.");
-    }
-    Ok(())
-}
+// Migrasi 46: `confirm_child_permit` DIHAPUS — persetujuan izin kini murni
+// akademik (pamong kelas → wali kelas). Orang tua tetap bisa MENGAJUKAN izin
+// untuk anaknya (`submit_child_permit`) dan melihat statusnya.
 
 // ── Sisi SANTRI: menyetujui/menolak permintaan koneksi ────────────────────────
 

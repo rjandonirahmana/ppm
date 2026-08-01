@@ -171,7 +171,7 @@ fn StafBody(d: StafHome) -> impl IntoView {
                     ("stars", "Poin", "/poin"),
                     ("cast_for_education", "Sesi", "/sesi"),
                     ("summarize", "Rekap", "/rekap-mingguan"),
-                    ("card_giftcard", "Tagihan", "/tagihan"),
+                    ("payments", "Pembayaran", "/tagihan"),
                     ("grid_on", "Galeri", "/galeri"),
                     ("shield", "Kontrol", "/kontrol-pengguna"),
                     ("settings", "Setelan", "/setelan"),

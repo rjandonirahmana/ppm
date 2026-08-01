@@ -23,7 +23,7 @@ pub async fn staf_stats(pool: &Pool) -> Result<(i64, i64, i64, i64)> {
                     WHERE u.role IN ('santri', 'santri_finance') AND a.status IN ('present','late') \
                     AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date), \
                 (SELECT COUNT(*) FROM permit_requests \
-                    WHERE guru_status = 'pending' AND parent_status <> 'rejected' AND pamong_status <> 'rejected')",
+                    WHERE guru_status = 'pending' AND pamong_status <> 'rejected')",
             &[],
         )
         .await

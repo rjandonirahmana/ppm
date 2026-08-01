@@ -162,36 +162,119 @@ fn kind_label_izin() {
 }
 
 // ── Rute tahap izin (permit_stage) — per-kelas require_pamong ─────────────────
+//
+// Migrasi 46: tahap ORANG TUA dihapus. Satu pengajuan izin dipecah jadi
+// beberapa baris (satu per wali kelas yang kelasnya dilewati); tiap baris
+// jalan sendiri: pamong kelas (bila require_pamong) → wali kelas (FINAL).
 
-fn stage_kind(parent: &str, pamong: &str, guru: &str, req: bool) -> &'static str {
-    permit_stage(parent, pamong, guru, req).1
-}
-
-#[test]
-fn permit_stage_tahap_orang_tua() {
-    // Orang tua menolak / menunggu → terminal di tahap ortu, apa pun tahap lain.
-    assert_eq!(stage_kind("rejected", "pending", "pending", true), "rejected");
-    assert_eq!(stage_kind("pending", "pending", "pending", true), "pending_parent");
-    assert_eq!(stage_kind("pending", "approved", "approved", false), "pending_parent");
+fn stage_kind(pamong: &str, guru: &str, req: bool) -> &'static str {
+    permit_stage(pamong, guru, req).1
 }
 
 #[test]
 fn permit_stage_final_guru_didahulukan() {
     // Keputusan final wali kelas terminal walau rute berubah.
-    assert_eq!(stage_kind("approved", "approved", "approved", true), "approved");
-    assert_eq!(stage_kind("approved", "pending", "approved", false), "approved");
-    assert_eq!(stage_kind("approved", "approved", "rejected", true), "rejected");
+    assert_eq!(stage_kind("approved", "approved", true), "approved");
+    assert_eq!(stage_kind("pending", "approved", false), "approved");
+    assert_eq!(stage_kind("approved", "rejected", true), "rejected");
+    // Guru sudah memutus → pamong yang masih pending tak lagi relevan.
+    assert_eq!(stage_kind("pending", "approved", true), "approved");
 }
 
 #[test]
 fn permit_stage_dua_tahap_vs_langsung() {
     // require_pamong=true: menunggu pamong dulu.
-    assert_eq!(stage_kind("approved", "pending", "pending", true), "pending_pamong");
-    assert_eq!(stage_kind("approved", "rejected", "pending", true), "rejected");
+    assert_eq!(stage_kind("pending", "pending", true), "pending_pamong");
+    assert_eq!(stage_kind("rejected", "pending", true), "rejected");
     // pamong sudah approve → menunggu wali kelas.
-    assert_eq!(stage_kind("approved", "approved", "pending", true), "pending_guru");
+    assert_eq!(stage_kind("approved", "pending", true), "pending_guru");
 
     // require_pamong=false: langsung menunggu wali kelas (abaikan pamong).
-    assert_eq!(stage_kind("approved", "pending", "pending", false), "pending_guru");
-    assert_eq!(stage_kind("approved", "rejected", "pending", false), "pending_guru");
+    assert_eq!(stage_kind("pending", "pending", false), "pending_guru");
+    assert_eq!(stage_kind("rejected", "pending", false), "pending_guru");
+}
+
+// ── Pemecahan izin per WALI KELAS (migrasi 46) ────────────────────────────────
+//
+// Logika pengelompokan di `service::permits::split_permit_per_wali` tak bisa
+// diuji langsung tanpa DB (butuh pool), jadi yang diuji di sini adalah
+// KONTRAK-nya: pengelompokan per wali kelas unik dengan urutan stabil.
+// Bila logika grouping di service berubah, uji ini harus ikut berubah.
+
+/// Tiruan minimal `repository::AffectedClass` untuk menguji grouping.
+struct Kelas {
+    id: i64,
+    nama: &'static str,
+    wali: Option<i64>,
+}
+
+/// Replika grouping `split_permit_per_wali`: kelompokkan per wali kelas,
+/// pertahankan urutan kemunculan pertama. Return (wali, class_id acuan, nama kelas).
+fn group_per_wali(kelas: &[Kelas]) -> Vec<(Option<i64>, i64, Vec<&'static str>)> {
+    use std::collections::HashMap;
+    let mut order: Vec<Option<i64>> = Vec::new();
+    let mut groups: HashMap<Option<i64>, Vec<&Kelas>> = HashMap::new();
+    for k in kelas {
+        let e = groups.entry(k.wali).or_default();
+        if e.is_empty() {
+            order.push(k.wali);
+        }
+        e.push(k);
+    }
+    order
+        .into_iter()
+        .map(|w| {
+            let g = &groups[&w];
+            (w, g[0].id, g.iter().map(|k| k.nama).collect())
+        })
+        .collect()
+}
+
+#[test]
+fn izin_dua_kelas_wali_berbeda_jadi_dua_permit() {
+    // Kasus inti: izin melewati 2 kelas dengan wali BERBEDA → 2 baris izin.
+    let kelas = [
+        Kelas { id: 1, nama: "Fiqih", wali: Some(10) },
+        Kelas { id: 2, nama: "Nahwu", wali: Some(20) },
+    ];
+    let g = group_per_wali(&kelas);
+    assert_eq!(g.len(), 2, "wali berbeda harus jadi permit terpisah");
+    assert_eq!(g[0], (Some(10), 1, vec!["Fiqih"]));
+    assert_eq!(g[1], (Some(20), 2, vec!["Nahwu"]));
+}
+
+#[test]
+fn izin_beberapa_kelas_wali_sama_jadi_satu_permit() {
+    // Wali yang sama tak perlu dimintai persetujuan dua kali — kelasnya digabung.
+    let kelas = [
+        Kelas { id: 1, nama: "Fiqih", wali: Some(10) },
+        Kelas { id: 2, nama: "Tauhid", wali: Some(10) },
+        Kelas { id: 3, nama: "Nahwu", wali: Some(20) },
+    ];
+    let g = group_per_wali(&kelas);
+    assert_eq!(g.len(), 2, "wali sama digabung jadi satu permit");
+    assert_eq!(g[0], (Some(10), 1, vec!["Fiqih", "Tauhid"]));
+    assert_eq!(g[1], (Some(20), 3, vec!["Nahwu"]));
+}
+
+#[test]
+fn izin_satu_kelas_saja_jadi_satu_permit() {
+    // Hanya melewati 1 wali kelas → cukup 1 permit (tak ada pemecahan).
+    let kelas = [Kelas { id: 7, nama: "Fiqih", wali: Some(10) }];
+    let g = group_per_wali(&kelas);
+    assert_eq!(g.len(), 1);
+    assert_eq!(g[0], (Some(10), 7, vec!["Fiqih"]));
+}
+
+#[test]
+fn izin_kelas_tanpa_wali_tetap_dapat_permit() {
+    // Kelas tanpa wali kelas (wali NULL) tetap jadi satu grup — diputus
+    // dewan guru/admin lewat oversight, jangan hilang diam-diam.
+    let kelas = [
+        Kelas { id: 1, nama: "Fiqih", wali: Some(10) },
+        Kelas { id: 2, nama: "Ekstra", wali: None },
+    ];
+    let g = group_per_wali(&kelas);
+    assert_eq!(g.len(), 2);
+    assert_eq!(g[1], (None, 2, vec!["Ekstra"]));
 }

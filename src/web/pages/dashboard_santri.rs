@@ -5,7 +5,7 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{AttendanceItem, SantriHome};
+use crate::models::{AttendanceItem, SantriHome, SessionUser};
 use crate::web::api::{connection_requests, respond_connection_action, santri_home};
 use crate::web::components::{FetchError, DeviceFrame, NotifBell};
 
@@ -194,6 +194,9 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
             // ── Permintaan koneksi orang tua (setujui/tolak oleh SANTRI) ────
             <ConnRequestsSection />
 
+            // ── Alat Keuangan (HANYA santri_finance) ────────────────────────
+            <FinanceTools />
+
             // Desktop: jadwal+riwayat kolom utama (kiri), progress jadi
             // sidebar kanan — konten sama, cuma disusun 2 kolom di layar lebar.
             <div class="space-y-6 md:space-y-0 md:grid md:grid-cols-3 md:gap-6 md:items-start">
@@ -337,6 +340,56 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
             </section>
             </div>
         </div>
+    }
+}
+
+/// Alat Keuangan — HANYA untuk peran `santri_finance` (santri yang diberi
+/// amanah mengelola pembayaran). Pola sama dengan grid "Alat Administrasi" di
+/// beranda ketua/staf: akses lewat tombol di beranda, BUKAN item navbar
+/// (navbar santri_finance sengaja dibuat identik dengan santri biasa).
+#[component]
+fn FinanceTools() -> impl IntoView {
+    let session = use_context::<Resource<Option<SessionUser>>>();
+    let is_finance = move || {
+        session
+            .and_then(|s| s.get())
+            .flatten()
+            .map(|u| u.role == "santri_finance")
+            .unwrap_or(false)
+    };
+
+    view! {
+        <Show when=is_finance fallback=|| ()>
+            <section>
+                <h2 class="text-headline-sm text-on-background mb-3">"Alat Keuangan"</h2>
+                <div class="grid grid-cols-2 gap-3">
+                    <a
+                        href="/tagihan"
+                        class="ppm-card p-4 flex items-center gap-3 press hover:border-primary transition-colors"
+                    >
+                        <span class="w-11 h-11 ppm-tile shrink-0">
+                            <span class="material-symbols-outlined">"payments"</span>
+                        </span>
+                        <div class="min-w-0">
+                            <p class="text-body-md font-semibold text-on-background">"Pembayaran"</p>
+                            <p class="text-[11px] text-on-surface-variant">"Cek & verifikasi"</p>
+                        </div>
+                    </a>
+                    <a
+                        href="/kalender"
+                        class="ppm-card p-4 flex items-center gap-3 press hover:border-primary transition-colors"
+                    >
+                        <span class="w-11 h-11 ppm-tile shrink-0">
+                            <span class="material-symbols-outlined">"receipt_long"</span>
+                        </span>
+                        <div class="min-w-0">
+                            <p class="text-body-md font-semibold text-on-background">"Riwayat"</p>
+                            <p class="text-[11px] text-on-surface-variant">"Pembayaran masuk"</p>
+                        </div>
+                    </a>
+                </div>
+            </section>
+        </Show>
     }
 }
 

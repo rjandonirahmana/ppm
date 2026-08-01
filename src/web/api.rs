@@ -299,14 +299,17 @@ pub async fn submit_permit_action(
 ) -> Result<(), ServerFnError> {
     let sess = require_roles(&["santri", "santri_finance", "admin"]).await?;
     let state = app_state().await?;
-    crate::service::santri::submit_permit(
+    let splits = crate::service::santri::submit_permit(
         &state.pool, sess.id, sess.id, &kind, &start, &end, &reason,
     )
     .await
     .map_err(err)?;
-    // Beri tahu pamong (jika 2 langkah) & wali kelas — pemohon = santri sendiri.
-    crate::service::permits::notify_permit(&state.http, &state.waha, &state.pool, sess.id, false)
-        .await;
+    // Migrasi 46: satu ajuan bisa pecah ke beberapa wali kelas — beri tahu
+    // penyetuju TIAP baris (pamong bila 2 langkah + wali kelas bersangkutan).
+    crate::service::permits::notify_permit_splits(
+        &state.http, &state.waha, &state.pool, sess.id, &splits, false,
+    )
+    .await;
     Ok(())
 }
 
@@ -649,29 +652,21 @@ pub async fn submit_child_permit_action(
 ) -> Result<(), ServerFnError> {
     let sess = require_roles(&["parent"]).await?;
     let state = app_state().await?;
-    crate::service::parent::submit_child_permit(
+    let splits = crate::service::parent::submit_child_permit(
         &state.pool, sess.id, child_id, &kind, &start, &end, &reason,
     )
     .await
     .map_err(err)?;
-    // Beri tahu pamong (jika 2 langkah) & wali kelas — pemohon = orang tua.
-    crate::service::permits::notify_permit(&state.http, &state.waha, &state.pool, child_id, true)
-        .await;
+    // Migrasi 46: satu ajuan bisa pecah ke beberapa wali kelas — pemohon = ortu.
+    crate::service::permits::notify_permit_splits(
+        &state.http, &state.waha, &state.pool, child_id, &splits, true,
+    )
+    .await;
     Ok(())
 }
 
-/// Konfirmasi/tolak izin anak yang diajukan santri sendiri (tahap 1, migrasi 17).
-#[server(ConfirmChildPermit, "/api-fn")]
-pub async fn confirm_child_permit_action(
-    permit_id: i64,
-    approve: bool,
-) -> Result<(), ServerFnError> {
-    let sess = require_roles(&["parent"]).await?;
-    let state = app_state().await?;
-    crate::service::parent::confirm_child_permit(&state.pool, sess.id, permit_id, approve)
-        .await
-        .map_err(err)
-}
+// Migrasi 46: server fn `confirm_child_permit_action` DIHAPUS — orang tua
+// tak lagi menyetujui izin (kini pamong kelas → wali kelas per kelas dilewati).
 
 /// Permintaan koneksi MASUK (sisi santri).
 #[server(GetConnRequests, "/api-fn")]

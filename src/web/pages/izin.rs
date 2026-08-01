@@ -128,9 +128,20 @@ pub fn IzinPage() -> impl IntoView {
                                                     let badge = match p.status_kind.as_str() {
                                                         "approved" => "px-3 py-1.5 rounded-full text-label-md bg-success/10 text-success",
                                                         "rejected" => "px-3 py-1.5 rounded-full text-label-md bg-error-container text-error",
-                                                        "pending_parent" => "px-3 py-1.5 rounded-full text-label-md bg-info/10 text-info",
                                                         _ => "px-3 py-1.5 rounded-full text-label-md bg-warning/10 text-warning",
                                                     };
+                                                    // Migrasi 46: satu ajuan bisa pecah jadi beberapa baris
+                                                    // (satu per wali kelas). Tampilkan kelasnya supaya santri
+                                                    // paham kenapa ada lebih dari satu baris untuk tanggal sama.
+                                                    let kelas = (!p.class_label.is_empty())
+                                                        .then(|| {
+                                                            view! {
+                                                                <p class="text-[11px] text-on-surface-variant flex items-center gap-1 mt-0.5">
+                                                                    <span class="material-symbols-outlined text-[13px]">"school"</span>
+                                                                    {p.class_label.clone()}
+                                                                </p>
+                                                            }
+                                                        });
                                                     view! {
                                                         <div class="ppm-card p-4 flex items-center gap-3">
                                                             <div class="w-11 h-11 rounded-xl bg-info/10 text-info flex items-center justify-center shrink-0">
@@ -143,6 +154,7 @@ pub fn IzinPage() -> impl IntoView {
                                                                 <p class="text-body-sm text-on-surface-variant">
                                                                     {p.range_label}
                                                                 </p>
+                                                                {kelas}
                                                             </div>
                                                             <span class=badge>{p.status_label}</span>
                                                         </div>

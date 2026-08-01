@@ -57,16 +57,8 @@ pub struct PendingConn {
     pub since_label: String,
 }
 
-/// Izin yang diajukan SANTRI SENDIRI dan menunggu konfirmasi orang tua
-/// (migrasi 17, tahap 1) — kartu "Perlu Konfirmasi" di beranda/izin ortu.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PendingParentConfirm {
-    pub id: i64,
-    pub child_name: String,
-    pub kind_label: String,
-    pub range_label: String,
-    pub reason: String,
-}
+// Migrasi 46: `PendingParentConfirm` DIHAPUS — orang tua tak lagi jadi tahap
+// persetujuan izin. Alur kini: pamong kelas -> wali kelas, per kelas dilewati.
 
 /// Payload beranda orang tua.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -77,8 +69,6 @@ pub struct ParentHome {
     pub pending: Vec<PendingConn>,
     /// Pantauan anak terpilih (None bila belum ada anak terhubung).
     pub monitor: Option<ChildMonitor>,
-    /// Izin anak yang menunggu konfirmasi orang tua (migrasi 17).
-    pub pending_permits: Vec<PendingParentConfirm>,
 }
 
 /// Permintaan koneksi masuk (sisi SANTRI — untuk disetujui/ditolak).

@@ -132,10 +132,11 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
         .into_iter()
         .map(|p| {
             let (status_label, status_kind) =
-                permit_stage(&p.parent_status, &p.pamong_status, &p.guru_status, p.require_pamong);
+                permit_stage(&p.pamong_status, &p.guru_status, p.require_pamong);
             PermitItem {
                 kind_label: permit_kind_label(&p.kind).into(),
                 range_label: fmt_range(p.start_date, p.end_date),
+                class_label: p.class_name.unwrap_or_default(),
                 status_label: status_label.into(),
                 status_kind: status_kind.into(),
             }
@@ -154,10 +155,11 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
 
 /// Ajukan izin baru (validasi di sini — jangan percaya klien). `requested_by`
 /// = santri sendiri ATAU orang tua yang mengajukan atas nama anak (lihat
-/// `service::parent::submit_child_permit`) — menentukan `parent_status` awal
-/// (migrasi 17): diajukan santri sendiri → 'pending' (perlu konfirmasi orang
-/// tua); diajukan orang tua → 'approved' (parent adalah pengaju, konsen
-/// tersirat).
+/// `service::parent::submit_child_permit`).
+///
+/// Migrasi 46: pengajuan DIPECAH per wali kelas yang kelasnya dilewati selama
+/// rentang izin (lihat `service::permits::split_permit_per_wali`). Satu ajuan
+/// bisa menghasilkan beberapa baris izin yang jalan sendiri-sendiri.
 #[allow(clippy::too_many_arguments)]
 pub async fn submit_permit(
     pool: &Pool,
@@ -167,7 +169,7 @@ pub async fn submit_permit(
     start: &str,
     end: &str,
     reason: &str,
-) -> Result<()> {
+) -> Result<Vec<super::permits::PermitSplit>> {
     if !matches!(kind, "sick" | "leave" | "keperluan") {
         bail!("Jenis izin tidak valid.");
     }
@@ -188,12 +190,10 @@ pub async fn submit_permit(
     }
     let reason: String = reason.chars().take(500).collect();
 
-    let parent_status = if requested_by == user_id { "pending" } else { "approved" };
-    repo::insert_permit(
-        pool, user_id, requested_by, kind, start_date, end_date, &reason, parent_status,
+    super::permits::split_permit_per_wali(
+        pool, user_id, requested_by, kind, start_date, end_date, &reason,
     )
-    .await?;
-    Ok(())
+    .await
 }
 
 /// Data profil pengguna.

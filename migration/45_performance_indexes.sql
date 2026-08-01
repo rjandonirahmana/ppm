@@ -32,10 +32,15 @@ CREATE INDEX IF NOT EXISTS idx_point_logs_violations
 CREATE INDEX IF NOT EXISTS idx_att_user_status_date
     ON attendances (user_id, status, scanned_at DESC);
 
--- ═ 4) PERMIT_REQUESTS — Filter approval status + guru (approval workflow) ═════
--- Kode: WHERE guru_status = 'approved' AND orang_tua_status = 'pending' LIMIT N
+-- ═ 4) PERMIT_REQUESTS — Antrean approval (workflow izin) ═════════════════════
+-- Kode: antrean pamong (pamong_status='pending' AND guru_status='pending') dan
+-- antrean wali kelas (guru_status='pending' AND pamong_status='approved'),
+-- keduanya ORDER BY created_at ASC.
+--
+-- CATATAN: kolom persetujuan orang tua (`parent_status`) DIHAPUS di migrasi 46 —
+-- izin kini murni akademik: pamong kelas → wali kelas. Jangan index kolom itu.
 CREATE INDEX IF NOT EXISTS idx_permit_workflow
-    ON permit_requests (guru_status, orang_tua_status, created_at DESC);
+    ON permit_requests (guru_status, pamong_status, created_at);
 
 -- ═ 5) CLASS_SCHEDULES — Jadwal aktif (record_scan, active_schedule_now) ════════
 -- Migrasi 7 sudah ada idx_schedule_active, tapi verifikasi disini.
