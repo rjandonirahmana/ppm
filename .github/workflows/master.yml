@@ -29,9 +29,4 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd /opt/ppm || mkdir -p /opt/ppm
-            cd /opt/ppm
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/ppm:latest
-            docker-compose pull
-            docker-compose up -d
-            docker system prune -f
