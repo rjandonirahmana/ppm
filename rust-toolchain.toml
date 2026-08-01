@@ -1,0 +1,13 @@
+[toolchain]
+# Pin nightly ke tanggal stabil untuk avoid regression di WASM32 atau linker.
+# Update manual saat ada breaking changes di nightly.
+channel = "nightly-2026-07-15"
+
+# Komponen yang wajib untuk SSR + WASM hydration.
+components = ["rustfmt", "clippy"]
+
+# Target WASM untuk Leptos hydration.
+targets = ["wasm32-unknown-unknown"]
+
+# Minimal profile agar download/compile cepat.
+profile = "minimal"

@@ -52,12 +52,12 @@ RUN mkdir -p src && \
 # Deps SSR (native musl)
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=target,target=/app/target \
-    cargo build --release --features ssr 2>&1 || true
+    cargo build --release --features ssr
 
 # Deps WASM/hydrate
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=target,target=/app/target \
-    cargo build --release --target wasm32-unknown-unknown --no-default-features --features hydrate 2>&1 || true
+    cargo build --release --target wasm32-unknown-unknown --no-default-features --features hydrate
 
 # ── Build final ─────────────────────────────────────────────────────────────────
 COPY src/ ./src/
@@ -77,10 +77,10 @@ RUN touch src/main.rs src/lib.rs
 # .wasm apa pun di /pkg.
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=target,target=/app/target \
-    cargo leptos build --release 2>&1 \
+    cargo leptos build --release \
     && cp /app/target/release/ppm /app/ppm-bin \
     && cp -r /app/target/site /app/site-out \
-    && ls /app/site-out/pkg/*.wasm >/dev/null 2>&1
+    && test -f /app/site-out/pkg/*.wasm || (echo "ERROR: WASM file not found" && exit 1)
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime

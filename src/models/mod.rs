@@ -5,6 +5,7 @@
 pub mod admin;
 pub mod attendance;
 pub mod auth;
+pub mod enums;
 pub mod books;
 pub mod calendar;
 pub mod dashboard;
@@ -22,6 +23,7 @@ pub mod schedule;
 pub use admin::*;
 pub use attendance::*;
 pub use auth::*;
+pub use enums::*;
 pub use books::*;
 pub use calendar::*;
 pub use dashboard::*;

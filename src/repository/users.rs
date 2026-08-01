@@ -314,8 +314,9 @@ pub async fn set_active(pool: &Pool, user_id: i64, active: bool) -> Result<bool>
     Ok(n > 0)
 }
 
+// Roles yang valid di sistem. SYNC dengan migration 44 database constraint.
 const VALID_ROLES: &[&str] =
-    &["admin", "teacher", "dewan_guru", "supervisor", "santri", "parent"];
+    &["admin", "ketua", "dewan_guru", "supervisor", "santri", "santri_finance", "parent"];
 
 // ── Registrasi via link undangan (migrasi 19) ───────────────────────────────
 
