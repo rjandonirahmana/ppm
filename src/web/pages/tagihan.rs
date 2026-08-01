@@ -1,7 +1,7 @@
-//! web/pages/tagihan.rs — Tagihan santri (migrasi 37).
+//! web/pages/tagihan.rs — Pembayaran santri (migrasi 37).
 //!   • FinancePage (/tagihan): admin/ketua/santri_finance — daftar belum bayar,
-//!     tandai lunas + verifikasi; admin/ketua juga buat/hapus tagihan.
-//!   • MyBillsPage (/tagihan-saya): santri lihat tagihannya + unggah bukti bayar.
+//!     tandai lunas + verifikasi; admin/ketua juga buat/hapus pembayaran.
+//!   • MyBillsPage (/tagihan-saya): santri lihat pembayaran mereka + unggah bukti bayar.
 
 use leptos::prelude::*;
 use leptos_meta::Title;
@@ -36,10 +36,10 @@ pub fn FinancePage() -> impl IntoView {
     let paid = Resource::new(|| (), |_| async move { paid_bills_data().await });
 
     view! {
-        <Title text="Tagihan Santri — PPM AFM" />
+        <Title text="Pembayaran Santri — PPM AFM" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
-                <MobileHeader title="Tagihan Santri" subtitle="Pembayaran santri" />
+                <MobileHeader title="Pembayaran Santri" subtitle="Kelola & verifikasi pembayaran" />
                 <div class="px-5 pt-5 space-y-4 stagger">
                     // ── Tab bar ─────────────────────────────────────────────
                     <div class="grid grid-cols-2 gap-1 bg-surface-container rounded-xl p-1">
@@ -405,10 +405,10 @@ pub fn MyBillsPage() -> impl IntoView {
     let refetch = move || data.refetch();
 
     view! {
-        <Title text="Tagihan Saya — PPM AFM" />
+        <Title text="Pembayaran Saya — PPM AFM" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
-                <MobileHeader title="Tagihan Saya" subtitle="Tagihan & bukti pembayaran" back_href="/santri" />
+                <MobileHeader title="Pembayaran Saya" subtitle="Pembayaran & bukti transfer" back_href="/santri" />
                 <div class="px-5 pt-5 space-y-3 stagger">
                     <Suspense fallback=|| {
                         view! { <div class="h-20 bg-surface-container rounded-2xl animate-pulse"></div> }
@@ -418,8 +418,8 @@ pub fn MyBillsPage() -> impl IntoView {
                                 Err(e) => view! { <FetchError err=e.to_string() /> }.into_any(),
                                 Ok(list) => {
                                     if list.is_empty() {
-                                        view! { <EmptyState icon="fact_check" title="Belum ada tagihan"
-                                            subtitle="Tagihan dari pengurus akan muncul di sini." /> }.into_any()
+                                        view! { <EmptyState icon="fact_check" title="Belum ada pembayaran"
+                                            subtitle="Pembayaran dari pengurus akan muncul di sini." /> }.into_any()
                                     } else {
                                         view! {
                                             <div class="space-y-2">

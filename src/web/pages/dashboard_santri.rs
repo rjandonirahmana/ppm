@@ -298,8 +298,8 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
                         href="/tagihan-saya"
                         class="flex items-center justify-center gap-2 w-full py-3.5 border-2 border-dashed border-outline-variant rounded-2xl text-body-md text-on-surface-variant hover:border-primary hover:text-primary transition-colors text-center"
                     >
-                        <span class="material-symbols-outlined text-[20px]">"card_giftcard"</span>
-                        "Tagihan"
+                        <span class="material-symbols-outlined text-[20px]">"payment"</span>
+                        "Pembayaran"
                     </a>
                 </div>
             </section>
