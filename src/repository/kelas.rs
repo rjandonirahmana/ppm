@@ -483,17 +483,24 @@ pub async fn recent_points_all(pool: &Pool, limit: i64) -> Result<Vec<(String, S
 
 /// Riwayat poin SATU santri, dipisah prestasi (delta>0) / pelanggaran (delta<0)
 /// — rapor pribadi & laporan ortu.
+/// Riwayat poin satu user, terbaru dulu.
+///
+/// `since` Some = hanya catatan sejak waktu itu (dipakai rapor santri yang
+/// sengaja dibatasi beberapa hari terakhir); None = tanpa batas waktu, hanya
+/// dibatasi `limit`.
 pub async fn point_history_of(
     pool: &Pool,
     user_id: i64,
     limit: i64,
+    since: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<Vec<(String, i32, chrono::DateTime<chrono::Utc>)>> {
     let c = pool.get().await?;
     let rows = c
         .query(
             "SELECT reason, delta, created_at FROM point_logs \
-             WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
-            &[&user_id, &limit],
+             WHERE user_id = $1 AND ($3::timestamptz IS NULL OR created_at >= $3) \
+             ORDER BY created_at DESC LIMIT $2",
+            &[&user_id, &limit, &since],
         )
         .await
         .context("point_history_of")?;
@@ -513,8 +520,13 @@ pub async fn adjust_points(
     // users.points diperbarui otomatis oleh trigger trg_point_logs_balance
     // (migrasi 32) — cukup tulis point_logs.
     tx.execute(
+        // category WAJIB salah satu dari CHECK migrasi 2:
+        // attendance|discipline|achievement|other. 'manual' TIDAK termasuk —
+        // dulu dipakai di sini, jadi SETIAP penyesuaian poin manual gagal
+        // dengan constraint violation. Sifat manualnya sudah terekam di
+        // `given_by` (siapa yang memberi) dan `reason` (alasannya).
         "INSERT INTO point_logs (user_id, delta, reason, category, given_by) \
-         VALUES ($1, $2, $3, 'manual', $4)",
+         VALUES ($1, $2, $3, 'other', $4)",
         &[&user_id, &delta, &reason, &given_by],
     )
     .await
@@ -789,10 +801,21 @@ pub struct SchedRow {
 
 /// Opsi ruang (perangkat RFID) untuk dropdown jadwal — hanya id + nama (tanpa
 /// api_key, aman dikirim ke semua peran staf).
+/// Perangkat yang boleh dipilih sebagai RUANG jadwal kelas.
+///
+/// GERBANG UTAMA sengaja DIKECUALIKAN: tap di sana selalu diartikan
+/// keluar/masuk area pondok, tak pernah jadi absensi kelas. Kalau ia boleh
+/// dipilih sebagai ruang, kelas itu jadi mustahil diabsen — tap di gerbang
+/// hanya men-toggle, tap di tempat lain ditolak karena bukan ruangnya. Diam-
+/// diam, tanpa pesan error.
 pub async fn device_options(pool: &Pool) -> Result<Vec<(i64, String)>> {
     let c = pool.get().await?;
     let rows = c
-        .query("SELECT id, device_name FROM rfid_devices ORDER BY device_name", &[])
+        .query(
+            "SELECT id, device_name FROM rfid_devices \
+             WHERE category <> 'gate_utama' ORDER BY device_name",
+            &[],
+        )
         .await
         .context("device_options")?;
     Ok(rows.into_iter().map(|r| (r.get(0), r.get(1))).collect())

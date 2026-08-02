@@ -76,3 +76,21 @@ pub struct InviteInfo {
     /// true → tampilkan isian gender/kampus/jurusan/tahun masuk PPM.
     pub needs_student_profile: bool,
 }
+
+/// Peran STAF yang hanya boleh DIUNDANG oleh admin.
+///
+/// Mengundang seseorang jadi `dewan_guru`/`supervisor` = memberi wewenang
+/// setara atau lebih tinggi dari pengundang. Tanpa batas ini, pamong bisa
+/// mencetak link yang menjadikan siapa pun dewan guru tanpa sepengetahuan
+/// admin. Mengundang santri/orang tua tetap boleh — itu tugas harian mereka.
+pub const STAFF_INVITABLE_ROLES: &[&str] = &["dewan_guru", "supervisor"];
+
+/// true bila `target_role` termasuk peran staf (khusus admin yang mengundang).
+pub fn is_staff_invite(target_role: &str) -> bool {
+    STAFF_INVITABLE_ROLES.contains(&target_role)
+}
+
+/// Boleh tidaknya `by_role` mencetak undangan untuk `target_role`.
+pub fn can_invite(by_role: &str, target_role: &str) -> bool {
+    !is_staff_invite(target_role) || role_satisfies(by_role, &["admin"])
+}

@@ -564,16 +564,35 @@ pub(crate) fn hafalan_card(hafalan: Vec<HafalanItem>, juz_count: i64) -> impl In
     }
 }
 
-pub(crate) fn points_lists(prestasi: Vec<LaporanPointItem>, pelanggaran: Vec<LaporanPointItem>) -> impl IntoView {
+/// Kartu Prestasi & Pelanggaran. `recent_only` = isinya sudah dibatasi beberapa
+/// hari terakhir di service (rapor santri) → label & pesan kosong menyesuaikan,
+/// supaya santri tak mengira catatannya hilang padahal cuma di luar rentang.
+pub(crate) fn points_lists(
+    prestasi: Vec<LaporanPointItem>,
+    pelanggaran: Vec<LaporanPointItem>,
+    recent_only: bool,
+) -> impl IntoView {
+    let periode = if recent_only {
+        format!(" ({} hari terakhir)", crate::models::RECENT_POINTS_DAYS)
+    } else {
+        String::new()
+    };
     view! {
         <div class="ppm-card p-4">
             <h3 class="text-body-lg font-bold text-on-background mb-3 flex items-center gap-2">
                 <span class="material-symbols-outlined text-[18px] text-success">"emoji_events"</span>
-                "Prestasi Terbaru"
+                {format!("Prestasi Terbaru{periode}")}
             </h3>
             {if prestasi.is_empty() {
-                view! { <p class="text-body-sm text-on-surface-variant py-2">"Belum ada catatan prestasi."</p> }
-                    .into_any()
+                let t = if recent_only {
+                    format!(
+                        "Belum ada catatan prestasi dalam {} hari terakhir.",
+                        crate::models::RECENT_POINTS_DAYS
+                    )
+                } else {
+                    "Belum ada catatan prestasi.".to_string()
+                };
+                view! { <p class="text-body-sm text-on-surface-variant py-2">{t}</p> }.into_any()
             } else {
                 view! {
                     <div class="space-y-2">
@@ -604,15 +623,18 @@ pub(crate) fn points_lists(prestasi: Vec<LaporanPointItem>, pelanggaran: Vec<Lap
         <div class="ppm-card p-4">
             <h3 class="text-body-lg font-bold text-on-background mb-3 flex items-center gap-2">
                 <span class="material-symbols-outlined text-[18px] text-error">"gpp_bad"</span>
-                "Pelanggaran & Teguran"
+                {format!("Pelanggaran & Teguran{periode}")}
             </h3>
             {if pelanggaran.is_empty() {
-                view! {
-                    <p class="text-body-sm text-on-surface-variant py-2">
-                        "Tidak ada pelanggaran tercatat. Alhamdulillah."
-                    </p>
-                }
-                    .into_any()
+                let t = if recent_only {
+                    format!(
+                        "Tidak ada pelanggaran dalam {} hari terakhir. Alhamdulillah.",
+                        crate::models::RECENT_POINTS_DAYS
+                    )
+                } else {
+                    "Tidak ada pelanggaran tercatat. Alhamdulillah.".to_string()
+                };
+                view! { <p class="text-body-sm text-on-surface-variant py-2">{t}</p> }.into_any()
             } else {
                 view! {
                     <div class="space-y-2">
@@ -696,7 +718,7 @@ fn OrtuReport(d: LaporanOrtuData) -> impl IntoView {
                 {gate_status_card(&d.gate_status, &d.gate_at_label)}
                 {hafalan_card(d.hafalan, d.juz_count)}
             </div>
-            <div class="space-y-5">{points_lists(d.prestasi, d.pelanggaran)}</div>
+            <div class="space-y-5">{points_lists(d.prestasi, d.pelanggaran, true)}</div>
         </div>
     }
 }
@@ -737,7 +759,7 @@ fn SantriReport(d: LaporanSantriData) -> impl IntoView {
                 {gate_status_card(&d.gate_status, &d.gate_at_label)}
                 {hafalan_card(d.hafalan, d.juz_count)}
             </div>
-            <div class="space-y-5">{points_lists(d.prestasi, d.pelanggaran)}</div>
+            <div class="space-y-5">{points_lists(d.prestasi, d.pelanggaran, true)}</div>
         </div>
     }
 }

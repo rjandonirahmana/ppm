@@ -7,7 +7,8 @@
 -- 3) Drop kolom dead yang tidak dipakai (class_schedules.room)
 -- 4) Perbaiki foreign key cascade policies untuk data historis
 --
--- Idempotent. Jalankan setelah migrasi 1–43.
+-- Idempotent (tiap ADD CONSTRAINT didahului DROP IF EXISTS — tanpa itu run
+-- kedua gagal). Jalankan setelah migrasi 1–43.
 -- =============================================================================
 
 -- ═ 1) USERS.ROLE — Sinkronisasi dengan migration 36/38 ═══════════════════════
@@ -19,20 +20,25 @@ ALTER TABLE users ADD CONSTRAINT users_role_check
     CHECK (role IN ('admin', 'ketua', 'dewan_guru', 'supervisor', 'santri', 'santri_finance', 'parent'));
 
 -- ═ 2) USERS.POINTS — Batas range untuk prevent overflow ═══════════════════
+ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_points_range;
 ALTER TABLE users ADD CONSTRAINT chk_users_points_range
     CHECK (points BETWEEN -10000 AND 10000);
 
 -- ═ 3) USERS.GENDER — Validasi format (L/P saja) ═════════════════════════════
+ALTER TABLE users DROP CONSTRAINT IF EXISTS chk_users_gender;
 ALTER TABLE users ADD CONSTRAINT chk_users_gender
     CHECK (gender IS NULL OR gender IN ('L', 'P'));
 
 -- ═ 4) CLASS_SCHEDULES — Validasi point values (non-negative) ════════════════
+ALTER TABLE class_schedules DROP CONSTRAINT IF EXISTS chk_late_points_nonneg;
 ALTER TABLE class_schedules ADD CONSTRAINT chk_late_points_nonneg
     CHECK (late_points IS NULL OR late_points >= 0);
 
+ALTER TABLE class_schedules DROP CONSTRAINT IF EXISTS chk_absent_points_nonneg;
 ALTER TABLE class_schedules ADD CONSTRAINT chk_absent_points_nonneg
     CHECK (absent_points IS NULL OR absent_points >= 0);
 
+ALTER TABLE class_schedules DROP CONSTRAINT IF EXISTS chk_izin_points_nonneg;
 ALTER TABLE class_schedules ADD CONSTRAINT chk_izin_points_nonneg
     CHECK (izin_points IS NULL OR izin_points >= 0);
 

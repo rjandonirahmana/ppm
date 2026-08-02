@@ -120,3 +120,16 @@ pub async fn delete_device(pool: &Pool, id: i64) -> Result<bool> {
         .context("delete_device")?;
     Ok(n > 0)
 }
+
+/// true bila perangkat ini GERBANG UTAMA. Dipakai validasi jadwal: gerbang
+/// utama tak boleh jadi ruang kelas (lihat repository::kelas::device_options).
+pub async fn is_gate_device(pool: &Pool, id: i64) -> Result<bool> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt("SELECT category FROM rfid_devices WHERE id = $1", &[&id])
+        .await
+        .context("is_gate_device")?;
+    Ok(row
+        .map(|r| crate::models::is_main_gate(&r.get::<_, String>(0)))
+        .unwrap_or(false))
+}

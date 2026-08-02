@@ -188,10 +188,13 @@ pub async fn create_invite_action(
     max_uses: i64,
     ttl_days: i64,
 ) -> Result<String, ServerFnError> {
-    require_roles(&["admin", "supervisor", "dewan_guru"]).await?;
+    // Peran STAF (dewan_guru/supervisor) khusus admin — kebijakannya ditegakkan
+    // di service::registration::can_invite, bukan di sini, supaya pemanggil baru
+    // tak bisa melewatinya.
+    let sess = require_roles(&["admin", "supervisor", "dewan_guru"]).await?;
     let state = app_state().await?;
     let mut redis = state.redis.clone();
-    crate::service::registration::create_invite(&mut redis, &role, max_uses, ttl_days)
+    crate::service::registration::create_invite(&mut redis, &sess.role, &role, max_uses, ttl_days)
         .await
         .map_err(err)
 }
@@ -1672,11 +1675,22 @@ pub async fn change_user_role_action(user_id: i64, new_role: String) -> Result<(
 
 /// Daftar perangkat RFID. Admin (User Control) + KELAS_ROLES (dropdown ruang
 /// saat buat/ubah jadwal).
+///
+/// `api_key` HANYA dikirim ke admin. Peran kelas lain (pamong, dewan guru)
+/// butuh daftar ini sekadar untuk memilih ruang — mereka tak perlu, dan tak
+/// boleh, memegang kunci yang mengizinkan perangkat mencatat absensi. Sebelum
+/// ini seluruh kunci ikut terkirim ke semua staf.
 #[server(GetRfidDevices, "/api-fn")]
 pub async fn rfid_devices_list() -> Result<Vec<crate::models::RfidDeviceItem>, ServerFnError> {
-    require_roles(KELAS_ROLES).await?;
+    let sess = require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
-    crate::service::admin::rfid_devices(&state.pool).await.map_err(err)
+    let mut list = crate::service::admin::rfid_devices(&state.pool).await.map_err(err)?;
+    if !crate::models::role_satisfies(&sess.role, &["admin"]) {
+        for d in &mut list {
+            d.api_key.clear();
+        }
+    }
+    Ok(list)
 }
 
 /// Buat perangkat RFID (admin). api_key kosong → di-generate otomatis.

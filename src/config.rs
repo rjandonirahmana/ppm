@@ -58,14 +58,23 @@ impl AppConfig {
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(3000),
+            // WAJIB. Default lama "dev-secret-ubah-di-prod" adalah salah tempel:
+            // itu bukan connection string, jadi aplikasi tetap mati saat membuat
+            // pool — hanya dengan pesan yang membingungkan. Lebih baik gagal di
+            // sini dengan sebab yang jelas.
             database_url: env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "dev-secret-ubah-di-prod".into()),
+                .context("DATABASE_URL wajib diset (lihat .env.example)")?,
             // Default 8 (bukan 16): VPS 2 CPU/4GB — hemat memori (audit Jul 2026).
             db_pool_max_size: env::var("DB_POOL_MAX_SIZE")
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(8),
-            jwt_secret: env::var("JWT_SECRET").unwrap_or_else(|_| "dev-secret-ubah-di-prod".into()),
+            // WAJIB. Dengan default, aplikasi TETAP JALAN dan menerbitkan token
+            // yang ditandatangani rahasia yang tertulis di kode sumber — siapa
+            // pun bisa memalsukan sesi admin. Gagal-cepat jauh lebih aman
+            // daripada berjalan tampak normal.
+            jwt_secret: env::var("JWT_SECRET")
+                .context("JWT_SECRET wajib diset (lihat .env.example)")?,
             rustfs: match env::var("RUSTFS_ENDPOINT") {
                 Ok(endpoint) => Some(RustFsConfig {
                     endpoint,
@@ -81,7 +90,11 @@ impl AppConfig {
             },
             redis_url: env::var("REDIS_URL").context("REDIS_URL wajib diset (registrasi+OTP)")?,
             waha: WahaConfig {
-                base_url: env::var("WAHA_BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into()),
+                // 3001, BUKAN 3000: port 3000 adalah default aplikasi ini
+                // sendiri — default lama membuat WAHA seolah menunjuk ke diri
+                // sendiri dan gagal dengan pesan yang membingungkan.
+                base_url: env::var("WAHA_BASE_URL")
+                    .unwrap_or_else(|_| "http://localhost:3001".into()),
                 session: env::var("WAHA_SESSION").unwrap_or_else(|_| "default".into()),
                 api_key: env::var("WAHA_API_KEY").unwrap_or_default(),
             },

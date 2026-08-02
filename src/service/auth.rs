@@ -25,6 +25,10 @@ pub fn normalize_phone(s: &str) -> String {
     }
 }
 
+/// Hash bcrypt boneka (cost 10, sama dgn hash asli) untuk menyamakan waktu
+/// respons saat user tidak ditemukan — lihat `login`. Bukan sandi siapa pun.
+const DUMMY_HASH: &str = "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+
 /// Verifikasi kredensial → JWT (pola sama e-ticketing AuthService::login).
 /// Login UTAMANYA pakai NOMOR HP; username/email/NIS tetap didukung (admin seed).
 /// bcrypt CPU-bound → `spawn_blocking` agar tidak menyumbat worker async.
@@ -32,6 +36,12 @@ pub async fn login(pool: &Pool, jwt: &JwtService, login: &str, password: &str) -
     let login = login.trim();
     let phone = normalize_phone(login);
     let Some(user) = repo::find_user_for_login(pool, login, &phone).await? else {
+        // Tetap jalankan bcrypt terhadap hash boneka. Tanpa ini, login untuk
+        // nomor yang TIDAK terdaftar balas seketika sementara yang terdaftar
+        // butuh ~80 ms — selisih itu cukup untuk memetakan nomor mana saja yang
+        // punya akun (user enumeration) tanpa perlu menebak sandinya.
+        let pw = password.to_string();
+        let _ = tokio::task::spawn_blocking(move || bcrypt::verify(&pw, DUMMY_HASH)).await;
         bail!("Nomor HP atau kata sandi salah.");
     };
 
@@ -116,13 +126,28 @@ pub async fn change_password(pool: &Pool, user_id: i64, old: &str, new: &str) ->
 }
 
 /// Bootstrap: bila tabel users KOSONG, buat admin awal
-/// (username `admin`, password dari env ADMIN_PASSWORD, default "admin123").
+/// (username `admin`, password dari env ADMIN_PASSWORD; default "admin123"
+/// HANYA di luar produksi — lihat badan fungsi).
 /// Tidak menyentuh apa pun bila sudah ada data (aman utk DB yang sedang diisi).
 pub async fn ensure_seed_admin(pool: &Pool) -> Result<()> {
     if repo::count_users(pool).await? > 0 {
         return Ok(());
     }
-    let pw = std::env::var("ADMIN_PASSWORD").unwrap_or_else(|_| "admin123".into());
+    // "admin123" hanya boleh untuk dev. Di produksi (LEPTOS_ENV=PROD) admin
+    // pertama WAJIB punya sandi dari env — kalau tidak, instalasi baru berdiri
+    // dengan sandi admin yang tertulis di kode sumber.
+    let pw = match std::env::var("ADMIN_PASSWORD") {
+        Ok(p) if !p.trim().is_empty() => p,
+        _ => {
+            if std::env::var("LEPTOS_ENV").as_deref() == Ok("PROD") {
+                bail!(
+                    "ADMIN_PASSWORD wajib diset saat pertama kali menjalankan di \
+                     produksi (tabel users masih kosong)."
+                );
+            }
+            "admin123".into()
+        }
+    };
     let hash = tokio::task::spawn_blocking(move || bcrypt::hash(&pw, 10)).await??;
     repo::insert_admin(pool, &hash).await?;
     tracing::info!("Seed admin dibuat (username: admin — ganti password segera)");

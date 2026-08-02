@@ -731,6 +731,12 @@ pub async fn decide_verify(
 /// santri dgn izin (permit_requests) disetujui yang mencakup TANGGAL SESI itu.
 /// Idempotent via NOT EXISTS (tak ada UNIQUE constraint di attendances —
 /// lihat roadmap #6). Return jumlah baris alpa baru.
+///
+/// Izin memerdekakan santri HANYA untuk kelas yang izinnya ditujukan
+/// (`p.class_id`). Sejak migrasi 46 izin dipecah per kelas, jadi tanpa syarat
+/// ini satu izin untuk kelas A ikut melindungi santri di kelas B pada hari yang
+/// sama — dia bolos kelas B tanpa tercatat. Izin lama tanpa class_id (NULL)
+/// tetap berlaku menyeluruh, seperti sebelum migrasi 46.
 pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
@@ -764,7 +770,8 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
                         WHERE p.user_id = cp.user_id \
                           AND p.guru_status = 'approved' \
                           AND p.start_date <= s.session_date \
-                          AND COALESCE(p.end_date, p.start_date) >= s.session_date) \
+                          AND COALESCE(p.end_date, p.start_date) >= s.session_date \
+                          AND (p.class_id IS NULL OR p.class_id = s.class_id)) \
                 RETURNING id, user_id, class_schedule_id \
              ), \
              lg AS ( \

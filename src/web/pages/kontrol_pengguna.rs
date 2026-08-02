@@ -7,7 +7,7 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{ActivityLogItem, RfidDeviceItem, UserControlData, UserRow};
+use crate::models::{ActivityLogItem, RfidDeviceItem, SessionUser, UserControlData, UserRow};
 use crate::web::api::{
     activity_log_data, change_user_role_action, create_invite_action, create_rfid_device_action,
     delete_rfid_device_action, regenerate_rfid_key_action, rfid_devices_list,
@@ -303,12 +303,24 @@ fn UserRowView(u: UserRow, refetch: impl Fn() + Copy + Send + 'static) -> impl I
 #[component]
 fn InvitePanel() -> impl IntoView {
     // Peran yang boleh diundang (admin TIDAK termasuk — dibuat manual).
+    // Peran STAF hanya untuk admin: mengundang dewan guru/pamong = memberi
+    // wewenang setara, jadi pamong & dewan guru tak boleh mencetaknya (server
+    // menolaknya lewat service::registration::can_invite — dropdown ini hanya
+    // menyembunyikan pilihan yang pasti ditolak).
     const ROLES: &[(&str, &str)] = &[
         ("santri", "Santri"),
         ("parent", "Orang Tua"),
         ("dewan_guru", "Dewan Guru"),
         ("supervisor", "Pamong"),
     ];
+    let session = use_context::<Resource<Option<SessionUser>>>();
+    let is_admin = move || {
+        session
+            .and_then(|s| s.get())
+            .flatten()
+            .map(|u| crate::models::role_satisfies(&u.role, &["admin"]))
+            .unwrap_or(false)
+    };
     let role = RwSignal::new("santri".to_string());
     // Kuota: berapa orang boleh pakai token SAMA (1 = sekali pakai; mis. 100 utk
     // intake santri). Masa berlaku dalam hari.
@@ -396,15 +408,22 @@ fn InvitePanel() -> impl IntoView {
             }}
             <select
                 class=field
+                prop:value=move || role.get()
                 on:change=move |ev| role.set(event_target_value(&ev))
             >
-                {ROLES
-                    .iter()
-                    .map(|(v, l)| {
-                        let val = v.to_string();
-                        view! { <option value=val>{*l}</option> }
-                    })
-                    .collect_view()}
+                {move || {
+                    let admin = is_admin();
+                    ROLES
+                        .iter()
+                        .filter(|(v, _)| {
+                            admin || !crate::models::is_staff_invite(v)
+                        })
+                        .map(|(v, l)| {
+                            let val = v.to_string();
+                            view! { <option value=val>{*l}</option> }
+                        })
+                        .collect_view()
+                }}
             </select>
             <div class="flex gap-2">
                 <label class="flex-1 space-y-1">

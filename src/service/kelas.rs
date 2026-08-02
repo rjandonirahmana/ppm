@@ -581,6 +581,18 @@ pub async fn create_schedule(
     let ip = parse_point_magnitude(izin_points, "izin")?;
     let atype = normalize_activity_type(activity_type);
     let room = (room_id > 0).then_some(room_id);
+    // Dropdown sudah tak menawarkannya, tapi server fn bisa dipanggil langsung
+    // dengan id apa pun — tolak di sini juga. Jadwal beruang gerbang utama
+    // TIDAK AKAN PERNAH bisa diabsen (tap di gerbang cuma toggle keluar/masuk).
+    if let Some(rid) = room {
+        if repo::is_gate_device(pool, rid).await? {
+            bail!(
+                "Gerbang utama tidak bisa dipakai sebagai ruang kelas — tap di sana \
+                 hanya menandai keluar/masuk pondok, bukan kehadiran kelas. \
+                 Kosongkan ruang bila kelas ini boleh diabsen di mana saja."
+            );
+        }
+    }
     let cd_json = custom_dates_json(&custom);
     let id = repo::create_schedule(
         pool, class_id, title.trim(), st, et, lt, rec, sd, ed, cat, pp, lp, ap, room, &cd_json,
@@ -646,6 +658,18 @@ pub async fn update_schedule(
     let ip = parse_point_magnitude(izin_points, "izin")?;
     let atype = normalize_activity_type(activity_type);
     let room = (room_id > 0).then_some(room_id);
+    // Dropdown sudah tak menawarkannya, tapi server fn bisa dipanggil langsung
+    // dengan id apa pun — tolak di sini juga. Jadwal beruang gerbang utama
+    // TIDAK AKAN PERNAH bisa diabsen (tap di gerbang cuma toggle keluar/masuk).
+    if let Some(rid) = room {
+        if repo::is_gate_device(pool, rid).await? {
+            bail!(
+                "Gerbang utama tidak bisa dipakai sebagai ruang kelas — tap di sana \
+                 hanya menandai keluar/masuk pondok, bukan kehadiran kelas. \
+                 Kosongkan ruang bila kelas ini boleh diabsen di mana saja."
+            );
+        }
+    }
     let cd_json = custom_dates_json(&custom);
     if !repo::update_schedule(
         pool, schedule_id, title.trim(), st, et, lt, rec, sd, ed, cat, pp, lp, ap, room, &cd_json,

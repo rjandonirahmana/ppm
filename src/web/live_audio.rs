@@ -93,6 +93,35 @@ pub async fn post_chunk(
             Ok(_) => {}
             Err(e) => tracing::warn!(session_id, "cek kategori sesi gagal (lanjut, fail-open): {e}"),
         }
+
+        // KEPEMILIKAN SESI. Tanpa ini, staf mana pun bisa mengirim seq=0 ke
+        // session_id mana pun — dan seq=0 MENIMPA file dari awal, jadi rekaman
+        // sesi orang lain hilang tak bisa dikembalikan.
+        //
+        // Beda dari cek kategori di atas yang fail-OPEN: di sini kegagalan DB
+        // membuat kita MENOLAK. Alasannya asimetris — siaran yang gagal mulai
+        // tinggal dicoba lagi, sedangkan rekaman yang terlanjur tertimpa tak
+        // ada gantinya. Cek hanya di seq=0, jadi potongan susulan tetap tak
+        // menyentuh DB (filosofi modul ini dipertahankan).
+        if !matches!(claims.role.as_str(), "admin" | "ketua" | "dewan_guru") {
+            match crate::repository::session_broadcasters(&state.pool, session_id).await {
+                Ok(Some((teacher, pamong, wali))) => {
+                    let me = Some(claims.user_id);
+                    if teacher != me && pamong != me && wali != me {
+                        tracing::warn!(
+                            session_id, user_id = claims.user_id,
+                            "tolak siaran: bukan pengisi/pamong/wali sesi ini"
+                        );
+                        return StatusCode::FORBIDDEN.into_response();
+                    }
+                }
+                Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+                Err(e) => {
+                    tracing::error!(session_id, "cek kepemilikan sesi gagal (tolak): {e}");
+                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
+            }
+        }
     }
 
     let path = recording_file(session_id);

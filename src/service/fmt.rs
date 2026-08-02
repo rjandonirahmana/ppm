@@ -1,9 +1,26 @@
 //! service/fmt.rs — Format waktu Indonesia (WIB) untuk tampilan.
 
-use chrono::{DateTime, Datelike, FixedOffset, NaiveTime, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveTime, TimeZone, Utc};
 
 pub fn wib() -> FixedOffset {
     FixedOffset::east_opt(7 * 3600).expect("WIB offset")
+}
+
+/// Awal hari WIB `n` hari yang lalu, dalam UTC — untuk membatasi query "N hari
+/// terakhir".
+///
+/// Sengaja memakai batas HARI KALENDER, bukan "N × 24 jam" dari sekarang:
+/// santri yang membuka rapor pukul 06:00 dan pukul 22:00 di hari yang sama
+/// harus melihat rentang yang sama. `days_ago_wib(2)` = awal kemarin-lusa,
+/// yaitu 3 hari kalender bersama hari ini.
+pub fn days_ago_wib(n: i64) -> DateTime<Utc> {
+    let today = Utc::now().with_timezone(&wib()).date_naive();
+    let start = today - chrono::Duration::days(n);
+    wib()
+        .from_local_datetime(&start.and_hms_opt(0, 0, 0).expect("00:00 valid"))
+        .single()
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or_else(Utc::now)
 }
 
 /// "Hari ini, 15:45 WIB" / "Kemarin, 04:30 WIB" / "20 Okt 2025, 19:30 WIB"

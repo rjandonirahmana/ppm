@@ -112,9 +112,14 @@ fn split_points(
 /// Rapor Pribadi Santri.
 pub async fn laporan_santri(pool: &Pool, user: &SessionUser) -> Result<LaporanSantriData> {
     let (since, _label) = super::santri::current_semester(pool).await?;
+    // Prestasi & pelanggaran di rapor santri sengaja dipersempit ke 3 HARI
+    // KALENDER WIB terakhir (hari ini, kemarin, kemarin lusa) — santri butuh
+    // melihat yang baru saja terjadi, bukan daftar panjang sepanjang semester.
+    // Statistik kehadiran & saldo poin di kartu atas tetap se-semester.
+    let points_since = super::fmt::days_ago_wib(crate::models::RECENT_POINTS_DAYS - 1);
     let (stats, points, hafalan, juz, gate, home) = tokio::join!(
         repo::semester_stats(pool, user.id, since),
-        repo::point_history_of(pool, user.id, 30),
+        repo::point_history_of(pool, user.id, 30, Some(points_since)),
         super::hafalan::hafalan_history(pool, user.id, 10),
         repo::juz_count(pool, user.id),
         repo::gate_status_of(pool, user.id),
@@ -158,7 +163,10 @@ pub async fn laporan_ortu(pool: &Pool, parent_id: i64, child_id: Option<i64>) ->
     let (since, _label) = super::santri::current_semester(pool).await?;
     let (stats, points, hafalan, juz, gate, home) = tokio::join!(
         repo::semester_stats(pool, target, since),
-        repo::point_history_of(pool, target, 30),
+        // Sama seperti rapor santri: 3 HARI KALENDER WIB terakhir. Orang tua
+        // melihat hal yang sama dengan anaknya — kalau rentangnya beda, keduanya
+        // bisa berdebat soal catatan yang sebenarnya sama.
+        repo::point_history_of(pool, target, 30, Some(super::fmt::days_ago_wib(crate::models::RECENT_POINTS_DAYS - 1))),
         super::hafalan::hafalan_history(pool, target, 10),
         repo::juz_count(pool, target),
         repo::gate_status_of(pool, target),

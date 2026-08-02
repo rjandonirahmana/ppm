@@ -65,6 +65,8 @@ pub async fn record_scan(
         });
     }
 
+    // Salin nama sebelum `device` dipecah — masih dipakai untuk log penolakan.
+    let device_name = device.device_name.clone();
     let gate = device.location.unwrap_or(device.device_name);
 
     // Jadwal pesantren dicatat dalam waktu lokal (WIB).
@@ -72,7 +74,11 @@ pub async fn record_scan(
     let today = now.date_naive();
     let now_time = now.time();
 
-    let schedule = repo::active_schedule_now(pool, user_id, today, now_time).await?;
+    // Jadwal dicocokkan JUGA dengan perangkatnya: jadwal yang ruangnya diisi
+    // (class_schedules.room_id) hanya sah di-tap di perangkat itu. Tanpa ini,
+    // santri yang mestinya di masjid bisa menempel kartu di gedung putra dan
+    // tetap terhitung hadir. Jadwal tanpa ruang tetap bebas di-tap di mana pun.
+    let schedule = repo::active_schedule_now(pool, user_id, today, now_time, device.id).await?;
     let (schedule_id, status, note) = match &schedule {
         Some(s) => {
             let st = if now_time <= s.limit_entry {
@@ -82,7 +88,36 @@ pub async fn record_scan(
             };
             (Some(s.id), st, None)
         }
-        None => (None, "outside_schedule", Some("scan di luar jadwal")),
+        None => {
+            // SALAH RUANG → TOLAK, jangan catat apa pun. Santri yang jadwalnya
+            // di masjid lalu menempel kartu di gedung putra tidak boleh
+            // meninggalkan jejak absensi apa pun — termasuk baris
+            // `outside_schedule`, yang di rekap mingguan ikut terhitung sebagai
+            // "telat" dan akan mengaburkan data.
+            //
+            // Ini HANYA berlaku bila jadwalnya memang terikat ruang. Jadwal
+            // tanpa ruang (room_id NULL = "bebas/ALL") sudah lolos di query di
+            // atas, jadi tak pernah sampai sini.
+            if let Some(room) =
+                repo::active_schedule_room_elsewhere(pool, user_id, today, now_time, device.id)
+                    .await
+                    .unwrap_or(None)
+            {
+                tracing::info!(
+                    user_id, card = req.card, device = %device_name, %room,
+                    "tap DITOLAK: bukan perangkat kelas yang bersangkutan"
+                );
+                return Ok(RfidScanResponse {
+                    ok: false,
+                    message: format!("Salah tempat — kelasmu di {room}. Absen tidak dicatat."),
+                    student: Some(name),
+                    status: Some("wrong_room".into()),
+                });
+            }
+            // Tak ada jadwal aktif sama sekali → tetap dicatat sbg log gerbang
+            // (perilaku lama, disengaja: jejak lalu-lalang tetap berguna).
+            (None, "outside_schedule", Some("scan di luar jadwal".to_string()))
+        }
     };
 
     // Dedup: satu catatan per jadwal (atau per hari untuk scan bebas).
@@ -111,7 +146,7 @@ pub async fn record_scan(
         device.id,
         &gate,
         status,
-        note,
+        note.as_deref(),
     )
     .await?;
 

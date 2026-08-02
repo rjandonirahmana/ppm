@@ -43,15 +43,24 @@ CREATE INDEX IF NOT EXISTS idx_permit_workflow
     ON permit_requests (guru_status, pamong_status, created_at);
 
 -- ═ 5) CLASS_SCHEDULES — Jadwal aktif (record_scan, active_schedule_now) ════════
--- Migrasi 7 sudah ada idx_schedule_active, tapi verifikasi disini.
-CREATE INDEX IF NOT EXISTS idx_schedule_active
-    ON class_schedules (class_id, status, start_date, end_date)
+-- NAMA BEDA dari idx_schedule_active (migrasi 7). Dengan nama yang sama,
+-- IF NOT EXISTS akan melewati pembuatan DIAM-DIAM — index parsial di bawah tak
+-- pernah terbuat, dan tak ada yang sadar karena migrasi tetap "sukses".
+CREATE INDEX IF NOT EXISTS idx_schedule_active_partial
+    ON class_schedules (class_id, start_date, end_date)
     WHERE status = 'active';
 
--- ═ 6) POINT_LOGS — Leaderboard per minggu (weekly reward check) ════════════════
--- Kode: GROUP BY user_id, WEEK(created_at) → sort by SUM(delta) DESC
-CREATE INDEX IF NOT EXISTS idx_point_logs_weekly
-    ON point_logs (user_id, DATE_TRUNC('week', created_at));
+-- ═ 6) POINT_LOGS — rentang waktu per santri ═══════════════════════════════════
+-- SENGAJA index kolom mentah, BUKAN DATE_TRUNC('week', created_at):
+-- date_trunc atas timestamptz bergantung setelan TimeZone sesi → STABLE, bukan
+-- IMMUTABLE, dan Postgres MENOLAKNYA di dalam index (migrasi 7 sudah mencatat
+-- jebakan yang sama untuk `AT TIME ZONE`). Versi awal migrasi ini memakainya →
+-- seluruh rantai migrasi gagal di sini.
+--
+-- Query mingguan menyaring rentang `created_at BETWEEN ... AND ...`, jadi index
+-- kolom mentah ini justru yang terpakai.
+CREATE INDEX IF NOT EXISTS idx_point_logs_user_created
+    ON point_logs (user_id, created_at DESC);
 
 -- ═ 7) BILLS — Status + santri (finance: belum bayar, lunas) ═════════════════════
 -- Sebelum: seq scan pada 1000+ bills.

@@ -32,6 +32,10 @@ use crate::repository as repo;
 // bukan via link undangan publik.
 pub const INVITABLE_ROLES: &[&str] = &["dewan_guru", "supervisor", "santri", "parent"];
 
+// Kebijakan siapa-boleh-mengundang-siapa ada di models::can_invite —
+// SENGAJA di models, bukan di sini, karena dropdown peran di frontend (WASM)
+// perlu menyaring pilihan yang sama. Satu sumber kebenaran untuk dua target.
+
 fn invite_key(token: &str) -> String {
     format!("reg-invite:{token}")
 }
@@ -116,12 +120,16 @@ fn validate_student_profile(p: &StudentProfile) -> Result<(String, String, Strin
 /// (pemanggil merangkai URL `/register?key={token}`).
 pub async fn create_invite(
     redis: &mut ConnectionManager,
+    by_role: &str,
     role: &str,
     max_uses: i64,
     ttl_days: i64,
 ) -> Result<String> {
     if !INVITABLE_ROLES.contains(&role) {
         bail!("Peran tidak valid untuk registrasi mandiri.");
+    }
+    if !crate::models::can_invite(by_role, role) {
+        bail!("Hanya admin yang boleh membuat undangan untuk peran staf.");
     }
     let max_uses = max_uses.clamp(1, 1000);
     let ttl_secs = (ttl_days.clamp(1, 30) as u64) * 86400;

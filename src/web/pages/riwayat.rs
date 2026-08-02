@@ -127,7 +127,7 @@ fn RiwayatContent(d: RiwayatData, l: LaporanSantriData, month_filter: RwSignal<S
                 {gate_status_card(&l.gate_status, &l.gate_at_label)}
                 {hafalan_card(l.hafalan, l.juz_count)}
             </div>
-            <div class="space-y-5">{points_lists(l.prestasi, l.pelanggaran)}</div>
+            <div class="space-y-5">{points_lists(l.prestasi, l.pelanggaran, true)}</div>
         </div>
 
         // ── Riwayat kehadiran detail per sesi ─────────────────────────────────

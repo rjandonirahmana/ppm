@@ -89,13 +89,25 @@ pub struct ActiveSchedule {
     pub limit_entry: NaiveTime,
 }
 
-/// Jadwal aktif yang sedang berlangsung untuk user pada waktu WIB tertentu.
-/// Jendela masuk: 45 menit sebelum start_time s/d end_time.
+/// Jadwal aktif yang sedang berlangsung untuk user pada waktu WIB tertentu,
+/// DI PERANGKAT tempat kartu ditempel. Jendela masuk: 45 menit sebelum
+/// start_time s/d end_time.
+///
+/// Aturan ruang (`class_schedules.room_id`):
+///   • room_id TERISI → jadwal itu hanya cocok bila di-tap di perangkat itu.
+///     Santri yang mestinya di masjid lalu menempel kartu di gedung putra TIDAK
+///     terhitung hadir — tapnya jatuh jadi `outside_schedule`.
+///   • room_id NULL   → jadwal bebas di-tap di perangkat mana pun.
+///
+/// Bila dua jadwal sama-sama cocok, yang TERIKAT ruang ini didahulukan atas
+/// yang bebas-ruang — tap di ruang tertentu lebih spesifik, jadi lebih mungkin
+/// itulah maksud santrinya.
 pub async fn active_schedule_now(
     pool: &Pool,
     user_id: i64,
     today: NaiveDate,
     now_time: NaiveTime,
+    device_id: i64,
 ) -> Result<Option<ActiveSchedule>> {
     let c = pool.get().await?;
     let row = c
@@ -107,8 +119,9 @@ pub async fn active_schedule_now(
                AND cs.start_date <= $2 AND (cs.end_date IS NULL OR cs.end_date >= $2) \
                AND $3::time >= cs.start_time - INTERVAL '45 minutes' \
                AND $3::time <= cs.end_time \
-             ORDER BY cs.start_time LIMIT 1",
-            &[&user_id, &today, &now_time],
+               AND (cs.room_id IS NULL OR cs.room_id = $4) \
+             ORDER BY (cs.room_id IS NULL), cs.start_time LIMIT 1",
+            &[&user_id, &today, &now_time, &device_id],
         )
         .await
         .context("active_schedule_now")?;
@@ -116,6 +129,39 @@ pub async fn active_schedule_now(
         id: r.get(0),
         limit_entry: r.get(1),
     }))
+}
+
+/// Nama ruang tempat santri SEHARUSNYA berada saat ini, bila jadwalnya terikat
+/// perangkat LAIN. None = memang tak ada jadwal aktif.
+///
+/// Dipakai hanya di jalur gagal (tap tak cocok jadwal) untuk memberi pesan yang
+/// menolong — "kelasmu di Masjid, bukan di sini" jauh lebih berguna bagi santri
+/// yang berdiri di depan pembaca kartu daripada sekadar "di luar jadwal".
+pub async fn active_schedule_room_elsewhere(
+    pool: &Pool,
+    user_id: i64,
+    today: NaiveDate,
+    now_time: NaiveTime,
+    device_id: i64,
+) -> Result<Option<String>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(
+            "SELECT COALESCE(dev.location, dev.device_name) \
+             FROM class_participants cp \
+             JOIN class_schedules cs ON cs.id = cp.class_schedule_id AND cs.status = 'active' \
+             JOIN rfid_devices dev ON dev.id = cs.room_id \
+             WHERE cp.user_id = $1 \
+               AND cs.start_date <= $2 AND (cs.end_date IS NULL OR cs.end_date >= $2) \
+               AND $3::time >= cs.start_time - INTERVAL '45 minutes' \
+               AND $3::time <= cs.end_time \
+               AND cs.room_id <> $4 \
+             ORDER BY cs.start_time LIMIT 1",
+            &[&user_id, &today, &now_time, &device_id],
+        )
+        .await
+        .context("active_schedule_room_elsewhere")?;
+    Ok(row.map(|r| r.get(0)))
 }
 
 /// Sesi kelas hari ini untuk jadwal tsb (bila guru sudah memulai sesi).
@@ -295,6 +341,26 @@ pub struct SessionDetailRow {
 
 /// Kategori kelas dari sebuah sesi — query ringan (dipakai guard server-side
 /// tiap potongan siaran suara di web/live_audio.rs, bukan seluruh detail).
+/// Siapa saja yang BERHAK menyiarkan sesi ini: (pengisi, pamong sesi/kelas,
+/// wali kelas). Dipakai `web/live_audio.rs::post_chunk` untuk menolak staf lain
+/// menimpa rekaman sesi yang bukan urusannya.
+pub async fn session_broadcasters(
+    pool: &Pool,
+    session_id: i64,
+) -> Result<Option<(Option<i64>, Option<i64>, Option<i64>)>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(
+            "SELECT s.teacher_id, COALESCE(s.pamong_id, cl.pamong_id), cl.wali_kelas_id \
+             FROM class_sessions s JOIN classes cl ON cl.id = s.class_id \
+             WHERE s.id = $1",
+            &[&session_id],
+        )
+        .await
+        .context("session_broadcasters")?;
+    Ok(row.map(|r| (r.get(0), r.get(1), r.get(2))))
+}
+
 pub async fn session_category(pool: &Pool, session_id: i64) -> Result<Option<String>> {
     let c = pool.get().await?;
     let row = c
@@ -411,8 +477,10 @@ pub async fn mark_manual_present(
     let n = c
         .execute(
             "INSERT INTO attendances \
-                (user_id, class_session_id, class_schedule_id, gate_label, status, method, note) \
-             SELECT $1, s.id, s.class_schedule_id, 'manual', 'present', 'manual', 'ditandai staf' \
+                (user_id, class_session_id, class_schedule_id, gate_label, status, method, note, \
+                 scan_date) \
+             SELECT $1, s.id, s.class_schedule_id, 'manual', 'present', 'manual', 'ditandai staf', \
+                    s.session_date \
              FROM class_sessions s WHERE s.id = $2 \
              ON CONFLICT (user_id, class_session_id) DO NOTHING",
             &[&student_id, &session_id],
@@ -440,8 +508,9 @@ pub async fn mark_attendance_bulk(
     let n = c
         .execute(
             "INSERT INTO attendances \
-                (user_id, class_session_id, class_schedule_id, gate_label, status, method, note) \
-             SELECT uid, s.id, s.class_schedule_id, 'manual', $3, 'manual', $4 \
+                (user_id, class_session_id, class_schedule_id, gate_label, status, method, note, \
+                 scan_date) \
+             SELECT uid, s.id, s.class_schedule_id, 'manual', $3, 'manual', $4, s.session_date \
              FROM class_sessions s CROSS JOIN unnest($2::bigint[]) AS uid \
              WHERE s.id = $1 \
              ON CONFLICT (user_id, class_session_id) DO NOTHING",

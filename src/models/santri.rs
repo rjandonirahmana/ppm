@@ -35,6 +35,14 @@ pub struct RiwayatData {
     pub items: Vec<RiwayatItem>,
 }
 
+/// Rentang hari kalender WIB untuk kartu "Prestasi Terbaru" & "Pelanggaran &
+/// Teguran" di rapor santri/orang tua.
+///
+/// SATU sumber untuk dua sisi: service memakainya menghitung batas query, UI
+/// memakainya menulis label. Dulu angkanya ditulis terpisah di label — sekali
+/// batas query diubah, label langsung berbohong tanpa ada yang sadar.
+pub const RECENT_POINTS_DAYS: i64 = 3;
+
 // ── Izin / perizinan ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
