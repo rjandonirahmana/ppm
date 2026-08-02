@@ -7,6 +7,7 @@ pub mod auth;
 pub mod books;
 pub mod calendar;
 pub mod dashboard;
+pub mod enrollment;
 pub mod export;
 pub mod fmt;
 pub mod gate;

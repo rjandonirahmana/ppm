@@ -404,3 +404,57 @@ pub async fn set_role(pool: &Pool, user_id: i64, role: &str) -> Result<bool> {
         .context("set_role")?;
     Ok(n > 0)
 }
+
+/// Pasang/lepas kartu RFID pengguna. `card` None = lepas.
+///
+/// Kolom `rfid_cards` UNIQUE — bentrok dipetakan ke pesan yang bisa dibaca
+/// admin, bukan galat constraint mentah.
+pub async fn set_rfid_card(pool: &Pool, user_id: i64, card: Option<i64>) -> Result<()> {
+    let c = pool.get().await?;
+    c.execute("UPDATE users SET rfid_cards = $2 WHERE id = $1", &[&user_id, &card])
+        .await
+        .map_err(|e| {
+            if e.code() == Some(&tokio_postgres::error::SqlState::UNIQUE_VIOLATION) {
+                anyhow::anyhow!("Kartu ini sudah dipakai pengguna lain.")
+            } else {
+                anyhow::Error::new(e).context("set_rfid_card")
+            }
+        })?;
+    Ok(())
+}
+
+pub struct UserPickRow {
+    pub id: i64,
+    pub full_name: String,
+    pub role: String,
+    pub nis: Option<String>,
+    pub rfid_cards: Option<i64>,
+}
+
+/// Cari pengguna AKTIF untuk pemasangan kartu — semua peran (pamong & dewan
+/// guru juga menempel kartu di gerbang, bukan santri saja). Cocokkan nama, NIS,
+/// atau nomor HP.
+pub async fn search_users_for_card(pool: &Pool, q: &str, limit: i64) -> Result<Vec<UserPickRow>> {
+    let c = pool.get().await?;
+    let pattern = format!("%{}%", q.trim());
+    let rows = c
+        .query(
+            "SELECT id, full_name, role, nis, rfid_cards FROM users \
+             WHERE is_active = TRUE \
+               AND (full_name ILIKE $1 OR nis ILIKE $1 OR phone_number ILIKE $1) \
+             ORDER BY full_name LIMIT $2",
+            &[&pattern, &limit],
+        )
+        .await
+        .context("search_users_for_card")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| UserPickRow {
+            id: r.get(0),
+            full_name: r.get(1),
+            role: r.get(2),
+            nis: r.get(3),
+            rfid_cards: r.get(4),
+        })
+        .collect())
+}

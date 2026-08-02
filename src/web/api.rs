@@ -1673,6 +1673,64 @@ pub async fn change_user_role_action(user_id: i64, new_role: String) -> Result<(
 
 // ── Perangkat RFID (ruang) — manajemen admin ─────────────────────────────────
 
+// ── Pendaftaran kartu RFID (admin) ────────────────────────────────────────────
+
+/// Kartu tak dikenal yang baru ditempel di mesin (Redis, hidup 1 jam).
+/// Admin memasangkannya ke pengguna tanpa mengetik nomor kartu.
+#[server(GetPendingCards, "/api-fn")]
+pub async fn pending_cards_data() -> Result<Vec<crate::models::PendingCardItem>, ServerFnError> {
+    require_roles(&["admin"]).await?;
+    let state = app_state().await?;
+    let mut redis = state.redis.clone();
+    crate::service::enrollment::pending_cards(&mut redis).await.map_err(err)
+}
+
+/// Cari pengguna (SEMUA peran) untuk dipasangi kartu.
+#[server(SearchUsersForCard, "/api-fn")]
+pub async fn search_users_for_card(
+    q: String,
+) -> Result<Vec<crate::models::UserPickItem>, ServerFnError> {
+    require_roles(&["admin"]).await?;
+    let state = app_state().await?;
+    if q.trim().chars().count() < 2 {
+        return Ok(Vec::new());
+    }
+    let rows = crate::repository::search_users_for_card(&state.pool, &q, 20)
+        .await
+        .map_err(err)?;
+    Ok(rows
+        .into_iter()
+        .map(|r| crate::models::UserPickItem {
+            id: r.id,
+            full_name: r.full_name,
+            role_label: crate::service::registration::describe_role(&r.role),
+            nis: r.nis.unwrap_or_else(|| "-".into()),
+            current_card: r.rfid_cards.unwrap_or(0),
+        })
+        .collect())
+}
+
+/// Pasang kartu ke pengguna.
+#[server(AssignRfidCard, "/api-fn")]
+pub async fn assign_card_action(user_id: i64, card: i64) -> Result<(), ServerFnError> {
+    let sess = require_roles(&["admin"]).await?;
+    let state = app_state().await?;
+    let mut redis = state.redis.clone();
+    crate::service::enrollment::assign_card(&state.pool, &mut redis, user_id, card, sess.id)
+        .await
+        .map_err(err)
+}
+
+/// Lepas kartu dari pengguna (hilang/rusak).
+#[server(UnassignRfidCard, "/api-fn")]
+pub async fn unassign_card_action(user_id: i64) -> Result<(), ServerFnError> {
+    let sess = require_roles(&["admin"]).await?;
+    let state = app_state().await?;
+    crate::service::enrollment::unassign_card(&state.pool, user_id, sess.id)
+        .await
+        .map_err(err)
+}
+
 /// Daftar perangkat RFID. Admin (User Control) + KELAS_ROLES (dropdown ruang
 /// saat buat/ubah jadwal).
 ///

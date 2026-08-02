@@ -74,3 +74,28 @@ pub struct ActivityLogItem {
     pub detail: Option<String>,
     pub when_label: String,
 }
+
+/// Satu kartu RFID tak dikenal yang menunggu dipasangkan ke pengguna.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingCardItem {
+    pub card: i64,
+    /// Perangkat tempat kartu terakhir ditempel.
+    pub device: String,
+    /// "Baru saja" / "5 menit lalu" — kapan terakhir ditempel.
+    pub when_label: String,
+    /// Epoch detik, untuk mengurutkan terbaru dulu (tak ditampilkan).
+    pub sort_key: i64,
+}
+
+/// Hasil pencarian pengguna untuk pemasangan kartu — SEMUA peran, bukan santri
+/// saja (pamong & dewan guru juga menempel kartu di gerbang).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserPickItem {
+    pub id: i64,
+    pub full_name: String,
+    pub role_label: String,
+    /// NIS bila santri, "-" bila bukan.
+    pub nis: String,
+    /// Nomor kartu terpasang saat ini (0 = belum punya).
+    pub current_card: i64,
+}

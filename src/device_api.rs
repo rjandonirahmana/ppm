@@ -39,7 +39,8 @@ pub async fn rfid_scan(
     Extension(state): Extension<Arc<AppState>>,
     Json(req): Json<RfidScanRequest>,
 ) -> (StatusCode, Json<RfidScanResponse>) {
-    match record_scan(&state.pool, &req).await {
+    let mut redis = state.redis.clone();
+    match record_scan(&state.pool, &mut redis, &req).await {
         Ok(resp) => (StatusCode::OK, Json(resp)),
         Err(ScanError::BadApiKey) => fail(StatusCode::UNAUTHORIZED, "api_key tidak dikenal"),
         Err(ScanError::UnknownCard) => fail(StatusCode::NOT_FOUND, "kartu tidak terdaftar"),

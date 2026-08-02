@@ -261,6 +261,11 @@ pub fn RekapMingguanPage() -> impl IntoView {
                                                     "No-Alfa / No-Telat / Full-Hadir per kegiatan (KBM/Non-KBM/Piket). Kreditkan tiap Senin untuk pekan sebelumnya."
                                                 </p>
 
+                                                // Suspense: is_admin membaca resource sesi.
+                                                // Fallback kosong = tombol tak muncul selama sesi
+                                                // belum termuat — aman, karena server tetap
+                                                // memeriksa peran saat tombolnya ditekan.
+                                                <Suspense fallback=|| ()>
                                                 <Show
                                                     when=move || { is_admin() && rewards_pending > 0 }
                                                     fallback=|| ().into_any()
@@ -279,6 +284,7 @@ pub fn RekapMingguanPage() -> impl IntoView {
                                                         }}
                                                     </button>
                                                 </Show>
+                                                </Suspense>
                                                 <Show when=move || !credit_msg.get().is_empty() fallback=|| ().into_any()>
                                                     <p class="text-body-sm text-on-surface-variant">{move || credit_msg.get()}</p>
                                                 </Show>

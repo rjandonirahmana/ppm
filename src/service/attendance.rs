@@ -32,6 +32,7 @@ impl From<anyhow::Error> for ScanError {
 /// hanya keterangan ruang, tak dipakai saat scan.
 pub async fn record_scan(
     pool: &Pool,
+    redis: &mut redis::aio::ConnectionManager,
     req: &RfidScanRequest,
 ) -> Result<RfidScanResponse, ScanError> {
     let Some(device) = repo::find_device_by_key(pool, &req.api_key).await? else {
@@ -39,6 +40,10 @@ pub async fn record_scan(
     };
 
     let Some((user_id, name)) = repo::find_user_by_card(pool, req.card).await? else {
+        // Kartu asing tetap DITOLAK, tapi nomornya dititipkan supaya admin bisa
+        // memasangkannya ke pengguna tanpa mengetik 10 digit (lihat
+        // service::enrollment). Inilah satu-satunya jalur pendaftaran kartu.
+        super::enrollment::remember_unknown_card(redis, req.card, &device.device_name).await;
         return Err(ScanError::UnknownCard);
     };
 

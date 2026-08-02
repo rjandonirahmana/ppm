@@ -9,11 +9,12 @@ use leptos_meta::Title;
 
 use crate::models::{ActivityLogItem, RfidDeviceItem, SessionUser, UserControlData, UserRow};
 use crate::web::api::{
-    activity_log_data, change_user_role_action, create_invite_action, create_rfid_device_action,
+    activity_log_data, assign_card_action, change_user_role_action, create_invite_action,
+    create_rfid_device_action, pending_cards_data, search_users_for_card,
     delete_rfid_device_action, regenerate_rfid_key_action, rfid_devices_list,
     toggle_user_active_action, update_rfid_device_action, user_control_data,
 };
-use crate::web::components::{DeviceFrame, EmptyState, MobileHeader};
+use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
 
 const ROLE_OPTIONS: &[(&str, &str)] = &[
     ("admin", "Admin"),
@@ -98,6 +99,9 @@ pub fn KontrolPenggunaPage() -> impl IntoView {
 
                     // ── Perangkat RFID / Ruang ───────────────────────────────
                     <RfidPanel />
+
+                    // ── Pasang kartu RFID ke pengguna ────────────────────────
+                    <KartuPanel />
 
                     // ── Activity Logs ────────────────────────────────────────
                     <Suspense fallback=|| ()>
@@ -411,19 +415,32 @@ fn InvitePanel() -> impl IntoView {
                 prop:value=move || role.get()
                 on:change=move |ev| role.set(event_target_value(&ev))
             >
-                {move || {
-                    let admin = is_admin();
+                // Suspense WAJIB: is_admin membaca resource sesi, dan membacanya
+                // di luar sini memicu peringatan hydration mismatch Leptos.
+                // Fallback = daftar tanpa peran staf; itu pilihan yang AMAN bila
+                // sesi belum termuat (server tetap menolak lewat can_invite).
+                <Suspense fallback=move || {
                     ROLES
                         .iter()
-                        .filter(|(v, _)| {
-                            admin || !crate::models::is_staff_invite(v)
-                        })
+                        .filter(|(v, _)| !crate::models::is_staff_invite(v))
                         .map(|(v, l)| {
                             let val = v.to_string();
                             view! { <option value=val>{*l}</option> }
                         })
                         .collect_view()
-                }}
+                }>
+                    {move || {
+                        let admin = is_admin();
+                        ROLES
+                            .iter()
+                            .filter(|(v, _)| admin || !crate::models::is_staff_invite(v))
+                            .map(|(v, l)| {
+                                let val = v.to_string();
+                                view! { <option value=val>{*l}</option> }
+                            })
+                            .collect_view()
+                    }}
+                </Suspense>
             </select>
             <div class="flex gap-2">
                 <label class="flex-1 space-y-1">
@@ -932,6 +949,220 @@ fn ActivityPanel(items: Vec<ActivityLogItem>) -> impl IntoView {
                     })
                     .collect_view()
                     .into_any()
+            }}
+        </div>
+    }
+}
+
+
+/// Panel pemasangan kartu RFID (admin).
+///
+/// Nomor kartu TIDAK diketik — 10 digit terlalu rawan salah. Santri menempel
+/// kartunya di mesin mana pun; kartu yang belum terdaftar muncul di sini
+/// (titipan Redis, hidup 1 jam), lalu admin memilih pemiliknya.
+#[component]
+fn KartuPanel() -> impl IntoView {
+    let pending = Resource::new(|| (), |_| async move { pending_cards_data().await });
+    // Kartu yang sedang dipasangkan (None = belum ada yang dipilih).
+    let picked = RwSignal::new(Option::<i64>::None);
+    let q = RwSignal::new(String::new());
+    let hits = RwSignal::new(Vec::<crate::models::UserPickItem>::new());
+    let busy = RwSignal::new(false);
+    let msg = RwSignal::new(Option::<(bool, String)>::None);
+
+    let cari = move |_| {
+        let term = q.get_untracked();
+        if term.trim().chars().count() < 2 {
+            hits.set(Vec::new());
+            return;
+        }
+        leptos::task::spawn_local(async move {
+            hits.set(search_users_for_card(term).await.unwrap_or_default());
+        });
+    };
+
+    let pasang = move |user_id: i64| {
+        let Some(card) = picked.get_untracked() else { return };
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        msg.set(None);
+        leptos::task::spawn_local(async move {
+            match assign_card_action(user_id, card).await {
+                Ok(_) => {
+                    msg.set(Some((true, "Kartu terpasang.".into())));
+                    picked.set(None);
+                    q.set(String::new());
+                    hits.set(Vec::new());
+                    pending.refetch();
+                }
+                Err(e) => {
+                    let m = e.to_string();
+                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                }
+            }
+            busy.set(false);
+        });
+    };
+
+    let field = "w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface";
+    view! {
+        <div class="ppm-card p-4 space-y-3">
+            <div class="flex items-center justify-between gap-2">
+                <span class="text-body-md font-bold text-on-background flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">"badge"</span>
+                    "Pasang Kartu RFID"
+                </span>
+                <button
+                    class="w-8 h-8 rounded-lg bg-surface-container text-primary flex items-center justify-center press"
+                    on:click=move |_| pending.refetch()
+                    aria-label="Muat ulang daftar kartu"
+                >
+                    <span class="material-symbols-outlined text-[18px]">"sync"</span>
+                </button>
+            </div>
+            <p class="text-[11px] text-on-surface-variant">
+                "Minta pemiliknya menempelkan kartu di mesin mana pun, lalu pilih di bawah. \
+                 Kartu yang belum dipasang hilang sendiri setelah 1 jam."
+            </p>
+
+            {move || {
+                msg.get()
+                    .map(|(ok, t)| {
+                        let cls = if ok {
+                            "p-2 bg-success/10 text-success rounded-lg text-[11px]"
+                        } else {
+                            "p-2 bg-error-container text-on-error-container rounded-lg text-[11px]"
+                        };
+                        view! { <div class=cls>{t}</div> }
+                    })
+            }}
+
+            <Suspense fallback=|| ()>
+                {move || {
+                    pending
+                        .get()
+                        .map(|res| match res {
+                            Err(e) => view! { <FetchError err=e.to_string() /> }.into_any(),
+                            Ok(list) if list.is_empty() => {
+                                view! {
+                                    <p class="text-body-sm text-on-surface-variant py-2 text-center">
+                                        "Belum ada kartu baru ditempel."
+                                    </p>
+                                }
+                                    .into_any()
+                            }
+                            Ok(list) => {
+                                view! {
+                                    <div class="space-y-1.5">
+                                        {list
+                                            .into_iter()
+                                            .map(|c| {
+                                                let card = c.card;
+                                                let is_picked = move || picked.get() == Some(card);
+                                                let cls = move || {
+                                                    if is_picked() {
+                                                        "w-full flex items-center gap-2 rounded-lg px-3 py-2 bg-primary text-on-primary press"
+                                                    } else {
+                                                        "w-full flex items-center gap-2 rounded-lg px-3 py-2 bg-surface-container text-on-surface press"
+                                                    }
+                                                };
+                                                view! {
+                                                    <button
+                                                        class=cls
+                                                        on:click=move |_| {
+                                                            picked.set(if is_picked() { None } else { Some(card) });
+                                                        }
+                                                    >
+                                                        <span class="material-symbols-outlined text-[18px]">"contactless"</span>
+                                                        <span class="flex-1 min-w-0 text-left">
+                                                            <span class="block text-body-sm font-semibold tabular-nums">
+                                                                {card.to_string()}
+                                                            </span>
+                                                            <span class="block text-[10px] opacity-75 truncate">
+                                                                {format!("{} • {}", c.device, c.when_label)}
+                                                            </span>
+                                                        </span>
+                                                    </button>
+                                                }
+                                            })
+                                            .collect_view()}
+                                    </div>
+                                }
+                                    .into_any()
+                            }
+                        })
+                }}
+            </Suspense>
+
+            // ── Pemilih pengguna: hanya muncul setelah kartu dipilih ─────────
+            {move || {
+                picked
+                    .get()
+                    .map(|card| {
+                        view! {
+                            <div class="space-y-2 pt-2 border-t border-outline-variant/40">
+                                <p class="text-[11px] text-on-surface-variant">
+                                    {format!("Pasang kartu {card} ke:")}
+                                </p>
+                                <input
+                                    type="text"
+                                    class=field
+                                    placeholder="Cari nama, NIS, atau nomor HP…"
+                                    prop:value=move || q.get()
+                                    on:input=move |ev| {
+                                        q.set(event_target_value(&ev));
+                                        cari(());
+                                    }
+                                />
+                                {move || {
+                                    let list = hits.get();
+                                    if list.is_empty() {
+                                        return ().into_any();
+                                    }
+                                    view! {
+                                        <div class="space-y-1">
+                                            {list
+                                                .into_iter()
+                                                .map(|u| {
+                                                    let uid = u.id;
+                                                    // Peringatkan bila orang ini SUDAH punya kartu —
+                                                    // memasang yang baru membuat kartu lamanya mati.
+                                                    let punya = u.current_card > 0;
+                                                    view! {
+                                                        <button
+                                                            class="w-full flex items-center gap-2 rounded-lg px-3 py-2 bg-surface-container text-left press disabled:opacity-50"
+                                                            disabled=move || busy.get()
+                                                            on:click=move |_| pasang(uid)
+                                                        >
+                                                            <div class="flex-1 min-w-0">
+                                                                <p class="text-body-sm font-semibold text-on-background truncate">
+                                                                    {u.full_name}
+                                                                </p>
+                                                                <p class="text-[10px] text-on-surface-variant truncate">
+                                                                    {format!("{} • {}", u.role_label, u.nis)}
+                                                                </p>
+                                                            </div>
+                                                            {punya
+                                                                .then(|| {
+                                                                    view! {
+                                                                        <span class="text-[10px] font-bold text-warning bg-warning/15 px-2 py-0.5 rounded-full shrink-0">
+                                                                            "ganti kartu"
+                                                                        </span>
+                                                                    }
+                                                                })}
+                                                        </button>
+                                                    }
+                                                })
+                                                .collect_view()}
+                                        </div>
+                                    }
+                                        .into_any()
+                                }}
+                            </div>
+                        }
+                    })
             }}
         </div>
     }
