@@ -173,8 +173,12 @@ pub async fn session_for_schedule_today(
     let c = pool.get().await?;
     let row = c
         .query_opt(
+            // ORDER BY id: tanpa itu, LIMIT 1 memilih sembarang bila sempat ada
+            // duplikat (migrasi 52 mencegah yang baru, tapi data lama bisa
+            // menyisakannya). Sesi TERTUA yang dipilih — itu yang absensinya
+            // sudah menempel.
             "SELECT id FROM class_sessions \
-             WHERE class_schedule_id = $1 AND session_date = $2 LIMIT 1",
+             WHERE class_schedule_id = $1 AND session_date = $2 ORDER BY id LIMIT 1",
             &[&schedule_id, &today],
         )
         .await?;
@@ -311,6 +315,11 @@ pub async fn sessions_of_class(
 
 pub struct SessionDetailRow {
     pub id: i64,
+    /// Wali & pamong KELAS — cadangan bila sesi belum menetapkan petugasnya.
+    /// Dipakai menghitung siapa yang boleh mengoreksi absensi (migrasi 51),
+    /// mencerminkan COALESCE di repository::correct_attendance.
+    pub class_wali_id: Option<i64>,
+    pub class_pamong_id: Option<i64>,
     pub class_id: i64,
     pub title: Option<String>,
     pub class_name: String,
@@ -384,7 +393,8 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
                     cs.start_time, cs.end_time, s.status, t.full_name, s.recording_path, \
                     s.recording_size, s.teacher_id, COALESCE(cs.category, c.category), \
                     s.book_id, b.title, s.book_pages, s.pamong_id, \
-                    s.target_book_id, tb.title, s.target_pages, s.actual_detail \
+                    s.target_book_id, tb.title, s.target_pages, s.actual_detail, \
+                    c.wali_kelas_id, c.pamong_id \
              FROM class_sessions s \
              JOIN classes c ON c.id = s.class_id \
              LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
@@ -418,19 +428,35 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
         target_book_title: r.get(18),
         target_pages: r.get(19),
         actual_detail: r.get(20),
+        class_wali_id: r.get(21),
+        class_pamong_id: r.get(22),
     }))
 }
 
 /// Anggota kelas + status absensinya PADA sesi ini (NULL = belum tercatat).
+/// Satu baris absensi sesi. Struct bernama, bukan tuple: dulu 5 elemen tanpa
+/// nama dan tiap penambahan kolom memaksa pembacanya menghitung posisi.
+pub struct SessionAttRaw {
+    pub user_id: i64,
+    pub full_name: String,
+    pub nis: Option<String>,
+    /// None = santri terdaftar di kelas tapi belum ada catatan absensi.
+    pub status: Option<String>,
+    pub scanned_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Id baris absensi — dibutuhkan untuk KOREKSI (migrasi 51). None = belum
+    /// ada barisnya, jadi tak ada yang bisa dikoreksi.
+    pub att_id: Option<i64>,
+}
+
 pub async fn session_attendance(
     pool: &Pool,
     session_id: i64,
     class_id: i64,
-) -> Result<Vec<(i64, String, Option<String>, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>> {
+) -> Result<Vec<SessionAttRaw>> {
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT u.id, u.full_name, u.nis, a.status, a.scanned_at \
+            "SELECT u.id, u.full_name, u.nis, a.status, a.scanned_at, a.id \
              FROM (SELECT DISTINCT user_id FROM class_participants WHERE class_id = $2) cp \
              JOIN users u ON u.id = cp.user_id AND u.role IN ('santri', 'santri_finance') \
              LEFT JOIN attendances a ON a.user_id = u.id AND a.class_session_id = $1 \
@@ -441,7 +467,14 @@ pub async fn session_attendance(
         .context("session_attendance")?;
     Ok(rows
         .into_iter()
-        .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3), r.get(4)))
+        .map(|r| SessionAttRaw {
+            user_id: r.get(0),
+            full_name: r.get(1),
+            nis: r.get(2),
+            status: r.get(3),
+            scanned_at: r.get(4),
+            att_id: r.get(5),
+        })
         .collect())
 }
 

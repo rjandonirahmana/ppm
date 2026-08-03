@@ -432,3 +432,71 @@ pub async fn decide_guru_permit(
         .context("decide_guru_permit")?;
     Ok(n > 0)
 }
+
+/// Tuliskan baris absensi untuk izin yang SUDAH disetujui final.
+///
+/// MASALAH yang diselesaikan: sampai sekarang tak ada satu pun kode yang
+/// menulis `attendances.status = 'permit'/'sick'`. Akibatnya kolom "Izin" di
+/// rekap mingguan selalu 0, dan aturan PRD "izin mengurangi poin"
+/// (`izin_points` migrasi 28, `attendance_delta("permit")`) tak pernah
+/// berjalan — santri berizin sekadar TIDAK PUNYA baris, hanya dilewati
+/// auto-absent.
+///
+/// Status yang ditulis mengikuti JENIS izin:
+///   • `sick`  → status 'sick'  → 0 poin (PRD: sakit dgn surat sah tak memotong)
+///   • lainnya → status 'permit' → −izin_points
+///
+/// `ON CONFLICT DO NOTHING`: baris yang SUDAH ada tak ditimpa. Santri yang
+/// ternyata hadir sebagian, atau yang sudah terlanjur dialpakan auto-absent,
+/// dibiarkan apa adanya — mengubahnya urusan koreksi manual oleh guru/pamong
+/// bertugas (migrasi 51), bukan efek samping diam-diam dari persetujuan izin.
+///
+/// Verifikasi langsung 'approved': yang menyetujui izin adalah wali kelas, dan
+/// dialah juga penyetuju akhir absensi. Melewatkannya ke antrean berarti
+/// memintanya menyetujui hal yang sama dua kali.
+///
+/// Return jumlah baris absensi baru.
+pub async fn materialize_permit_attendance(pool: &Pool, permit_id: i64) -> Result<i64> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "WITH p AS ( \
+                SELECT pr.id, pr.user_id, pr.class_id, pr.type, \
+                       pr.start_date, COALESCE(pr.end_date, pr.start_date) AS end_date, \
+                       CASE WHEN pr.type = 'sick' THEN 'sick' ELSE 'permit' END AS att_status \
+                  FROM permit_requests pr \
+                 WHERE pr.id = $1 AND pr.guru_status = 'approved' \
+             ), \
+             ins AS ( \
+                INSERT INTO attendances \
+                    (user_id, class_session_id, class_schedule_id, status, method, \
+                     pamong_status, pamong_at, verify_status, verified_at, \
+                     note, gate_label, scanned_at, scan_date) \
+                SELECT p.user_id, s.id, s.class_schedule_id, p.att_status, 'manual', \
+                       'approved', NOW(), 'approved', NOW(), \
+                       'Izin disetujui', 'system', NOW(), s.session_date \
+                  FROM p \
+                  JOIN class_sessions s ON s.class_id = p.class_id \
+                   AND s.session_date BETWEEN p.start_date AND p.end_date \
+                   AND s.status <> 'cancelled' \
+                 ON CONFLICT (user_id, class_session_id) DO NOTHING \
+                RETURNING id, user_id, class_schedule_id, status \
+             ), \
+             lg AS ( \
+                INSERT INTO point_logs (user_id, delta, reason, category, attendance_id) \
+                SELECT ins.user_id, \
+                       -COALESCE(sch.izin_points, \
+                                 cat_default_points(COALESCE(sch.activity_type,'other'),'izin'))::int, \
+                       'Kehadiran (' || ins.status || ') — izin disetujui', 'discipline', ins.id \
+                  FROM ins \
+                  LEFT JOIN class_schedules sch ON sch.id = ins.class_schedule_id \
+                 WHERE ins.status = 'permit' \
+                RETURNING user_id \
+             ) \
+             SELECT COUNT(*)::bigint FROM ins",
+            &[&permit_id],
+        )
+        .await
+        .context("materialize_permit_attendance")?;
+    Ok(row.get(0))
+}

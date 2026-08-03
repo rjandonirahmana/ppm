@@ -37,7 +37,7 @@ pub fn KontrolPenggunaPage() -> impl IntoView {
 
     Effect::new(move |_| {
         if let Some(Err(e)) = data.get() {
-            if e.to_string().contains("unauth") {
+            if crate::web::components::is_auth_error(&e.to_string()) {
                 #[cfg(target_arch = "wasm32")]
                 if let Some(w) = web_sys::window() {
                     let _ = w.location().replace("/login");
@@ -559,7 +559,13 @@ fn RfidPanel() -> impl IntoView {
         leptos::task::spawn_local(async move {
             // api_key dikosongkan → server generate otomatis (16 digit).
             match create_rfid_device_action(n, s, l, String::new(), cat).await {
-                Ok(_) => {
+                Ok(key) => {
+                    // Tampilkan kuncinya SEKARANG — setelah ini hanya hash-nya
+                    // yang tersimpan, jadi tak ada cara membacanya lagi.
+                    msg.set(Some((
+                        true,
+                        format!("Perangkat dibuat. CATAT kuncinya: {key}"),
+                    )));
                     name.set(String::new());
                     serial.set(String::new());
                     location.set(String::new());
@@ -597,12 +603,15 @@ fn RfidPanel() -> impl IntoView {
 
             {move || {
                 msg.get()
-                    .map(|(_, t)| {
-                        view! {
-                            <div class="p-2 bg-error-container text-on-error-container rounded-lg text-[11px]">
-                                {t}
-                            </div>
-                        }
+                    .map(|(ok, t)| {
+                        // Pesan sukses kini membawa KUNCI perangkat baru — harus
+                        // menonjol, bukan disamarkan sebagai galat merah.
+                        let cls = if ok {
+                            "p-2.5 bg-success/10 text-success rounded-lg text-[11px] font-semibold break-all"
+                        } else {
+                            "p-2 bg-error-container text-on-error-container rounded-lg text-[11px]"
+                        };
+                        view! { <div class=cls>{t}</div> }
                     })
             }}
 
@@ -897,11 +906,20 @@ fn RfidRow(d: RfidDeviceItem, refetch: impl Fn() + Copy + Send + 'static) -> imp
                         .into_any()
                 }
             }}
-            // api_key (untuk konfigurasi firmware) + tombol ganti.
+            // api_key. Kini DISIMPAN SEBAGAI HASH (migrasi 53), jadi kunci asli
+            // TIDAK bisa dibaca balik dari database — hanya tampil sekali,
+            // tepat setelah dibuat/diganti. Yang lupa mencatatnya harus
+            // menggantinya, bukan mengintipnya.
             <div class="flex items-center gap-2 rounded-lg bg-surface-container px-2.5 py-1.5">
                 <span class="material-symbols-outlined text-[15px] text-on-surface-variant">"key"</span>
-                <code class="flex-1 min-w-0 text-[11px] text-on-surface-variant truncate">
-                    {move || key_shown.get()}
+                <code class="flex-1 min-w-0 text-[11px] truncate"
+                      class:text-primary=move || !key_shown.get().is_empty()
+                      class:font-bold=move || !key_shown.get().is_empty()
+                      class:text-on-surface-variant=move || key_shown.get().is_empty()>
+                    {move || {
+                        let k = key_shown.get();
+                        if k.is_empty() { "tersimpan sebagai hash — tak bisa dilihat lagi".to_string() } else { k }
+                    }}
                 </code>
                 <button
                     class="text-[11px] font-semibold text-primary shrink-0 disabled:opacity-50"
@@ -911,6 +929,17 @@ fn RfidRow(d: RfidDeviceItem, refetch: impl Fn() + Copy + Send + 'static) -> imp
                     "Ganti key"
                 </button>
             </div>
+            {move || {
+                (!key_shown.get().is_empty())
+                    .then(|| {
+                        view! {
+                            <p class="text-[10px] text-warning flex items-start gap-1">
+                                <span class="material-symbols-outlined text-[13px] shrink-0">"warning"</span>
+                                "Catat sekarang — kunci ini tak bisa ditampilkan lagi setelah halaman ditutup."
+                            </p>
+                        }
+                    })
+            }}
         </div>
     }
 }

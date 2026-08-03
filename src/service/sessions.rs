@@ -195,20 +195,22 @@ pub async fn detail_for(
     let mut hadir = 0i64;
     let attendance: Vec<crate::models::SessionAttRow> = att_rows?
         .into_iter()
-        .map(|(user_id, name, nis, status, at)| {
-            let (label, kind) = att_display(status.as_deref());
+        .map(|r| {
+            let (label, kind) = att_display(r.status.as_deref());
             if matches!(kind, "present" | "late") {
                 hadir += 1;
             }
             crate::models::SessionAttRow {
-                user_id,
-                name,
-                nis: nis.unwrap_or_else(|| "-".into()),
+                user_id: r.user_id,
+                name: r.full_name,
+                nis: r.nis.unwrap_or_else(|| "-".into()),
                 status_label: label.into(),
                 status_kind: kind.into(),
-                time_label: at
+                time_label: r
+                    .scanned_at
                     .map(|t| format!("{} WIB", t.with_timezone(&wib_tz).format("%H:%M")))
                     .unwrap_or_default(),
+                att_id: r.att_id,
             }
         })
         .collect();
@@ -250,6 +252,12 @@ pub async fn detail_for(
         chats,
         recording_url: d.recording_path,
         recording_label,
+        // Fallback ke wali/pamong KELAS bila sesi belum menetapkan petugasnya —
+        // cocok dengan COALESCE di query koreksi.
+        can_correct: [d.teacher_id, d.pamong_id, d.class_wali_id, d.class_pamong_id]
+            .into_iter()
+            .flatten()
+            .any(|id| id == user.id),
         teacher_id: d.teacher_id,
         teacher_options: teachers?
             .into_iter()
@@ -397,8 +405,15 @@ pub async fn post_chat(
         anyhow::bail!("Sesi tidak ditemukan.");
     };
     guard_live_access(pool, user, d.class_id).await?;
-    if d.status == "cancelled" {
-        anyhow::bail!("Sesi dibatalkan (libur).");
+    // Chat HANYA saat sesi berlangsung. Sebelum dimulai tak ada yang menyimak;
+    // setelah berakhir, pesan yang masuk tak akan pernah terbaca guru dan
+    // membuat riwayat sesi seolah masih hidup. Ditegakkan di server, bukan cuma
+    // menyembunyikan kotak ketiknya di UI.
+    match d.status.as_str() {
+        "ongoing" => {}
+        "cancelled" => anyhow::bail!("Sesi dibatalkan (libur)."),
+        "finished" => anyhow::bail!("Sesi sudah berakhir — chat ditutup."),
+        _ => anyhow::bail!("Sesi belum dimulai — chat dibuka saat sesi berlangsung."),
     }
     repo::insert_session_chat(pool, session_id, user.id, msg).await
 }

@@ -83,6 +83,9 @@ pub struct SessionAttRow {
     pub status_kind: String,
     /// "05:02 WIB" bila tercatat
     pub time_label: String,
+    /// Id baris absensi — untuk tombol koreksi. None = belum ada catatan, jadi
+    /// yang berlaku tombol "tandai hadir", bukan koreksi.
+    pub att_id: Option<i64>,
 }
 
 /// Satu pesan chat sesi.
@@ -96,6 +99,11 @@ pub struct SessionChatItem {
 /// Payload halaman detail sesi /sesi/:id (staf).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionDetailData {
+    /// Boleh mengoreksi status absensi sesi ini? TRUE hanya bila pemirsa adalah
+    /// GURU PENGISI atau PAMONG bertugas sesi ini — cerminan persis penjagaan
+    /// di repository::correct_attendance. Dihitung server supaya UI tak pernah
+    /// menawarkan tombol yang pasti ditolak.
+    pub can_correct: bool,
     pub id: i64,
     pub class_id: i64,
     pub title: String,

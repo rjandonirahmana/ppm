@@ -98,7 +98,7 @@ pub async fn weekly_counts_by_category(
                 COUNT(*) FILTER (WHERE a.status = 'absent') \
              FROM users u \
              JOIN attendances a ON a.user_id = u.id \
-                AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1 AND $2 \
+                AND a.scan_date BETWEEN $1 AND $2 \
              LEFT JOIN class_schedules sch ON sch.id = a.class_schedule_id \
              WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
              GROUP BY u.id, u.full_name, u.nis, COALESCE(sch.activity_type, 'other') \
@@ -199,7 +199,7 @@ pub async fn weekly_recap(
                 u.points \
              FROM users u \
              LEFT JOIN attendances a ON a.user_id = u.id \
-                AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1 AND $2 \
+                AND a.scan_date BETWEEN $1 AND $2 \
              WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
              GROUP BY u.id, u.full_name, u.nis, u.points \
              ORDER BY u.full_name",
@@ -252,7 +252,7 @@ pub async fn month_progress(pool: &Pool, user_id: i64) -> Result<(i64, i64)> {
         .query_one(
             "SELECT COUNT(*) FILTER (WHERE status IN ('present','late')), COUNT(*) \
              FROM attendances \
-             WHERE user_id = $1 AND scanned_at >= date_trunc('month', NOW())",
+             WHERE user_id = $1 AND scan_date >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Jakarta')::date",
             &[&user_id],
         )
         .await?;
@@ -287,6 +287,7 @@ pub async fn pending_pamong(
              LEFT JOIN classes cl ON cl.id = cs.class_id \
              WHERE a.pamong_status = 'pending' \
                 AND COALESCE(cl.require_pamong, TRUE) = TRUE \
+                AND COALESCE(cs.pamong_id, cl.pamong_id) IS NOT NULL \
                 AND ($2::bigint IS NULL OR COALESCE(cs.pamong_id, cl.pamong_id) = $2) \
              ORDER BY a.scanned_at ASC LIMIT $1",
             &[&limit, &pamong_id],
@@ -341,6 +342,7 @@ pub async fn session_verify_list(
          LEFT JOIN classes cl ON cl.id = cs.class_id \
          WHERE a.class_session_id = $1 AND a.pamong_status = 'pending' \
            AND COALESCE(cl.require_pamong, TRUE) = TRUE \
+           AND COALESCE(cs.pamong_id, cl.pamong_id) IS NOT NULL \
            AND ($2::bigint IS NULL OR COALESCE(cs.pamong_id, cl.pamong_id) = $2) \
          ORDER BY u.full_name"
     } else {
@@ -349,7 +351,9 @@ pub async fn session_verify_list(
          LEFT JOIN class_sessions cs ON cs.id = a.class_session_id \
          LEFT JOIN classes cl ON cl.id = cs.class_id \
          WHERE a.class_session_id = $1 AND a.verify_status = 'pending' \
+           AND a.pamong_status <> 'rejected' \
            AND CASE WHEN COALESCE(cl.require_pamong, TRUE) \
+                         AND COALESCE(cs.pamong_id, cl.pamong_id) IS NOT NULL \
                 THEN a.pamong_status = 'approved' ELSE TRUE END \
            AND ($2::bigint IS NULL OR COALESCE(cs.teacher_id, cl.wali_kelas_id) = $2) \
          ORDER BY u.full_name"
@@ -380,13 +384,20 @@ pub async fn decide_pamong(
     pamong_id: Option<i64>,
 ) -> Result<bool> {
     let status = if approve { "approved" } else { "rejected" };
+    // MENOLAK di sini sekalian menutup tahap final (verify_status='rejected').
+    // Dulu hanya pamong_status yang diisi, verify_status dibiarkan 'pending' —
+    // dan run_auto_verify_final menyetujuinya 24 jam kemudian LENGKAP DENGAN
+    // POINNYA. Penolakan pamong terbatalkan diam-diam.
+    //
     // Tahap 1 hanya MEMAJUKAN status; POIN diberikan sekali di tahap FINAL
     // (decide_verify / auto-verify-final) — migrasi 33. Guard: pamong bertugas
     // sesi = approver (COALESCE cs.pamong_id, cl.pamong_id); $4 NULL = admin/dewan.
     let c = pool.get().await?;
     let n = c
         .execute(
-            "UPDATE attendances a SET pamong_status = $2, pamong_by = $3, pamong_at = NOW() \
+            "UPDATE attendances a SET pamong_status = $2, pamong_by = $3, pamong_at = NOW(), \
+                    verify_status = CASE WHEN $2 = 'rejected' THEN 'rejected' \
+                                         ELSE a.verify_status END \
              WHERE a.id = $1 AND a.pamong_status = 'pending' \
                 AND ($4::bigint IS NULL OR \
                     (SELECT COALESCE(cs.pamong_id, cl.pamong_id) FROM class_sessions cs \
@@ -473,7 +484,7 @@ pub async fn latest_scan_today(
              LEFT JOIN class_schedules cs ON cs.id = a.class_schedule_id \
              LEFT JOIN classes c ON c.id = cs.class_id \
              WHERE a.user_id = $1 \
-               AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = $2 \
+               AND a.scan_date = $2 \
              ORDER BY a.scanned_at DESC LIMIT 1",
             &[&user_id, &today],
         )
@@ -491,7 +502,7 @@ pub async fn month_counts(pool: &Pool, user_id: i64) -> Result<(i64, i64, i64)> 
                     COUNT(*) FILTER (WHERE status = 'late'), \
                     COUNT(*) FILTER (WHERE status = 'absent') \
              FROM attendances \
-             WHERE user_id = $1 AND scanned_at >= date_trunc('month', NOW())",
+             WHERE user_id = $1 AND scan_date >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Jakarta')::date",
             &[&user_id],
         )
         .await
@@ -505,7 +516,7 @@ pub async fn month_points(pool: &Pool, user_id: i64) -> Result<i64> {
     let row = c
         .query_one(
             "SELECT COALESCE(SUM(delta), 0)::BIGINT FROM point_logs \
-             WHERE user_id = $1 AND created_at >= date_trunc('month', NOW())",
+             WHERE user_id = $1 AND created_at >= (date_trunc('month', NOW() AT TIME ZONE 'Asia/Jakarta') AT TIME ZONE 'Asia/Jakarta')",
             &[&user_id],
         )
         .await?;
@@ -525,7 +536,7 @@ pub async fn attendance_exists_today(
             c.query_opt(
                 "SELECT 1 FROM attendances \
                  WHERE user_id = $1 AND class_schedule_id = $2 \
-                   AND (scanned_at AT TIME ZONE 'Asia/Jakarta')::date = $3 LIMIT 1",
+                   AND scan_date = $3 LIMIT 1",
                 &[&user_id, &sid, &today],
             )
             .await?
@@ -534,7 +545,7 @@ pub async fn attendance_exists_today(
             c.query_opt(
                 "SELECT 1 FROM attendances \
                  WHERE user_id = $1 AND class_schedule_id IS NULL \
-                   AND (scanned_at AT TIME ZONE 'Asia/Jakarta')::date = $2 LIMIT 1",
+                   AND scan_date = $2 LIMIT 1",
                 &[&user_id, &today],
             )
             .await?
@@ -553,19 +564,24 @@ pub async fn insert_attendance(
     gate_label: &str,
     status: &str,
     note: Option<&str>,
-) -> Result<i64> {
+) -> Result<Option<i64>> {
     let c = pool.get().await?;
+    // ON CONFLICT DO NOTHING: cek-lalu-insert di service TIDAK atomik, jadi dua
+    // tap dalam milidetik (bounce pembaca kartu) sama-sama lolos cek lalu
+    // bertabrakan di UNIQUE. Tanpa ini tabrakan jadi HTTP 500 ke mesin →
+    // firmware retry → alarm Telegram palsu. None = sudah tercatat, bukan galat.
     let row = c
-        .query_one(
+        .query_opt(
             "INSERT INTO attendances \
              (user_id, class_session_id, class_schedule_id, device_id, gate_label, status, method, note, scan_date) \
              VALUES ($1, $2, $3, $4, $5, $6, 'rfid', $7, (NOW() AT TIME ZONE 'Asia/Jakarta')::date) \
+             ON CONFLICT DO NOTHING \
              RETURNING id",
             &[&user_id, &session_id, &schedule_id, &device_id, &gate_label, &status, &note],
         )
         .await
         .context("insert_attendance")?;
-    Ok(row.get(0))
+    Ok(row.map(|r| r.get(0)))
 }
 
 // ── Verifikasi TAHAP FINAL (USTAD bertugas sesi) ─────────────────────────────────
@@ -588,7 +604,9 @@ pub async fn pending_verify(
              LEFT JOIN class_sessions cs ON cs.id = a.class_session_id \
              LEFT JOIN classes cl ON cl.id = cs.class_id \
              WHERE a.verify_status = 'pending' \
+                AND a.pamong_status <> 'rejected' \
                 AND CASE WHEN COALESCE(cl.require_pamong, TRUE) \
+                              AND COALESCE(cs.pamong_id, cl.pamong_id) IS NOT NULL \
                          THEN a.pamong_status = 'approved' ELSE TRUE END \
                 AND ($2::bigint IS NULL OR COALESCE(cs.teacher_id, cl.wali_kelas_id) = $2) \
              ORDER BY a.scanned_at ASC LIMIT $1",
@@ -694,9 +712,11 @@ pub async fn decide_verify(
             let reason = format!("Kehadiran ({att_status}) — {note}");
             // users.points diperbarui otomatis oleh trigger (migrasi 32).
             tx.execute(
-                "INSERT INTO point_logs (user_id, delta, reason, category, given_by) \
-                 VALUES ($1, $2, $3, $4, $5)",
-                &[&user_id, &delta, &reason, &category, &approver],
+                // attendance_id: tautan agar koreksi bisa MENARIK BALIK poin ini
+                // (hapus log → trigger mengembalikan saldo). Migrasi 51.
+                "INSERT INTO point_logs (user_id, delta, reason, category, given_by, attendance_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+                &[&user_id, &delta, &reason, &category, &approver, &att_id],
             )
             .await
             .context("decide_verify point_logs")?;
@@ -765,7 +785,7 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
                         WHERE a.user_id = cp.user_id AND a.class_session_id = s.id) \
                   AND NOT EXISTS (SELECT 1 FROM attendances a2 \
                         WHERE a2.user_id = cp.user_id AND a2.class_schedule_id = s.class_schedule_id \
-                          AND (a2.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = s.session_date) \
+                          AND a2.scan_date = s.session_date) \
                   AND NOT EXISTS (SELECT 1 FROM permit_requests p \
                         WHERE p.user_id = cp.user_id \
                           AND p.guru_status = 'approved' \
@@ -775,10 +795,10 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
                 RETURNING id, user_id, class_schedule_id \
              ), \
              lg AS ( \
-                INSERT INTO point_logs (user_id, delta, reason, category) \
+                INSERT INTO point_logs (user_id, delta, reason, category, attendance_id) \
                 SELECT ins.user_id, \
                        -COALESCE(sch.absent_points, cat_default_points(COALESCE(sch.activity_type,'other'),'absent'))::int, \
-                       'Kehadiran (absent) — otomatis', 'discipline' \
+                       'Kehadiran (absent) — otomatis', 'discipline', ins.id \
                 FROM ins \
                 LEFT JOIN class_schedules sch ON sch.id = ins.class_schedule_id \
                 RETURNING user_id \
@@ -829,6 +849,7 @@ pub async fn run_auto_verify_final(pool: &Pool) -> Result<i64> {
             "WITH upd AS ( \
                 UPDATE attendances a SET verify_status = 'approved', verified_at = NOW() \
                 WHERE a.verify_status = 'pending' \
+                  AND a.pamong_status <> 'rejected' \
                   AND CASE WHEN COALESCE( \
                           (SELECT cl.require_pamong FROM class_sessions cs \
                               JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = a.class_session_id), TRUE) \
@@ -837,10 +858,10 @@ pub async fn run_auto_verify_final(pool: &Pool) -> Result<i64> {
                                   WHERE cs.id = a.class_session_id) IS NOT NULL \
                        THEN a.pamong_status = 'approved' AND a.pamong_at < NOW() - INTERVAL '1 day' \
                        ELSE a.scanned_at < NOW() - INTERVAL '1 day' END \
-                RETURNING a.user_id, a.status, a.class_schedule_id \
+                RETURNING a.id, a.user_id, a.status, a.class_schedule_id \
              ), \
              pts AS ( \
-                SELECT upd.user_id, upd.status, \
+                SELECT upd.id AS att_id, upd.user_id, upd.status, \
                        CASE \
                          WHEN upd.status = 'present' THEN COALESCE(sch.present_points, cat_default_points(COALESCE(sch.activity_type,'other'),'present'))::int \
                          WHEN upd.status = 'late' THEN -COALESCE(sch.late_points, cat_default_points(COALESCE(sch.activity_type,'other'),'late'))::int \
@@ -852,10 +873,11 @@ pub async fn run_auto_verify_final(pool: &Pool) -> Result<i64> {
                 LEFT JOIN class_schedules sch ON sch.id = upd.class_schedule_id \
              ), \
              lg AS ( \
-                INSERT INTO point_logs (user_id, delta, reason, category) \
+                INSERT INTO point_logs (user_id, delta, reason, category, attendance_id) \
                 SELECT user_id, delta, \
                        'Kehadiran (' || status || ') — verifikasi final otomatis', \
-                       CASE WHEN delta < 0 THEN 'discipline' ELSE 'attendance' END \
+                       CASE WHEN delta < 0 THEN 'discipline' ELSE 'attendance' END, \
+                       att_id \
                 FROM pts WHERE delta <> 0 \
                 RETURNING user_id \
              ) \
@@ -865,4 +887,94 @@ pub async fn run_auto_verify_final(pool: &Pool) -> Result<i64> {
         .await
         .context("run_auto_verify_final")?;
     Ok(row.get(0))
+}
+
+/// Koreksi status absensi oleh GURU PENGISI atau PAMONG yang bertugas di sesi
+/// itu — dan hanya mereka.
+///
+/// Kenapa sesempit itu: yang tahu apa yang sebenarnya terjadi di ruangan
+/// hanyalah orang yang ada di sana. Admin bisa saja salah menebak, dan membuka
+/// koreksi ke semua staf berarti catatan kehadiran bisa diubah siapa pun tanpa
+/// konteks.
+///
+/// Poin lama DITARIK dengan menghapus `point_logs` yang tertaut (migrasi 51) —
+/// trigger `trg_point_logs_balance` mengembalikan saldonya sendiri, tanpa
+/// aritmetika manual yang bisa salah. Poin BARU tidak langsung diberikan:
+/// baris dikembalikan ke antrean verifikasi final supaya jalur pemberian poin
+/// tetap satu pintu.
+///
+/// Return false = tak ditemukan, status sama, atau pemanggil bukan petugas sesi.
+pub async fn correct_attendance(
+    pool: &Pool,
+    att_id: i64,
+    new_status: &str,
+    actor_id: i64,
+) -> Result<bool> {
+    let mut c = pool.get().await?;
+    let tx = c.transaction().await.context("correct_attendance tx")?;
+
+    // Penjagaan ADA DI QUERY, bukan cuma di service: pemanggil harus guru
+    // pengisi atau pamong sesi ini (dengan fallback ke wali/pamong kelas bila
+    // sesi belum menetapkan petugasnya).
+    let updated = tx
+        .execute(
+            "UPDATE attendances a \
+                SET status = $2, \
+                    verify_status = 'pending', \
+                    corrected_by = $3, \
+                    corrected_at = NOW() \
+              WHERE a.id = $1 \
+                AND a.status <> $2 \
+                AND EXISTS ( \
+                      SELECT 1 FROM class_sessions cs \
+                        JOIN classes cl ON cl.id = cs.class_id \
+                       WHERE cs.id = a.class_session_id \
+                         AND $3 IN (COALESCE(cs.teacher_id, cl.wali_kelas_id), \
+                                    COALESCE(cs.pamong_id, cl.pamong_id)) \
+                    )",
+            &[&att_id, &new_status, &actor_id],
+        )
+        .await
+        .context("correct_attendance update")?;
+
+    if updated == 0 {
+        tx.rollback().await.ok();
+        return Ok(false);
+    }
+
+    // Tarik poin dari status LAMA. Hanya log yang benar-benar tertaut ke baris
+    // ini — log lama (sebelum migrasi 51) tak punya tautan dan sengaja tak
+    // disentuh daripada salah tebak.
+    tx.execute(
+        "DELETE FROM point_logs WHERE attendance_id = $1 \
+           AND category IN ('attendance', 'discipline')",
+        &[&att_id],
+    )
+    .await
+    .context("correct_attendance rollback poin")?;
+
+    tx.commit().await.context("correct_attendance commit")?;
+    Ok(true)
+}
+
+/// Petugas sesi sebuah absensi: (guru pengisi, pamong). Dipakai UI untuk
+/// menentukan apakah tombol koreksi perlu ditampilkan.
+pub async fn attendance_session_staff(
+    pool: &Pool,
+    att_id: i64,
+) -> Result<Option<(Option<i64>, Option<i64>)>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(
+            "SELECT COALESCE(cs.teacher_id, cl.wali_kelas_id), \
+                    COALESCE(cs.pamong_id, cl.pamong_id) \
+               FROM attendances a \
+               JOIN class_sessions cs ON cs.id = a.class_session_id \
+               JOIN classes cl ON cl.id = cs.class_id \
+              WHERE a.id = $1",
+            &[&att_id],
+        )
+        .await
+        .context("attendance_session_staff")?;
+    Ok(row.map(|r| (r.get(0), r.get(1))))
 }

@@ -14,7 +14,7 @@ pub fn SetelanPage() -> impl IntoView {
 
     Effect::new(move |_| {
         if let Some(Err(e)) = data.get() {
-            if e.to_string().contains("unauth") || e.to_string().contains("forbidden") {
+            if crate::web::components::is_auth_error(&e.to_string()) || e.to_string().contains("forbidden") {
                 #[cfg(target_arch = "wasm32")]
                 if let Some(w) = web_sys::window() {
                     let _ = w.location().replace("/login");

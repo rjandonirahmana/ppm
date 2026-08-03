@@ -68,7 +68,15 @@ struct PendingRegistration {
     major: String,
     #[serde(default)]
     entry_year: Option<i16>,
+    /// Percobaan OTP yang gagal. OTP hanya 6 digit — tanpa batas ini,
+    /// 1.000.000 kombinasi bisa ditebak habis lewat jaringan dalam jendela
+    /// 10 menit karena tiap percobaan cuma satu GET Redis.
+    #[serde(default)]
+    otp_attempts: u8,
 }
+
+/// Percobaan OTP maksimum sebelum pendaftaran harus diulang dari awal.
+const MAX_OTP_ATTEMPTS: u8 = 5;
 
 /// Profil mahasiswa yang diminta saat registrasi santri. Kosong untuk peran
 /// lain (guru, pamong, orang tua) — mereka tak punya data ini.
@@ -226,6 +234,7 @@ pub async fn initiate_register(
         campus,
         major,
         entry_year,
+        otp_attempts: 0,
     };
     let json = serde_json::to_string(&pending)?;
     let _: () = redis
@@ -273,11 +282,30 @@ pub async fn verify_register(
     let Some(json) = json else {
         bail!("Sesi registrasi tidak ditemukan atau sudah kedaluwarsa.");
     };
-    let pending: PendingRegistration =
+    let mut pending: PendingRegistration =
         serde_json::from_str(&json).map_err(|e| anyhow::anyhow!("Data registrasi rusak: {e}"))?;
 
     if !constant_time_eq(&pending.otp, otp_input) {
-        bail!("Kode OTP salah.");
+        pending.otp_attempts = pending.otp_attempts.saturating_add(1);
+        if pending.otp_attempts >= MAX_OTP_ATTEMPTS {
+            // Buang pendaftarannya — penebak harus mulai dari awal, dan itu
+            // kena batas laju kirim-ulang 60 detik yang sudah ada.
+            let _: () = redis.del(&key).await.unwrap_or(());
+            bail!("Terlalu banyak percobaan. Ulangi pendaftaran dari awal.");
+        }
+        // Simpan ulang TANPA memperpanjang umur: KEEPTTL menjaga sisa waktu
+        // aslinya, jadi menebak berulang tak bisa memperpanjang jendela.
+        if let Ok(j) = serde_json::to_string(&pending) {
+            let _: Result<(), _> = redis
+                .set_options(
+                    &key,
+                    j,
+                    redis::SetOptions::default().with_expiration(redis::SetExpiry::KEEPTTL),
+                )
+                .await;
+        }
+        let sisa = MAX_OTP_ATTEMPTS - pending.otp_attempts;
+        bail!("Kode OTP salah. Sisa {sisa} percobaan.");
     }
 
     // OTP sekali pakai: hapus SEBELUM insert (kegagalan insert di bawah tak boleh

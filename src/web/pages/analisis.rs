@@ -35,7 +35,7 @@ fn AnalisisPage(title: &'static str) -> impl IntoView {
     Effect::new(move |_| {
         if let Some(Err(e)) = data.get() {
             let msg = e.to_string();
-            if msg.contains("unauth") || msg.contains("forbidden") {
+            if crate::web::components::is_auth_error(&msg) {
                 #[cfg(target_arch = "wasm32")]
                 if let Some(w) = web_sys::window() {
                     let _ = w.location().replace("/login");

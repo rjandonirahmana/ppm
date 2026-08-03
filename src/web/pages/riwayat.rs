@@ -39,8 +39,8 @@ pub fn RiwayatPage() -> impl IntoView {
     let laporan_res = Resource::new(|| (), |_| async move { laporan_santri_data().await });
 
     Effect::new(move |_| {
-        let unauth = matches!(&data.get(), Some(Err(e)) if e.to_string().contains("unauth"))
-            || matches!(&laporan_res.get(), Some(Err(e)) if e.to_string().contains("unauth"));
+        let unauth = matches!(&data.get(), Some(Err(e)) if crate::web::components::is_auth_error(&e.to_string()))
+            || matches!(&laporan_res.get(), Some(Err(e)) if crate::web::components::is_auth_error(&e.to_string()));
         if unauth {
             #[cfg(target_arch = "wasm32")]
             if let Some(w) = web_sys::window() {

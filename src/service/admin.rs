@@ -19,6 +19,23 @@ pub async fn reset_semester_points(pool: &Pool) -> Result<i64> {
 }
 
 /// api_key acak (32 hex) untuk perangkat RFID baru.
+/// SHA-256 hex dari api_key perangkat.
+///
+/// Hash CEPAT, bukan bcrypt: fungsi ini dipanggil pada SETIAP tap kartu, dan
+/// bcrypt yang sengaja lambat (~80 ms) akan membuat mesin absensi tersendat.
+///
+/// BATAS PERLINDUNGANNYA JUJUR: kunci 16 digit = ~53 bit, jadi bila dump DB
+/// bocor, hash-nya bisa dibongkar dengan tenaga GPU dalam hitungan bulan. Yang
+/// dicegah di sini adalah kebocoran DB langsung menyerahkan kunci yang SIAP
+/// PAKAI. Bila sebuah kunci dicurigai bocor, ganti lewat tombol regenerasi —
+/// jauh lebih murah daripada memperpanjang kunci dan menyulitkan pengetikan.
+pub fn hash_api_key(key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(key.trim().as_bytes());
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// api_key perangkat RFID — DIGIT SAJA, 16 angka (migrasi 49). Dulu 32 hex;
 /// diubah karena kunci ini diketik manual di captive portal firmware ESP8266,
 /// dan huruf hex mudah keliru (0/O, b/6). 16 digit ≈ 53 bit: ruang 10^16 masih
@@ -66,7 +83,8 @@ pub async fn rfid_devices(pool: &Pool) -> Result<Vec<RfidDeviceItem>> {
         .collect())
 }
 
-/// Buat perangkat RFID. `api_key` kosong → di-generate. Return (id, api_key).
+/// Buat perangkat RFID. `api_key` kosong → di-generate. Return (id, api_key)
+/// — kunci HANYA dikembalikan di sini; setelah ini hanya hash-nya yang tersimpan.
 pub async fn create_rfid_device(
     pool: &Pool,
     device_name: &str,
@@ -74,7 +92,7 @@ pub async fn create_rfid_device(
     location: &str,
     api_key: &str,
     category: &str,
-) -> Result<i64> {
+) -> Result<(i64, String)> {
     let name = device_name.trim();
     if name.is_empty() {
         bail!("Nama perangkat/ruang wajib diisi.");
@@ -84,7 +102,10 @@ pub async fn create_rfid_device(
     let key = api_key.trim();
     let key = if key.is_empty() { gen_api_key() } else { key.to_string() };
     let cat = norm_category(category)?;
-    repo::create_device(
+    // Kembalikan kuncinya: sejak disimpan sebagai hash (migrasi 53), inilah
+    // SATU-SATUNYA kesempatan admin melihatnya. Tak dikembalikan = perangkat
+    // baru tak bisa dikonfigurasi tanpa langsung menggantinya.
+    let id = repo::create_device(
         pool,
         name,
         (!serial.is_empty()).then_some(serial),
@@ -92,7 +113,8 @@ pub async fn create_rfid_device(
         &key,
         &cat,
     )
-    .await
+    .await?;
+    Ok((id, key))
 }
 
 pub async fn update_rfid_device(

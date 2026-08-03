@@ -24,7 +24,7 @@ pub fn KelasPage() -> impl IntoView {
         if let Some(Err(e)) = data.get() {
             // Hanya lempar ke login bila BELUM login (unauth). `forbidden` (login
             // tapi peran tak diizinkan) ditangani FetchError, bukan bounce ke login.
-            if e.to_string().contains("unauth") {
+            if crate::web::components::is_auth_error(&e.to_string()) {
                 #[cfg(target_arch = "wasm32")]
                 if let Some(w) = web_sys::window() {
                     let _ = w.location().replace("/login");

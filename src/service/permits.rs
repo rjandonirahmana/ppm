@@ -173,6 +173,21 @@ pub async fn decide_permit(
     if !ok {
         bail!("Izin tidak ditemukan, sudah diproses, atau di luar wewenang Anda.");
     }
+
+    // Izin yang LOLOS TAHAP AKHIR diwujudkan jadi baris absensi 'permit'/'sick'.
+    // Tanpa ini kolom "Izin" di rekap selalu 0 dan aturan poin izin PRD tak
+    // pernah berjalan — santri berizin cuma "tak punya baris".
+    //
+    // Best-effort: kegagalan di sini TIDAK membatalkan persetujuan yang sudah
+    // tercatat. Izin tetap sah; yang tertinggal hanya baris absensinya, dan itu
+    // masih bisa ditandai manual oleh guru/pamong bertugas.
+    if approve && !matches!(role, "supervisor") {
+        match repo::materialize_permit_attendance(pool, permit_id).await {
+            Ok(n) if n > 0 => tracing::info!(permit_id, "izin → {n} baris absensi"),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(permit_id, "gagal mewujudkan absensi izin: {e}"),
+        }
+    }
     Ok(())
 }
 

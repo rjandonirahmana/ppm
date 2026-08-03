@@ -140,6 +140,9 @@ deadpool-postgres = "0.14"
 
 # Auth
 bcrypt = "0.15"
+# SHA-256 utk kunci perangkat RFID: butuh hash CEPAT (dipanggil tiap tap kartu),
+# jadi BUKAN bcrypt yang sengaja lambat. Lihat service/admin.rs::hash_api_key.
+sha2 = "0.10"
 jsonwebtoken = "9"
 
 # Export laporan: PDF (font base-14 bawaan PDF, TANPA file font eksternal —

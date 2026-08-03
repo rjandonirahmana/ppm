@@ -20,9 +20,16 @@
 --   custom        → absensi kelas biasa; untuk lokasi yang tak masuk kategori
 --                   di atas.
 --
--- CATATAN JADWAL: pencocokan jadwal (`active_schedule_now`) TIDAK menyaring
---   perangkat — jadwal kelas bisa di-tap di perangkat mana pun selain
---   gate_utama. Kolom `class_schedules.room_id` hanya keterangan ruang.
+-- CATATAN JADWAL (diperbarui — versi awal komentar ini SALAH):
+--   `active_schedule_now` MENYARING perangkat lewat `class_schedules.room_id`:
+--     • room_id TERISI → jadwal hanya sah di-tap di perangkat itu; tap di
+--       tempat lain DITOLAK tanpa dicatat (lihat migrasi 50);
+--     • room_id NULL   → bebas di perangkat mana pun, kecuali gate_utama yang
+--       selalu berarti keluar/masuk area.
+--   Komentar sebelumnya menulis "room_id hanya keterangan ruang" — itu benar
+--   saat migrasi ini ditulis, lalu penyaringan ditambahkan tanpa komentarnya
+--   ikut diperbarui. Dokumentasi yang berbohong lebih berbahaya daripada tak
+--   ada dokumentasi.
 --
 -- Idempotent. Jalankan setelah migrasi 1–48.
 -- =============================================================================

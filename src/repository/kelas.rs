@@ -18,10 +18,10 @@ pub async fn staf_stats(pool: &Pool) -> Result<(i64, i64, i64, i64)> {
             "SELECT \
                 (SELECT COUNT(*) FROM users WHERE role IN ('santri', 'santri_finance') AND is_active = TRUE), \
                 (SELECT COUNT(*) FROM users WHERE role IN ('santri', 'santri_finance') AND is_active = TRUE \
-                    AND created_at >= date_trunc('month', NOW())), \
+                    AND created_at >= (date_trunc('month', NOW() AT TIME ZONE 'Asia/Jakarta') AT TIME ZONE 'Asia/Jakarta')), \
                 (SELECT COUNT(DISTINCT a.user_id) FROM attendances a JOIN users u ON u.id = a.user_id \
                     WHERE u.role IN ('santri', 'santri_finance') AND a.status IN ('present','late') \
-                    AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date), \
+                    AND a.scan_date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date), \
                 (SELECT COUNT(*) FROM permit_requests \
                     WHERE guru_status = 'pending' AND pamong_status <> 'rejected')",
             &[],
@@ -165,9 +165,10 @@ pub async fn attendance_trend_7d(
                 "SELECT d::date, COALESCE(( \
                     SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE a.status IN ('present','late')) / NULLIF(COUNT(*), 0)) \
                     FROM attendances a JOIN users u ON u.id = a.user_id \
-                    WHERE u.role IN ('santri', 'santri_finance') AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = d::date \
+                    WHERE u.role IN ('santri', 'santri_finance') AND a.scan_date = d::date \
                  ), 0)::INT \
-                 FROM generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, INTERVAL '1 day') d",
+                 FROM generate_series((NOW() AT TIME ZONE 'Asia/Jakarta')::date - INTERVAL '6 days', \
+                        (NOW() AT TIME ZONE 'Asia/Jakarta')::date, INTERVAL '1 day') d",
                 &[],
             )
             .await
@@ -177,9 +178,10 @@ pub async fn attendance_trend_7d(
                 "SELECT d::date, COALESCE(( \
                     SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE a.status IN ('present','late')) / NULLIF(COUNT(*), 0)) \
                     FROM attendances a JOIN class_sessions s ON s.id = a.class_session_id \
-                    WHERE s.teacher_id = $1 AND (a.scanned_at AT TIME ZONE 'Asia/Jakarta')::date = d::date \
+                    WHERE s.teacher_id = $1 AND a.scan_date = d::date \
                  ), 0)::INT \
-                 FROM generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, INTERVAL '1 day') d",
+                 FROM generate_series((NOW() AT TIME ZONE 'Asia/Jakarta')::date - INTERVAL '6 days', \
+                        (NOW() AT TIME ZONE 'Asia/Jakarta')::date, INTERVAL '1 day') d",
                 &[&tid],
             )
             .await
@@ -1146,12 +1148,14 @@ pub async fn insert_sessions(
     let c = pool.get().await?;
     let n = c
         .execute(
+            // ON CONFLICT, BUKAN "WHERE NOT EXISTS": yang terakhir tak atomik —
+            // job latar dan update_schedule yang berjalan bersamaan sama-sama
+            // membaca "belum ada" lalu sama-sama menyisipkan. Constraint
+            // uq_session_schedule_date (migrasi 52) yang jadi wasitnya.
             "INSERT INTO class_sessions (class_id, class_schedule_id, title, session_date) \
              SELECT $1, $2, $3, d FROM unnest($4::date[]) AS d \
-             WHERE NOT EXISTS ( \
-                SELECT 1 FROM class_sessions cs \
-                WHERE cs.class_schedule_id = $2 AND cs.session_date = d \
-             )",
+             ON CONFLICT (class_schedule_id, session_date) \
+                WHERE class_schedule_id IS NOT NULL DO NOTHING",
             &[&class_id, &schedule_id, &title, &dates],
         )
         .await

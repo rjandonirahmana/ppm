@@ -45,8 +45,16 @@ mod ssr_helpers {
     pub fn set_auth_cookie(token: &str) {
         use axum::http::{header::SET_COOKIE, HeaderValue};
         let resp = expect_context::<leptos_axum::ResponseOptions>();
+        // Secure di produksi: tanpa itu cookie sesi ikut terkirim lewat HTTP
+        // polos dan bisa disadap di jaringan. Di dev (http://localhost) flag
+        // ini justru membuat cookie ditolak browser, jadi dikaitkan ke LEPTOS_ENV.
+        let secure = if std::env::var("LEPTOS_ENV").as_deref() == Ok("PROD") {
+            "; Secure"
+        } else {
+            ""
+        };
         let v = format!(
-            "{}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
+            "{}={token}; Path=/; HttpOnly; SameSite=Lax{secure}; Max-Age={}",
             crate::auth::COOKIE_NAME,
             crate::auth::SESSION_SECS
         );
@@ -79,7 +87,10 @@ mod ssr_helpers {
         let claims = state
             .jwt
             .verify(&token)
-            .map_err(|_| ServerFnError::new("unauth"))?;
+            // "session_expired" utk token yang habis umurnya, "unauth" utk yang
+            // cacat. Klien membedakannya agar pesannya jujur: "sesi berakhir,
+            // silakan masuk lagi" ≠ "tak berwenang".
+            .map_err(|e| ServerFnError::new(e.as_str()))?;
         Ok(claims.into())
     }
 
@@ -100,7 +111,8 @@ mod ssr_helpers {
     pub fn err<E: std::fmt::Display>(e: E) -> ServerFnError {
         let msg = e.to_string();
         let low = msg.to_ascii_lowercase();
-        if !(low.contains("unauth") || low.contains("forbidden")) {
+        // Sesi habis/tak sah bukan galat server — jangan spam alarm Telegram.
+        if !crate::web::components::is_auth_error(&low) {
             crate::service::telegram::report_error(500, "ServerFn", msg.clone());
         }
         ServerFnError::new(msg)
@@ -128,7 +140,8 @@ pub async fn login_action(login: String, password: String) -> Result<String, Ser
 #[server(ForgotPassword, "/api-fn")]
 pub async fn forgot_password_action(phone: String) -> Result<(), ServerFnError> {
     let state = app_state().await?;
-    crate::service::auth::forgot_password(&state.pool, &state.http, &state.waha, &phone)
+    let mut redis = state.redis.clone();
+    crate::service::auth::forgot_password(&state.pool, &mut redis, &state.http, &state.waha, &phone)
         .await
         .map_err(err)
 }
@@ -1328,6 +1341,17 @@ pub async fn mark_bill_paid_action(
     method: String,
 ) -> Result<(), ServerFnError> {
     let sess = require_roles(FINANCE_ROLES).await?;
+    // Pemegang peran santri_finance TIDAK boleh menyetujui tagihannya sendiri —
+    // memverifikasi pembayaran diri sendiri meniadakan gunanya verifikasi.
+    // Admin/ketua tak dibatasi (mereka bukan pihak yang ditagih).
+    if crate::models::role_satisfies(&sess.role, &["santri"]) {
+        let state = app_state().await?;
+        if crate::repository::bill_owner(&state.pool, bill_id).await.map_err(err)? == Some(sess.id) {
+            return Err(ServerFnError::new(
+                "Tagihan Anda sendiri harus diverifikasi pengurus lain.",
+            ));
+        }
+    }
     let state = app_state().await?;
     crate::repository::mark_paid(&state.pool, bill_id, paid_amount, method.trim(), sess.id)
         .await
@@ -1731,6 +1755,23 @@ pub async fn unassign_card_action(user_id: i64) -> Result<(), ServerFnError> {
         .map_err(err)
 }
 
+/// Koreksi status absensi (mis. alpa keliru → hadir).
+///
+/// Wewenangnya SENGAJA sempit: hanya guru pengisi atau pamong yang bertugas di
+/// sesi itu. Ditegakkan di query repository, bukan di sini — supaya pemanggil
+/// baru tak bisa melewatinya. `require_roles` di bawah hanya menyaring kasar.
+#[server(CorrectAttendance, "/api-fn")]
+pub async fn correct_attendance_action(
+    att_id: i64,
+    new_status: String,
+) -> Result<(), ServerFnError> {
+    let sess = require_roles(&["admin", "dewan_guru", "supervisor", "teacher"]).await?;
+    let state = app_state().await?;
+    crate::service::attendance::correct_attendance(&state.pool, att_id, &new_status, sess.id)
+        .await
+        .map_err(err)
+}
+
 /// Daftar perangkat RFID. Admin (User Control) + KELAS_ROLES (dropdown ruang
 /// saat buat/ubah jadwal).
 ///
@@ -1759,13 +1800,16 @@ pub async fn create_rfid_device_action(
     location: String,
     api_key: String,
     category: String,
-) -> Result<i64, ServerFnError> {
+) -> Result<String, ServerFnError> {
     require_roles(&["admin"]).await?;
     let state = app_state().await?;
+    // Balas KUNCINYA, bukan id: kunci disimpan sebagai hash (migrasi 53), jadi
+    // inilah satu-satunya saat admin bisa melihatnya untuk disalin ke firmware.
     crate::service::admin::create_rfid_device(
         &state.pool, &device_name, &serial_number, &location, &api_key, &category,
     )
     .await
+    .map(|(_id, key)| key)
     .map_err(err)
 }
 

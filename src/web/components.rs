@@ -429,15 +429,35 @@ pub const NAV_PAMONG: &[NavDef] = &[
 /// Tampilan error fetch yang JUJUR: error autentikasi → ajak login; error lain
 /// (mis. DB/migrasi) → tampilkan pesannya + tombol Coba Lagi. Mencegah pesan
 /// menyesatkan "Sesi berakhir" untuk error non-auth.
+/// Apakah pesan galat ini berarti "pengguna harus masuk lagi"?
+///
+/// SATU tempat, dipakai ~26 halaman yang dulu masing-masing mencocokkan string
+/// sendiri. Saat penanda baru muncul (mis. `session_expired` ketika umur token
+/// dipangkas dari 100 tahun jadi 30 hari), cukup ditambahkan di sini — tanpa
+/// itu, ada halaman yang lupa diperbarui dan penggunanya terjebak di layar
+/// galat tanpa pernah dialihkan ke /login.
+pub fn is_auth_error(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.contains("unauth") || m.contains("session_expired") || m.contains("forbidden")
+}
+
 #[component]
 pub fn FetchError(err: String) -> impl IntoView {
-    let is_auth = err.contains("unauth") || err.contains("forbidden");
+    // "session_expired" = umur token habis (wajar); "unauth" = token cacat/tak
+    // ada. Keduanya berujung sama bagi pengguna: harus masuk lagi.
+    let expired = err.contains("session_expired");
+    let is_auth = is_auth_error(&err);
     if is_auth {
+        // Bedakan sebabnya: sesi 30 hari yang habis itu WAJAR dan bukan salah
+        // pengguna — jangan disamakan dengan "tidak berwenang".
+        let pesan = if expired {
+            "Sesi Anda sudah berakhir (berlaku 30 hari). Silakan masuk kembali."
+        } else {
+            "Sesi tidak berlaku. Silakan masuk kembali."
+        };
         view! {
             <div class="pt-10 text-center space-y-4 anim-in">
-                <p class="text-body-md text-on-surface-variant">
-                    "Sesi berakhir. Silakan masuk kembali."
-                </p>
+                <p class="text-body-md text-on-surface-variant">{pesan}</p>
                 <a
                     href="/login"
                     class="inline-block px-6 py-3 bg-primary text-on-primary rounded-xl font-semibold"

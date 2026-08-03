@@ -309,7 +309,30 @@ fn LiveBody(d: SessionLiveData, refetch: impl Fn() + Copy + Send + 'static) -> i
             </div>
         </div>
 
-        // ── Input chat (fixed bawah, sejajar kolom) ─────────────────────────
+        // ── Input chat — HANYA saat sesi berlangsung ────────────────────────
+        // Sebelum dimulai tak ada yang menyimak; sesudah berakhir pesannya tak
+        // akan terbaca. Server menolaknya juga (service::sessions::post_chat);
+        // di sini kotaknya diganti keterangan supaya tak ada yang mengetik
+        // panjang-panjang lalu ditolak.
+        {(!is_live).then(|| {
+            let teks = if is_done {
+                "Sesi sudah berakhir — chat ditutup."
+            } else {
+                "Chat dibuka saat sesi dimulai."
+            };
+            view! {
+                <div class="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-surface-container-lowest border-t border-outline-variant/60 px-4 py-4 z-20">
+                    <p class="text-body-sm text-on-surface-variant text-center flex items-center justify-center gap-2">
+                        <span class="material-symbols-outlined text-[18px]">"lock"</span>
+                        {teks}
+                    </p>
+                </div>
+            }
+        })}
+        // Kondisional biasa, BUKAN <Show>: `send` menangkap `refetch` yang hanya
+        // Send (tak Sync), sedangkan Show menuntut closure Sync. `is_live` juga
+        // nilai tetap per-render, jadi tak butuh reaktivitas.
+        {is_live.then(|| view! {
         <form
             class="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-surface-container-lowest border-t border-outline-variant/60 px-4 py-3 flex items-center gap-2 z-20"
             method="post"
@@ -334,5 +357,6 @@ fn LiveBody(d: SessionLiveData, refetch: impl Fn() + Copy + Send + 'static) -> i
                 <span class="material-symbols-outlined">"send"</span>
             </button>
         </form>
+        })}
     }
 }

@@ -141,3 +141,14 @@ pub async fn delete_bill(pool: &Pool, bill_id: i64) -> Result<bool> {
         .context("delete_bill")?;
     Ok(n > 0)
 }
+
+/// Pemilik satu tagihan — dipakai menolak verifikasi-diri-sendiri oleh
+/// santri_finance (lihat web/api.rs::mark_bill_paid_action).
+pub async fn bill_owner(pool: &Pool, bill_id: i64) -> Result<Option<i64>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt("SELECT user_id FROM bills WHERE id = $1", &[&bill_id])
+        .await
+        .context("bill_owner")?;
+    Ok(row.map(|r| r.get(0)))
+}

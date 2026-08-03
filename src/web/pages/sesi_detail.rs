@@ -13,7 +13,8 @@ use leptos_router::hooks::use_params_map;
 
 use crate::models::{is_mengaji_category, HafalanItem, SessionAttRow, SessionChatItem, SessionDetailData};
 use crate::web::api::{
-    decide_session_action, hafalan_of_class_action, log_hafalan_action, mark_session_bulk,
+    correct_attendance_action, decide_session_action, hafalan_of_class_action,
+    log_hafalan_action, mark_session_bulk,
     mark_session_present, send_schedule_wa_action, session_detail_data, session_verify_data,
     set_session_actual_detail_action, set_session_book_action, set_session_live,
     set_session_pamong_action, set_session_target_action, set_session_teacher_action,
@@ -660,6 +661,7 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                                 attendance=d.attendance.clone()
                                 session_id=session_id
                                 can_mark=!is_cancelled
+                                can_correct=d.can_correct
                                 refetch=refetch
                             />
                             <VerifikasiSesiPanel session_id=session_id refetch=refetch />
@@ -712,11 +714,37 @@ fn AbsensiPanel(
     attendance: Vec<SessionAttRow>,
     session_id: i64,
     can_mark: bool,
+    /// Hanya guru pengisi / pamong bertugas sesi ini. Dihitung server
+    /// (SessionDetailData::can_correct) agar cocok persis dgn penjagaan query.
+    can_correct: bool,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
     let selected = RwSignal::new(Vec::<i64>::new());
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
+    // Baris yang sedang dibuka menu koreksinya (att_id), None = tak ada.
+    let correcting = RwSignal::new(Option::<i64>::None);
+    let correct_to = move |att_id: i64, status: &'static str| {
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        msg.set(None);
+        leptos::task::spawn_local(async move {
+            match correct_attendance_action(att_id, status.to_string()).await {
+                Ok(_) => {
+                    correcting.set(None);
+                    msg.set(Some((true, "Absensi dikoreksi. Poin lama ditarik.".into())));
+                    refetch();
+                }
+                Err(e) => {
+                    let m = e.to_string();
+                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                }
+            }
+            busy.set(false);
+        });
+    };
     // id santri yang BELUM tercatat (bisa ditandai/dialpakan massal).
     let unrecorded_ids: Vec<i64> = attendance
         .iter()
@@ -881,6 +909,28 @@ fn AbsensiPanel(
                                         </p>
                                     </div>
                                     <span class=badge>{row.status_label.clone()}</span>
+                                    // Koreksi: hanya baris yang SUDAH tercatat
+                                    // (punya att_id) dan hanya oleh guru/pamong
+                                    // bertugas. Baris belum tercatat memakai
+                                    // tombol "Hadir" di sebelah, bukan koreksi.
+                                    {row.att_id
+                                        .filter(|_| can_correct)
+                                        .map(|aid| {
+                                            view! {
+                                                <button
+                                                    class="w-8 h-8 rounded-lg bg-surface-container text-on-surface-variant flex items-center justify-center press shrink-0"
+                                                    on:click=move |_| {
+                                                        correcting
+                                                            .update(|c| {
+                                                                *c = if *c == Some(aid) { None } else { Some(aid) };
+                                                            })
+                                                    }
+                                                    aria-label="Koreksi status"
+                                                >
+                                                    <span class="material-symbols-outlined text-[18px]">"edit"</span>
+                                                </button>
+                                            }
+                                        })}
                                     {(unrecorded && can_mark)
                                         .then(|| {
                                             view! {
@@ -894,6 +944,39 @@ fn AbsensiPanel(
                                             }
                                         })}
                                 </div>
+                                // Pilihan status koreksi — muncul di bawah baris
+                                // yang tombol editnya ditekan.
+                                {move || {
+                                    let aid = row.att_id;
+                                    (can_correct && aid.is_some() && correcting.get() == aid)
+                                        .then(|| {
+                                            let aid = aid.expect("dicek is_some di atas");
+                                            view! {
+                                                <div class="flex flex-wrap gap-1.5 px-3 pb-3 -mt-1">
+                                                    {[
+                                                        ("present", "Hadir"),
+                                                        ("late", "Terlambat"),
+                                                        ("permit", "Izin"),
+                                                        ("sick", "Sakit"),
+                                                        ("absent", "Alpa"),
+                                                    ]
+                                                        .into_iter()
+                                                        .map(|(v, l)| {
+                                                            view! {
+                                                                <button
+                                                                    class="px-2.5 py-1.5 rounded-lg bg-surface-container-high text-on-surface text-[11px] font-semibold press disabled:opacity-50"
+                                                                    prop:disabled=move || busy.get()
+                                                                    on:click=move |_| correct_to(aid, v)
+                                                                >
+                                                                    {l}
+                                                                </button>
+                                                            }
+                                                        })
+                                                        .collect_view()}
+                                                </div>
+                                            }
+                                        })
+                                }}
                             }
                         })
                         .collect_view()}

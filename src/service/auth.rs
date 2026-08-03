@@ -75,6 +75,7 @@ pub async fn login(pool: &Pool, jwt: &JwtService, login: &str, password: &str) -
 /// apakah nomor terdaftar). bcrypt di `spawn_blocking` (CPU-bound).
 pub async fn forgot_password(
     pool: &Pool,
+    redis: &mut redis::aio::ConnectionManager,
     http: &reqwest::Client,
     waha: &crate::config::WahaConfig,
     phone: &str,
@@ -83,6 +84,29 @@ pub async fn forgot_password(
     if phone.len() < 8 {
         return Ok(()); // input tak masuk akal → diam
     }
+
+    // BATAS LAJU, sebelum menyentuh apa pun. Tanpa ini siapa saja bisa me-reset
+    // sandi nomor korban berulang kali: korban dibanjiri WA DAN sandinya
+    // berganti terus. Balasan tetap Ok agar tak membocorkan nomor terdaftar.
+    {
+        use redis::AsyncCommands;
+        let key = format!("fp:{phone}");
+        let fresh: Option<bool> = redis
+            .set_options(
+                &key,
+                1i32,
+                redis::SetOptions::default()
+                    .conditional_set(redis::ExistenceCheck::NX)
+                    .with_expiration(redis::SetExpiry::EX(600)),
+            )
+            .await
+            .unwrap_or(None);
+        if fresh.is_none() {
+            tracing::info!("forgot_password: ditahan batas laju untuk {phone}");
+            return Ok(());
+        }
+    }
+
     let Some(user_id) = repo::find_by_phone(pool, &phone).await? else {
         return Ok(()); // tak terdaftar → diam (anti-enumerasi)
     };
@@ -90,15 +114,19 @@ pub async fn forgot_password(
     let new_pw = super::registration::generate_random_password();
     let pw = new_pw.clone();
     let hash = tokio::task::spawn_blocking(move || bcrypt::hash(&pw, 10)).await??;
-    repo::set_password_hash(pool, user_id, &hash).await?;
 
+    // KIRIM DULU, baru ganti sandi. Urutan sebaliknya (dulu begitu) membuat
+    // pengguna TERKUNCI saat WAHA mati: sandi lamanya sudah tak berlaku,
+    // sandi barunya tak pernah sampai. Lebih baik reset gagal diam-diam dan
+    // bisa dicoba lagi daripada seseorang kehilangan akses.
     let msg = format!(
         "🔑 *Reset Password PPM AFM*\nPassword baru Anda: *{new_pw}*\n\nMasuk dengan nomor HP + password ini, lalu segera ganti password di menu Profil."
     );
-    // Gagal WA tak menggagalkan reset (password sudah diganti); log saja.
     if let Err(e) = super::registration::send_wa_text(http, waha, &phone, &msg).await {
-        tracing::warn!("forgot_password: WA gagal ke {phone}: {e}");
+        tracing::warn!("forgot_password: WA gagal ke {phone} — sandi TIDAK diubah: {e}");
+        return Ok(());
     }
+    repo::set_password_hash(pool, user_id, &hash).await?;
     Ok(())
 }
 

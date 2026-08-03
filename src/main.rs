@@ -72,6 +72,16 @@ async fn main() -> Result<()> {
         tracing::warn!("Seed admin gagal (lanjut jalan): {e}");
     }
 
+    // Isi hash kunci perangkat RFID yang masih plaintext (migrasi 53). Sekali
+    // jalan; setelah semua terisi, kolom plaintext boleh di-drop. Kegagalan di
+    // sini TIDAK boleh menggagalkan start — perangkat lama masih bisa dilayani
+    // selama kolom plaintext masih ada.
+    match ppm::repository::backfill_api_key_hashes(&pool).await {
+        Ok(n) if n > 0 => tracing::info!("Backfill kunci perangkat: {n} di-hash"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Backfill kunci perangkat gagal: {e}"),
+    }
+
     // RustFS untuk rekaman siaran (opsional). aws-sdk-s3 pakai rustls →
     // crypto provider (ring) wajib di-install sekali sebelum klien dibuat.
     let storage = match &cfg.rustfs {

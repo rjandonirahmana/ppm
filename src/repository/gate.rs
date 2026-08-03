@@ -5,6 +5,11 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use deadpool_postgres::Pool;
 
+/// Jendela abai tap gerbang berturut-turut. 10 detik: cukup lama menelan
+/// pantulan pembaca kartu, cukup pendek sehingga orang yang benar-benar keluar
+/// lalu masuk lagi (mis. lupa barang) tak terhalang.
+const GATE_DEBOUNCE_SECS: i64 = 10;
+
 /// Toggle status gerbang satu user: baca status terkini → balik arah → catat
 /// log + update cache `users.gate_status/gate_at` — SATU transaksi (baca+tulis
 /// harus konsisten; dua request nyaris bersamaan tak boleh saling menimpa).
@@ -13,14 +18,30 @@ pub async fn toggle_gate(pool: &Pool, user_id: i64, device_id: Option<i64>) -> R
     let mut c = pool.get().await?;
     let tx = c.transaction().await.context("toggle_gate: begin")?;
 
-    let cur: String = tx
+    let row = tx
         .query_one(
-            "SELECT gate_status FROM users WHERE id = $1 FOR UPDATE",
+            "SELECT gate_status, gate_at FROM users WHERE id = $1 FOR UPDATE",
             &[&user_id],
         )
         .await
-        .context("toggle_gate: select")?
-        .get(0);
+        .context("toggle_gate: select")?;
+    let cur: String = row.get(0);
+    let last: Option<chrono::DateTime<chrono::Utc>> = row.get(1);
+
+    // DEBOUNCE. Kartu yang memantul di pembaca, atau ditahan sebentar, mengirim
+    // dua tap dalam hitungan detik. Tanpa jendela abai ini: keluar lalu masuk
+    // lagi seketika → status akhir SALAH dan riwayatnya berisi dua baris palsu.
+    //
+    // Tap dalam jendela dianggap tap yang SAMA: kembalikan status sekarang
+    // tanpa membalik apa pun (idempoten), tanpa menulis log.
+    if let Some(t) = last {
+        if (chrono::Utc::now() - t) < chrono::Duration::seconds(GATE_DEBOUNCE_SECS) {
+            tx.rollback().await.ok();
+            tracing::debug!(user_id, "tap gerbang diabaikan (debounce)");
+            return Ok(cur);
+        }
+    }
+
     let next = if cur == "out" { "in" } else { "out" };
 
     tx.execute(

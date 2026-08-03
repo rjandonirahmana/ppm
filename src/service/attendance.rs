@@ -143,7 +143,9 @@ pub async fn record_scan(
         None => None,
     };
 
-    repo::insert_attendance(
+    // None = kalah balapan dgn tap kembar (ON CONFLICT). Bukan galat: mesin
+    // cukup diberi tahu absennya sudah ada.
+    if repo::insert_attendance(
         pool,
         user_id,
         session_id,
@@ -153,7 +155,16 @@ pub async fn record_scan(
         status,
         note.as_deref(),
     )
-    .await?;
+    .await?
+    .is_none()
+    {
+        return Ok(RfidScanResponse {
+            ok: true,
+            message: "sudah tercatat sebelumnya".into(),
+            student: Some(name),
+            status: Some(status.into()),
+        });
+    }
 
     tracing::info!(user_id, card = req.card, gate = %gate, status, "RFID scan tercatat");
     Ok(RfidScanResponse {
@@ -329,4 +340,27 @@ pub async fn decide_session(
         }
     }
     Ok(n)
+}
+
+/// Koreksi status absensi. Hanya guru pengisi / pamong bertugas sesi itu.
+///
+/// Status yang diizinkan dibatasi ke yang masuk akal dikoreksi manusia —
+/// `outside_schedule` sengaja TIDAK termasuk karena itu hasil pembacaan mesin
+/// (tap di luar jadwal), bukan penilaian.
+pub async fn correct_attendance(
+    pool: &Pool,
+    att_id: i64,
+    new_status: &str,
+    actor_id: i64,
+) -> Result<()> {
+    if !matches!(new_status, "present" | "late" | "absent" | "permit" | "sick") {
+        anyhow::bail!("Status koreksi tidak valid.");
+    }
+    if !repo::correct_attendance(pool, att_id, new_status, actor_id).await? {
+        anyhow::bail!(
+            "Tidak bisa dikoreksi: statusnya sudah sama, atau Anda bukan guru/pamong \
+             yang bertugas di sesi ini."
+        );
+    }
+    Ok(())
 }
