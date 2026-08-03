@@ -1263,6 +1263,34 @@ pub async fn reorder_activity_photos_action(ids: Vec<i64>) -> Result<(), ServerF
     crate::repository::reorder_activity_photos(&state.pool, &ids).await.map_err(err)
 }
 
+/// Simpan titik fokus & perbesaran satu foto (admin/dewan_guru, migrasi 54).
+///
+/// Nilai dirapikan di SERVER lewat `clamp_focus`, bukan hanya di editor: sebuah
+/// server function bisa dipanggil langsung, dan nilai di luar rentang akan
+/// menabrak CHECK di tabel sehingga pengguna hanya melihat galat Postgres.
+#[server(SetActivityPhotoFocus, "/api-fn")]
+pub async fn set_activity_photo_focus_action(
+    id: i64,
+    focus_x: f32,
+    focus_y: f32,
+    zoom: f32,
+    fit: String,
+) -> Result<(), ServerFnError> {
+    require_roles(GALLERY_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    let (fx, fy, z) = crate::models::clamp_focus(focus_x, focus_y, zoom);
+    let framing = crate::repository::PhotoFraming {
+        focus_x: fx,
+        focus_y: fy,
+        zoom: z,
+        fit: crate::models::PhotoFit::from_str(&fit).as_str(),
+    };
+    crate::repository::set_activity_photo_focus(&state.pool, id, framing)
+        .await
+        .map(|_| ())
+        .map_err(err)
+}
+
 // ── Buku tamu (migrasi 35) — PUBLIK (tanpa login) ─────────────────────────────
 // /tamu: isi data → kode 6-digit (Redis) → ketik di mesin IoT → mesin kirim kode
 // + wajah ke POST /api/guestbook → HP tamu polling status → ✅.

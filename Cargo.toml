@@ -103,6 +103,13 @@ web-sys = { version = "0.3", features = [
     "HtmlInputElement",
     "FileList",
     "File",
+    # Editor titik fokus galeri (pages/galeri.rs): seret foto di dalam bingkai.
+    # PointerEvent menyatukan tetikus/sentuh/pena dalam satu jalur kode;
+    # DomRect + HtmlImageElement dipakai menghitung seberapa jauh foto masih
+    # bisa digeser (ukuran bingkai vs ukuran asli foto).
+    "PointerEvent",
+    "DomRect",
+    "HtmlImageElement",
 ] }
 
 # ── Server-only deps (bukan wasm32) ────────────────────────────────────────────

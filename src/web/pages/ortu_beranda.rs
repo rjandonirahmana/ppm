@@ -14,7 +14,7 @@ use crate::web::api::{
     parent_home, request_connection_action, search_students_action,
     student_book_progress_for_viewer,
 };
-use crate::web::components::{BookProgressDetail, DeviceFrame, FetchError, MobileHeader};
+use crate::web::components::{BookProgressDetail, DeviceFrame, FetchError, MobileHeader, Sheet};
 
 #[component]
 pub fn OrtuBerandaPage() -> impl IntoView {
@@ -565,24 +565,10 @@ fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
                 .get()
                 .then(|| {
                     view! {
-                        <div
-                            class="fixed inset-0 z-40 bg-black/45 fade-in"
-                            on:click=move |_| show_detail.set(false)
-                        ></div>
-                        <div class="fixed bottom-0 inset-x-0 z-50 max-w-md mx-auto bg-surface rounded-t-3xl p-6 pb-10 sheet-in max-h-[85vh] overflow-y-auto">
-                            <div class="w-10 h-1.5 bg-outline-variant rounded-full mx-auto mb-5"></div>
-                            <div class="flex items-center justify-between mb-4">
-                                <h3 class="text-headline-sm text-on-background">
-                                    "Detail Progres Materi"
-                                </h3>
-                                <button
-                                    class="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container"
-                                    on:click=move |_| show_detail.set(false)
-                                >
-                                    <span class="material-symbols-outlined text-lg">"close"</span>
-                                </button>
-                            </div>
-
+                        <Sheet
+                            title="Detail Progres Materi"
+                            on_close=move || show_detail.set(false)
+                        >
                             <Suspense fallback=|| {
                                 view! {
                                     <div class="space-y-3 animate-pulse">
@@ -606,7 +592,7 @@ fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
                                         })
                                 }}
                             </Suspense>
-                        </div>
+                        </Sheet>
                     }
                 })
         }}

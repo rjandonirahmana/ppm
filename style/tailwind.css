@@ -126,6 +126,61 @@ button:active{transform:scale(.96)}
 @keyframes pp-fade{from{opacity:0}to{opacity:1}}
 .fade-in{animation:pp-fade .25s ease both}
 
+/* ── Sheet modal: bottom-sheet di ponsel, DIALOG TERPUSAT di desktop ────────
+   Dipakai komponen <Sheet> (web/components.rs) — satu sumber untuk semua
+   panel detail (progres materi, QR absensi, dll).
+
+   PENTING — kenapa memakai `position:fixed` di CSS ini dan BUKAN utility
+   Tailwind `fixed`: di bawah ada aturan
+     body:has(.ppm-sidebar[data-open="1"]) .ppm-stage .fixed:not(.ppm-fab)
+   yang memaksa left:16rem + max-width:36rem untuk MEMBUAT bilah melayang
+   (chat sesi, AudioDock) sejajar kanvas desktop. Sheet ikut kena aturan itu
+   selama ini, dan hasilnya rusak: SCRIM-nya pun ikut dipotong jadi pita
+   selebar 36rem sehingga latar gelapnya tidak menutup layar, sementara
+   panelnya terdorong ke kiri dan menggantung di dasar layar lebar. Dengan
+   tidak memakai kelas `.fixed`, sheet lolos dari aturan itu dengan sendirinya
+   — tanpa perlu perang !important. */
+.ppm-scrim{
+  position:fixed;inset:0;z-index:40;
+  background:rgba(0,0,0,.45);
+  animation:pp-fade .25s ease both;
+}
+.ppm-sheet{
+  position:fixed;left:0;right:0;bottom:0;z-index:50;
+  max-width:28rem;margin-inline:auto;
+  background:#f9f9ff;
+  border-radius:1.5rem 1.5rem 0 0;
+  max-height:85vh;overflow-y:auto;
+  /* Aman di ponsel berponi / bilah gestur. */
+  padding-bottom:max(2.5rem,env(safe-area-inset-bottom));
+  animation:pp-sheet .3s cubic-bezier(.2,.8,.2,1) both;
+}
+@keyframes pp-dialog{
+  from{opacity:0;transform:translate(-50%,-46%) scale(.97)}
+  to{opacity:1;transform:translate(-50%,-50%) scale(1)}
+}
+@media (min-width:768px){
+  /* Di layar lebar, panel yang menempel ke dasar layar tidak masuk akal:
+     jaraknya jauh dari tempat mata berada dan ruang kosong di kiri-kanan
+     terbuang. Material Design sendiri menyebut bottom-sheet pola ponsel dan
+     dialog terpusat untuk layar besar — itu yang dipakai di sini. */
+  .ppm-sheet{
+    left:50%;right:auto;top:50%;bottom:auto;
+    transform:translate(-50%,-50%);
+    width:min(40rem,92vw);max-width:40rem;margin-inline:0;
+    border-radius:1.75rem;
+    max-height:86vh;
+    padding-bottom:1.75rem;
+    box-shadow:0 24px 64px rgba(21,28,39,.22);
+    animation:pp-dialog .24s cubic-bezier(.2,.8,.2,1) both;
+  }
+  /* Pegangan seret hanya bermakna pada sheet yang bisa ditarik (ponsel). */
+  .ppm-sheet .ppm-sheet-grip{display:none;}
+}
+@media (prefers-reduced-motion:reduce){
+  .ppm-scrim,.ppm-sheet{animation:none}
+}
+
 /* Scroll-reveal (elemen [data-reveal]) — disembunyikan HANYA saat JS aktif. */
 .reveal-js [data-reveal]{opacity:0;transform:translateY(20px);
   transition:opacity .65s cubic-bezier(.22,.61,.24,1),transform .65s cubic-bezier(.22,.61,.24,1)}

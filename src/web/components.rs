@@ -580,6 +580,130 @@ pub fn DeviceFrame(children: Children) -> impl IntoView {
     view! { <div class="ppm-stage">{children()}</div> }
 }
 
+/// Satu foto kegiatan di dalam bingkainya, lengkap dengan mode isi & bidikan.
+///
+/// Dipakai di SEMUA tempat foto kegiatan tampil — beranda publik (3:4), grid
+/// pengelola (1:1), dan pratinjau editor — supaya ketiganya tak bisa berbeda.
+/// Rasio bingkainya ditentukan pemanggil lewat `class`; itulah gunanya menyimpan
+/// titik fokus alih-alih hasil potongan.
+///
+/// Pada mode "muat seluruhnya" foto tidak memenuhi bingkai, dan ruang sisanya
+/// diisi versi buram foto itu sendiri — bukan blok abu-abu — supaya foto tegak
+/// di antara foto lanskap terlihat disengaja, bukan seperti tata letak yang rusak.
+#[component]
+pub fn PhotoFrame(
+    #[prop(into)] src: String,
+    #[prop(into)] style: String,
+    /// Tampilkan latar buram di belakang foto (mode `contain`).
+    backdrop: bool,
+    #[prop(into, optional)] alt: String,
+    /// Kelas bingkai luar — di sinilah rasio ditentukan, mis. `aspect-[3/4]`.
+    #[prop(into, optional)] class: String,
+    #[prop(optional)] lazy: bool,
+) -> impl IntoView {
+    let frame_class = format!("relative overflow-hidden {class}");
+    view! {
+        <div class=frame_class>
+            {backdrop
+                .then(|| {
+                    view! {
+                        <img
+                            src=src.clone()
+                            style=crate::models::BACKDROP_STYLE
+                            alt=""
+                            aria-hidden="true"
+                        />
+                    }
+                })}
+            <img
+                src=src
+                style=style
+                alt=alt
+                loading=if lazy { "lazy" } else { "eager" }
+                class="relative"
+            />
+        </div>
+    }
+}
+
+/// Panel modal: **bottom-sheet di ponsel, dialog terpusat di desktop**.
+///
+/// Menggantikan markup scrim+panel yang sebelumnya disalin di empat halaman
+/// (progres materi santri dari sisi staf, dari sisi wali kelas, dari sisi orang
+/// tua, dan QR absensi). Selain menghilangkan duplikasi, ini memperbaiki
+/// tampilan desktop yang rusak: dengan sidebar terbuka, aturan CSS untuk bilah
+/// melayang ikut mengenai sheet lama sehingga scrim-nya menyusut jadi pita
+/// selebar 36rem — latar gelap tak menutup layar — dan panelnya terdorong ke
+/// kiri lalu menggantung di dasar layar. Lihat catatan lengkap di `.ppm-sheet`
+/// (style/tailwind.css).
+///
+/// Perilaku dialog yang ikut didapat semua pemakai: tutup dengan tombol Esc,
+/// klik di luar panel, atau tombol ×; serta atribut `role="dialog"` +
+/// `aria-modal` supaya pembaca layar memperlakukannya sebagai modal.
+#[component]
+pub fn Sheet(
+    #[prop(into)] title: String,
+    /// Dipanggil saat sheet ditutup lewat cara apa pun.
+    on_close: impl Fn() + Copy + Send + Sync + 'static,
+    /// Judul di tengah tanpa tombol × di kanan (dipakai sheet QR absensi).
+    #[prop(optional)] center_title: bool,
+    children: Children,
+) -> impl IntoView {
+    // Esc menutup — bawaan yang diharapkan dari sebuah dialog, dan satu-satunya
+    // jalan keluar lewat papan ketik. Listener dipasang di `document` (bukan
+    // panel) supaya tetap bekerja sebelum ada elemen yang terfokus.
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::closure::Closure;
+        use wasm_bindgen::JsCast;
+        Effect::new(move |_| {
+            let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+                return;
+            };
+            let cb = Closure::<dyn FnMut(web_sys::Event)>::new(move |e: web_sys::Event| {
+                if let Some(k) = e.dyn_ref::<web_sys::KeyboardEvent>() {
+                    if k.key() == "Escape" {
+                        on_close();
+                    }
+                }
+            });
+            let _ = doc
+                .add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
+            // `forget`: sheet hidup selama panel tampil dan halaman ini tak
+            // pernah membuat listener berulang kali dalam satu sesi tampil.
+            cb.forget();
+        });
+    }
+
+    view! {
+        <div class="ppm-scrim" on:click=move |_| on_close()></div>
+        <div class="ppm-sheet p-6" role="dialog" aria-modal="true">
+            <div class="ppm-sheet-grip w-10 h-1.5 bg-outline-variant rounded-full mx-auto mb-5"></div>
+            {if center_title {
+                view! {
+                    <h3 class="text-headline-sm text-on-background text-center">{title}</h3>
+                }
+                    .into_any()
+            } else {
+                view! {
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-headline-sm text-on-background">{title}</h3>
+                        <button
+                            class="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container"
+                            on:click=move |_| on_close()
+                            aria-label="Tutup"
+                        >
+                            <span class="material-symbols-outlined text-lg">"close"</span>
+                        </button>
+                    </div>
+                }
+                    .into_any()
+            }}
+            {children()}
+        </div>
+    }
+}
+
 /// Higher-Order Component: Guard halaman yang wajib authenticated.
 /// Otomatis redirect ke /login jika session tidak ada/invalid.
 /// Menggantikan `Effect::new(|_| { if !authed { redirect("/login") }})`

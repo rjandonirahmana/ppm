@@ -8,6 +8,7 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 
 use crate::models::{role_home, SessionUser};
+use crate::web::components::PhotoFrame;
 
 #[component]
 pub fn BerandaPage() -> impl IntoView {
@@ -192,15 +193,20 @@ pub fn BerandaPage() -> impl IntoView {
                                         {photos
                                             .into_iter()
                                             .take(6)
-                                            .map(|p| view! {
-                                                <div class="rounded-2xl overflow-hidden aspect-[3/4] bg-surface-container">
-                                                    <img
-                                                        src=p.url
-                                                        alt=p.caption
-                                                        loading="lazy"
-                                                        class="w-full h-full object-cover"
+                                            .map(|p| {
+                                                // Bidikan dari editor galeri (migrasi 54 & 55) — gaya
+                                                // yang sama dipakai grid pengelola meski rasionya beda.
+                                                // Foto tanpa pengaturan tampil seperti dulu.
+                                                view! {
+                                                    <PhotoFrame
+                                                        src=p.url.clone()
+                                                        style=p.frame_style()
+                                                        backdrop=p.fit().needs_backdrop()
+                                                        alt=p.caption.clone()
+                                                        class="rounded-2xl aspect-[3/4] bg-surface-container"
+                                                        lazy=true
                                                     />
-                                                </div>
+                                                }
                                             })
                                             .collect_view()}
                                     </div>

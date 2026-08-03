@@ -7,7 +7,7 @@ use leptos_meta::Title;
 
 use crate::models::{AttendanceItem, SantriHome, SessionUser};
 use crate::web::api::{connection_requests, respond_connection_action, santri_home};
-use crate::web::components::{DeviceFrame, FetchError, NotifBell};
+use crate::web::components::{DeviceFrame, FetchError, NotifBell, Sheet};
 
 /// Warna aksen per jenis kehadiran (border kiri kartu + ikon).
 fn kind_colors(kind: &str) -> (&'static str, &'static str, &'static str, &'static str) {
@@ -100,15 +100,11 @@ pub fn SantriDashboardPage() -> impl IntoView {
                         .get()
                         .then(|| {
                             view! {
-                                <div
-                                    class="fixed inset-0 z-40 bg-black/45 fade-in"
-                                    on:click=move |_| show_qr.set(false)
-                                ></div>
-                                <div class="fixed bottom-0 inset-x-0 z-50 max-w-md mx-auto bg-surface rounded-t-3xl p-6 pb-10 sheet-in">
-                                    <div class="w-10 h-1.5 bg-outline-variant rounded-full mx-auto mb-5"></div>
-                                    <h3 class="text-headline-sm text-on-background text-center">
-                                        "QR Absensi Saya"
-                                    </h3>
+                                <Sheet
+                                    title="QR Absensi Saya"
+                                    on_close=move || show_qr.set(false)
+                                    center_title=true
+                                >
                                     <div class="w-52 h-52 mx-auto mt-5 bg-surface-container-lowest border-2 border-outline-variant rounded-2xl flex items-center justify-center">
                                         <span class="material-symbols-outlined text-[150px] text-primary">
                                             "qr_code_2"
@@ -126,7 +122,7 @@ pub fn SantriDashboardPage() -> impl IntoView {
                                     >
                                         "Tutup"
                                     </button>
-                                </div>
+                                </Sheet>
                             }
                         })
                 }}
