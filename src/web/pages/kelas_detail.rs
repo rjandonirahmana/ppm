@@ -9,16 +9,17 @@ use leptos_meta::Title;
 use leptos_router::hooks::use_params_map;
 
 use crate::models::{
-    CurriculumItem, KelasDetail, ScheduleItem, ScheduleOption, StudentSearchItem, TeacherOption,
+    BookProgressItem, CurriculumItem, KelasDetail, ScheduleItem, ScheduleOption, StudentSearchItem,
+    TeacherOption,
 };
 use crate::web::api::{
     add_members_action, create_curriculum_action, create_schedule_action, create_session_action,
     delete_curriculum_action, delete_schedule_action, kelas_detail, remove_member_action,
     set_class_staff_action, set_session_libur_action, set_session_pamong_action,
-    set_session_teacher_action,
-    staff_search_students, update_class_action, update_curriculum_action, update_schedule_action,
+    set_session_teacher_action, staff_search_students, student_book_progress_for_viewer,
+    update_class_action, update_curriculum_action, update_schedule_action,
 };
-use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
+use crate::web::components::{BookProgressDetail, DeviceFrame, EmptyState, FetchError, MobileHeader};
 
 #[component]
 pub fn KelasDetailPage() -> impl IntoView {
@@ -461,6 +462,19 @@ fn SantriTab(
     let query = RwSignal::new(String::new());
     let busy = RwSignal::new(Option::<i64>::None);
 
+    // Detail progres materi santri (sheet).
+    let detail_student = RwSignal::new(Option::<(i64, String)>::None);
+    let detail_data = Resource::new(
+        move || detail_student.get(),
+        |st| async move {
+            if let Some((sid, _)) = st {
+                student_book_progress_for_viewer(sid).await.ok()
+            } else {
+                None
+            }
+        },
+    );
+
     let remove = move |sid: i64| {
         if busy.get_untracked().is_some() {
             return;
@@ -543,7 +557,8 @@ fn SantriTab(
                         {list.into_iter()
                     .map(|m| {
                         let sid = m.id;
-                        let initial = m.name.chars().next().unwrap_or('S').to_string();
+                        let name = m.name.clone();
+                        let initial = name.chars().next().unwrap_or('S').to_string();
                         let meta = format!("NIS: {}", m.nis);
                         let ang = m.angkatan.clone();
                         view! {
@@ -556,7 +571,7 @@ fn SantriTab(
                                 </div>
                                 <div class="flex-1 min-w-0">
                                     <p class="text-body-md font-semibold text-on-background truncate">
-                                        {m.name}
+                                        {name.clone()}
                                     </p>
                                     <p class="text-body-sm text-on-surface-variant">{meta}</p>
                                     {(!ang.is_empty())
@@ -568,14 +583,25 @@ fn SantriTab(
                                             }
                                         })}
                                 </div>
-                                <button
-                                    class="w-9 h-9 rounded-lg bg-error-container/60 text-error flex items-center justify-center shrink-0 press disabled:opacity-50"
-                                    disabled=move || busy.get() == Some(sid)
-                                    on:click=move |_| remove(sid)
-                                    aria-label="Keluarkan dari kelas"
-                                >
-                                    <span class="material-symbols-outlined text-[20px]">"person_remove"</span>
-                                </button>
+                                <div class="flex items-center gap-1.5 shrink-0">
+                                    <button
+                                        class="w-9 h-9 rounded-lg bg-secondary-container text-primary flex items-center justify-center press"
+                                        on:click=move |_| {
+                                            detail_student.set(Some((sid, name.clone())));
+                                        }
+                                        aria-label="Lihat progres materi"
+                                    >
+                                        <span class="material-symbols-outlined text-[18px]">"auto_stories"</span>
+                                    </button>
+                                    <button
+                                        class="w-9 h-9 rounded-lg bg-error-container/60 text-error flex items-center justify-center press disabled:opacity-50"
+                                        disabled=move || busy.get() == Some(sid)
+                                        on:click=move |_| remove(sid)
+                                        aria-label="Keluarkan dari kelas"
+                                    >
+                                        <span class="material-symbols-outlined text-[20px]">"person_remove"</span>
+                                    </button>
+                                </div>
                             </div>
                         }
                     })
@@ -583,6 +609,58 @@ fn SantriTab(
                     </div>
                 }
                     .into_any()
+            }}
+
+            // ── Bottom-sheet detail progres materi ─────────────────────────────
+            {move || {
+                detail_student
+                    .get()
+                    .map(|(_sid, name)| {
+                        view! {
+                            <div
+                                class="fixed inset-0 z-40 bg-black/45 fade-in"
+                                on:click=move |_| detail_student.set(None)
+                            ></div>
+                            <div class="fixed bottom-0 inset-x-0 z-50 max-w-md mx-auto bg-surface rounded-t-3xl p-6 pb-10 sheet-in max-h-[85vh] overflow-y-auto">
+                                <div class="w-10 h-1.5 bg-outline-variant rounded-full mx-auto mb-5"></div>
+                                <div class="flex items-center justify-between mb-4">
+                                    <h3 class="text-headline-sm text-on-background">
+                                        "Detail Progres Materi"
+                                    </h3>
+                                    <button
+                                        class="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container"
+                                        on:click=move |_| detail_student.set(None)
+                                    >
+                                        <span class="material-symbols-outlined text-lg">"close"</span>
+                                    </button>
+                                </div>
+
+                                <Suspense fallback=|| {
+                                    view! {
+                                        <div class="space-y-3 animate-pulse">
+                                            <div class="h-40 bg-surface-container rounded-2xl"></div>
+                                            <div class="h-40 bg-surface-container rounded-2xl"></div>
+                                        </div>
+                                    }
+                                }>
+                                    {move || {
+                                        detail_data
+                                            .get()
+                                            .flatten()
+                                            .map(|items: Vec<BookProgressItem>| {
+                                                view! {
+                                                    <BookProgressDetail
+                                                        student_name=name.clone()
+                                                        items=items
+                                                    />
+                                                }
+                                                    .into_any()
+                                            })
+                                    }}
+                                </Suspense>
+                            </div>
+                        }
+                    })
             }}
         </div>
     }

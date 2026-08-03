@@ -15,9 +15,9 @@ use leptos_router::hooks::use_query_map;
 use crate::models::{BookProgressItem, PendingAtt, StudentRowItem};
 use crate::web::api::{
     decide_pamong, decide_verify, student_book_progress_data,
-    students_data,
+    student_book_progress_for_viewer, students_data,
 };
-use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
+use crate::web::components::{BookProgressDetail, DeviceFrame, FetchError, MobileHeader};
 
 #[component]
 pub fn StudentsPage() -> impl IntoView {
@@ -341,8 +341,23 @@ pub fn StudentBookPanel(student_id: i64, student_name: String) -> impl IntoView 
         |id| async move { student_book_progress_data(id).await },
     );
 
+    // Sheet detail progres materi (grid per-unit seperti tampilan santri).
+    let show_detail = RwSignal::new(false);
+    let sid = student_id;
+    let sname = RwSignal::new(student_name.clone());
+    let detail_data = Resource::new(
+        move || show_detail.get(),
+        move |show| async move {
+            if show {
+                student_book_progress_for_viewer(sid).await.ok()
+            } else {
+                None
+            }
+        },
+    );
+
     view! {
-        <div class="ppm-card p-3.5 space-y-2">
+        <div class="ppm-card p-3.5 space-y-3">
             <p class="text-body-sm font-bold text-on-background flex items-center gap-1.5">
                 <span class="material-symbols-outlined text-primary text-[18px]">"menu_book"</span>
                 {format!("Progres Materi — {student_name}")}
@@ -379,6 +394,66 @@ pub fn StudentBookPanel(student_id: i64, student_name: String) -> impl IntoView 
                         })
                 }}
             </Suspense>
+
+            <button
+                class="w-full py-2.5 border-2 border-primary/30 text-primary rounded-xl text-body-sm font-semibold press flex items-center justify-center gap-2"
+                on:click=move |_| show_detail.set(true)
+            >
+                <span class="material-symbols-outlined text-lg">"auto_stories"</span>
+                "Lihat Detail Progres"
+            </button>
+
+            // ── Bottom-sheet detail progres materi ─────────────────────────────
+            {move || {
+                show_detail
+                    .get()
+                    .then(|| {
+                        view! {
+                            <div
+                                class="fixed inset-0 z-40 bg-black/45 fade-in"
+                                on:click=move |_| show_detail.set(false)
+                            ></div>
+                            <div class="fixed bottom-0 inset-x-0 z-50 max-w-md mx-auto bg-surface rounded-t-3xl p-6 pb-10 sheet-in max-h-[85vh] overflow-y-auto">
+                                <div class="w-10 h-1.5 bg-outline-variant rounded-full mx-auto mb-5"></div>
+                                <div class="flex items-center justify-between mb-4">
+                                    <h3 class="text-headline-sm text-on-background">
+                                        "Detail Progres Materi"
+                                    </h3>
+                                    <button
+                                        class="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container"
+                                        on:click=move |_| show_detail.set(false)
+                                    >
+                                        <span class="material-symbols-outlined text-lg">"close"</span>
+                                    </button>
+                                </div>
+
+                                <Suspense fallback=|| {
+                                    view! {
+                                        <div class="space-y-3 animate-pulse">
+                                            <div class="h-40 bg-surface-container rounded-2xl"></div>
+                                            <div class="h-40 bg-surface-container rounded-2xl"></div>
+                                        </div>
+                                    }
+                                }>
+                                    {move || {
+                                        detail_data
+                                            .get()
+                                            .flatten()
+                                            .map(|items: Vec<BookProgressItem>| {
+                                                view! {
+                                                    <BookProgressDetail
+                                                        student_name=sname.get()
+                                                        items=items
+                                                    />
+                                                }
+                                                    .into_any()
+                                            })
+                                    }}
+                                </Suspense>
+                            </div>
+                        }
+                    })
+            }}
         </div>
     }
 }

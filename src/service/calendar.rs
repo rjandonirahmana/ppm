@@ -6,7 +6,7 @@
 //! Grid (leading_blanks Senin-first + days_in_month) dihitung di sini agar UI
 //! cukup me-render tanpa aritmetika tanggal.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use chrono::{Datelike, NaiveDate, NaiveTime};
 use deadpool_postgres::Pool;
 
@@ -43,10 +43,10 @@ pub async fn calendar_data(
     // buka halaman; navigasi berikutnya pakai prev/next dari respons).
     let (year, month) = if year == 0 { current_month() } else { (year, month) };
     if !(1..=12).contains(&month) || !(2000..=2100).contains(&year) {
-        bail!("Bulan/tahun tidak valid.");
+        bail_user!("Bulan/tahun tidak valid.");
     }
     let Some((first, last, days_in_month)) = month_bounds(year, month) else {
-        bail!("Tanggal tidak valid.");
+        bail_user!("Tanggal tidak valid.");
     };
 
     // Sesi bulan ini, di-scope peran. limit tinggi (semua sesi 1 bulan muat).
@@ -189,7 +189,7 @@ pub async fn send_schedule_wa(
     session_id: i64,
 ) -> Result<(i64, i64)> {
     let Some(d) = repo::session_detail(pool, session_id).await? else {
-        bail!("Sesi tidak ditemukan.");
+        bail_user!("Sesi tidak ditemukan.");
     };
     let title = d.title.clone().unwrap_or_else(|| d.class_name.clone());
     let teacher = d.teacher.clone().unwrap_or_else(|| "Belum ditentukan".into());

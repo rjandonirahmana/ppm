@@ -16,7 +16,7 @@
 //! TIDAK ADA baris `users` sampai OTP berhasil — selama jendela 10 menit,
 //! seluruh data pendaftar cuma hidup di Redis.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use deadpool_postgres::Pool;
 use rand::RngExt;
 use redis::{aio::ConnectionManager, AsyncCommands};
@@ -96,25 +96,25 @@ pub struct StudentProfile {
 fn validate_student_profile(p: &StudentProfile) -> Result<(String, String, String, i16)> {
     let gender = p.gender.trim();
     if !matches!(gender, "L" | "P") {
-        bail!("Pilih jenis kelamin (laki-laki atau perempuan).");
+        bail_user!("Pilih jenis kelamin (laki-laki atau perempuan).");
     }
     let campus = p.campus.trim();
     if campus.chars().count() < 2 {
-        bail!("Nama kampus wajib diisi.");
+        bail_user!("Nama kampus wajib diisi.");
     }
     let major = p.major.trim();
     if major.chars().count() < 2 {
-        bail!("Jurusan wajib diisi.");
+        bail_user!("Jurusan wajib diisi.");
     }
     let ey = p.entry_year.trim();
     if ey.is_empty() {
-        bail!("Tahun masuk PPM wajib diisi.");
+        bail_user!("Tahun masuk PPM wajib diisi.");
     }
     let year: i16 = ey
         .parse()
         .map_err(|_| anyhow::anyhow!("Tahun masuk PPM harus berupa angka (mis. 2024)."))?;
     if !(1990..=2100).contains(&year) {
-        bail!("Tahun masuk PPM tidak masuk akal (1990–2100).");
+        bail_user!("Tahun masuk PPM tidak masuk akal (1990–2100).");
     }
     // Potong sesuai lebar kolom (VARCHAR(150)) agar tak ditolak DB di akhir alur.
     let cut = |s: &str| -> String { s.chars().take(150).collect() };
@@ -134,10 +134,10 @@ pub async fn create_invite(
     ttl_days: i64,
 ) -> Result<String> {
     if !INVITABLE_ROLES.contains(&role) {
-        bail!("Peran tidak valid untuk registrasi mandiri.");
+        bail_user!("Peran tidak valid untuk registrasi mandiri.");
     }
     if !crate::models::can_invite(by_role, role) {
-        bail!("Hanya admin yang boleh membuat undangan untuk peran staf.");
+        bail_user!("Hanya admin yang boleh membuat undangan untuk peran staf.");
     }
     let max_uses = max_uses.clamp(1, 1000);
     let ttl_secs = (ttl_days.clamp(1, 30) as u64) * 86400;
@@ -189,12 +189,12 @@ pub async fn initiate_register(
     profile: &StudentProfile,
 ) -> Result<()> {
     let Some(role) = invite_role(redis, token).await? else {
-        bail!("Link registrasi tidak valid atau sudah kedaluwarsa.");
+        bail_user!("Link registrasi tidak valid atau sudah kedaluwarsa.");
     };
 
     let name = name.trim();
     if name.chars().count() < 2 {
-        bail!("Nama wajib diisi (minimal 2 karakter).");
+        bail_user!("Nama wajib diisi (minimal 2 karakter).");
     }
     let phone = normalize_local(phone)?;
 
@@ -206,14 +206,14 @@ pub async fn initiate_register(
     };
 
     if repo::find_by_phone(pool, &phone).await?.is_some() {
-        bail!("Nomor HP ini sudah terdaftar. Silakan masuk lewat halaman Login.");
+        bail_user!("Nomor HP ini sudah terdaftar. Silakan masuk lewat halaman Login.");
     }
 
     let key = pending_key(&phone);
     if let Ok(Some(_)) = redis.get::<_, Option<String>>(&key).await {
         let ttl: i64 = redis.ttl(&key).await.unwrap_or(0);
         if ttl > 540 {
-            bail!("OTP sudah dikirim. Tunggu {} detik lagi.", ttl - 540);
+            bail_user!("OTP sudah dikirim. Tunggu {} detik lagi.", ttl - 540);
         }
     }
 
@@ -280,7 +280,7 @@ pub async fn verify_register(
         .await
         .map_err(|e| anyhow::anyhow!("Redis GET gagal: {e}"))?;
     let Some(json) = json else {
-        bail!("Sesi registrasi tidak ditemukan atau sudah kedaluwarsa.");
+        bail_user!("Sesi registrasi tidak ditemukan atau sudah kedaluwarsa.");
     };
     let mut pending: PendingRegistration =
         serde_json::from_str(&json).map_err(|e| anyhow::anyhow!("Data registrasi rusak: {e}"))?;
@@ -291,7 +291,7 @@ pub async fn verify_register(
             // Buang pendaftarannya — penebak harus mulai dari awal, dan itu
             // kena batas laju kirim-ulang 60 detik yang sudah ada.
             let _: () = redis.del(&key).await.unwrap_or(());
-            bail!("Terlalu banyak percobaan. Ulangi pendaftaran dari awal.");
+            bail_user!("Terlalu banyak percobaan. Ulangi pendaftaran dari awal.");
         }
         // Simpan ulang TANPA memperpanjang umur: KEEPTTL menjaga sisa waktu
         // aslinya, jadi menebak berulang tak bisa memperpanjang jendela.
@@ -305,7 +305,7 @@ pub async fn verify_register(
                 .await;
         }
         let sisa = MAX_OTP_ATTEMPTS - pending.otp_attempts;
-        bail!("Kode OTP salah. Sisa {sisa} percobaan.");
+        bail_user!("Kode OTP salah. Sisa {sisa} percobaan.");
     }
 
     // OTP sekali pakai: hapus SEBELUM insert (kegagalan insert di bawah tak boleh
@@ -320,7 +320,7 @@ pub async fn verify_register(
         if remaining < 0 {
             // Slot terakhir sudah diambil pendaftar lain (race) → kembalikan & tolak.
             let _: i64 = redis.incr(uses_key(token), 1).await.unwrap_or(0);
-            bail!("Kuota link registrasi sudah habis. Minta link baru ke admin.");
+            bail_user!("Kuota link registrasi sudah habis. Minta link baru ke admin.");
         }
         if remaining == 0 {
             let _: () = redis.del(invite_key(token)).await.unwrap_or(());
@@ -437,7 +437,7 @@ pub async fn send_wa_text(
     if !res.status().is_success() {
         let status = res.status();
         let body = res.text().await.unwrap_or_default();
-        bail!("WAHA error {status}: {body}");
+        anyhow::bail!("WAHA error {status}: {body}");
     }
     Ok(())
 }
@@ -452,7 +452,7 @@ fn normalize_local(phone: &str) -> Result<String> {
     } else if digits.starts_with("62") {
         Ok(digits)
     } else {
-        bail!("Nomor HP harus diawali '08' atau '+62'.");
+        bail_user!("Nomor HP harus diawali '08' atau '+62'.");
     }
 }
 

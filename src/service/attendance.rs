@@ -354,10 +354,10 @@ pub async fn correct_attendance(
     actor_id: i64,
 ) -> Result<()> {
     if !matches!(new_status, "present" | "late" | "absent" | "permit" | "sick") {
-        anyhow::bail!("Status koreksi tidak valid.");
+        bail_user!("Status koreksi tidak valid.");
     }
     if !repo::correct_attendance(pool, att_id, new_status, actor_id).await? {
-        anyhow::bail!(
+        bail_user!(
             "Tidak bisa dikoreksi: statusnya sudah sama, atau Anda bukan guru/pamong \
              yang bertugas di sesi ini."
         );

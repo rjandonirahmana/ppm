@@ -16,6 +16,21 @@ use serde_json::json;
 use crate::models::GuestCheckin;
 use crate::state::AppState;
 
+/// Galat internal → log + alarm admin, tapi mesin tamu hanya menerima kalimat
+/// umum. Pesan Postgres/Redis memuat detail skema & query; endpoint ini terbuka
+/// di jaringan pondok dan hanya dijaga api_key, jadi jangan dikembalikan apa
+/// adanya. Layar mesin pun cuma perlu tahu bahwa ia harus mencoba lagi.
+fn internal(konteks: &str, e: impl std::fmt::Display) -> Response {
+    let detail = e.to_string();
+    tracing::error!("buku tamu — {konteks} gagal: {detail}");
+    crate::service::telegram::report_error(500, "Guestbook", format!("{konteks}: {detail}"));
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Sistem sedang bermasalah, coba lagi",
+    )
+        .into_response()
+}
+
 pub async fn checkin(
     Extension(state): Extension<Arc<AppState>>,
     _headers: HeaderMap,
@@ -51,7 +66,7 @@ pub async fn checkin(
     let device = match crate::repository::find_device_by_key(&state.pool, api_key.trim()).await {
         Ok(Some(d)) => d,
         Ok(None) => return (StatusCode::UNAUTHORIZED, "api_key tidak dikenal").into_response(),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => return internal("cek api_key perangkat", e),
     };
 
     // Cari + konsumsi kode di Redis.
@@ -61,13 +76,13 @@ pub async fn checkin(
         Ok(None) => {
             return (StatusCode::NOT_FOUND, "Kode tidak ditemukan atau kedaluwarsa").into_response()
         }
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(e) => return internal("baca kode tamu di Redis", e),
     };
 
     // Simpan wajah ke RustFS (kalau storage aktif & ada foto).
     let mut face_url: Option<String> = None;
     if let (Some(storage), Some(bytes)) = (state.storage.clone(), file_bytes) {
-        if !bytes.is_empty() && bytes.len() <= 10_000_000 {
+        if !bytes.is_empty() && bytes.len() <= crate::web::limits::IMAGE_MAX {
             let key = format!(
                 "guests/{}-{}.jpg",
                 chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
@@ -93,8 +108,7 @@ pub async fn checkin(
     )
     .await
     {
-        crate::service::telegram::report_error(500, "Guest insert", e.to_string());
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        return internal("simpan kunjungan tamu", e);
     }
 
     // Tandai sukses agar HP tamu (polling /tamu) menampilkan ✅.

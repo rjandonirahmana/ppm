@@ -44,16 +44,28 @@ impl AppState {
         Self { pool, jwt, storage, redis, http, waha, live_bus: Mutex::new(HashMap::new()) }
     }
 
+    /// Kunci `live_bus`, TAHAN keracunan (poisoning).
+    ///
+    /// `lock().unwrap()` akan mengubah satu panik yang pernah terjadi sambil
+    /// memegang kunci ini menjadi kerusakan PERMANEN: setiap pemanggil
+    /// berikutnya ikut panik, sehingga seluruh ruang live mati sampai proses
+    /// di-restart. Isi map ini hanya kumpulan pengirim broadcast — tak ada
+    /// invarian yang bisa rusak setengah jalan — jadi memakai kembali data yang
+    /// "teracuni" itu aman dan jauh lebih baik daripada mati beruntun.
+    fn bus(&self) -> std::sync::MutexGuard<'_, HashMap<i64, broadcast::Sender<()>>> {
+        self.live_bus.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Daftar sebagai pendengar perubahan sesi `session_id`.
     pub fn subscribe_live(&self, session_id: i64) -> broadcast::Receiver<()> {
-        let mut map = self.live_bus.lock().unwrap();
+        let mut map = self.bus();
         map.entry(session_id).or_insert_with(|| broadcast::channel(16).0).subscribe()
     }
 
     /// Beri tahu semua pendengar sesi `session_id` (best-effort). Entry tanpa
     /// pendengar dibersihkan di sini → map tak tumbuh melewati sesi yang aktif.
     pub fn notify_live(&self, session_id: i64) {
-        let mut map = self.live_bus.lock().unwrap();
+        let mut map = self.bus();
         if let Some(tx) = map.get(&session_id) {
             if tx.send(()).is_err() {
                 map.remove(&session_id);

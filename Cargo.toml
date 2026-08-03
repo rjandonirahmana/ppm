@@ -120,6 +120,11 @@ tokio = { version = "1", features = [
 ] }
 # BroadcastStream utk endpoint SSE ruang live.
 tokio-stream = { version = "0.1", features = ["sync"] }
+# ReaderStream: unduh rekaman DI-STREAM dari disk (dulu std::fs::read → seluruh
+# file masuk RAM; rekaman ceramah 1–2 jam bisa puluhan MB, beberapa unduhan
+# bersamaan cukup untuk menghabiskan RAM VPS 4GB). Sudah ada di pohon dependensi
+# (dipakai axum), jadi tak menambah waktu build.
+tokio-util = { version = "0.7", features = ["io"] }
 axum = { version = "0.8", features = ["multipart"] }
 tower = "0.5"
 tower-http = { version = "0.7", features = [

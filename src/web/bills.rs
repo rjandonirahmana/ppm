@@ -49,7 +49,7 @@ pub async fn upload_proof(
     if bill_id <= 0 {
         return (StatusCode::BAD_REQUEST, "bill_id wajib.").into_response();
     }
-    let Some(bytes) = file_bytes.filter(|b| !b.is_empty() && b.len() <= 10_000_000) else {
+    let Some(bytes) = file_bytes.filter(|b| !b.is_empty() && b.len() <= crate::web::limits::IMAGE_MAX) else {
         return (StatusCode::BAD_REQUEST, "File bukti tidak valid (maks 10MB).").into_response();
     };
 

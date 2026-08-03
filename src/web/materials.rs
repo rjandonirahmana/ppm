@@ -89,7 +89,7 @@ pub async fn upload(
     let Some(bytes) = file_bytes else {
         return (StatusCode::BAD_REQUEST, "File wajib diunggah.").into_response();
     };
-    if bytes.is_empty() || bytes.len() > 100_000_000 {
+    if bytes.is_empty() || bytes.len() > crate::web::limits::MATERIAL_MAX {
         return (StatusCode::BAD_REQUEST, "Ukuran file tidak valid (maks 100MB).").into_response();
     }
     let Some((kind, content_type)) = classify(&filename) else {

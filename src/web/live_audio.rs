@@ -14,16 +14,17 @@
 //! pesantren), rekaman inheren, jauh lebih sederhana; trade-off: latensi detik
 //! (bukan sub-detik) — dapat diterima karena interaksi balik hanya teks.
 
-use std::io::{Read, Seek, SeekFrom};
+use std::io::SeekFrom;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Extension;
 use serde::Deserialize;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::models::Claims;
 use crate::state::AppState;
@@ -74,7 +75,7 @@ pub async fn post_chunk(
     if !is_staff(&claims.role) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    if body.is_empty() || body.len() > 2_000_000 {
+    if body.is_empty() || body.len() > crate::web::limits::AUDIO_CHUNK_MAX {
         return StatusCode::BAD_REQUEST.into_response();
     }
     // Pertahanan berlapis: klien (AudioDock) sudah sembunyikan tombol siaran
@@ -126,17 +127,27 @@ pub async fn post_chunk(
 
     let path = recording_file(session_id);
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = tokio::fs::create_dir_all(parent).await;
     }
     // seq 0 → truncate (siaran baru); selain itu append.
-    let res = std::fs::OpenOptions::new()
-        .create(true)
-        .append(q.seq != 0)
-        .write(true)
-        .truncate(q.seq == 0)
-        .open(&path)
-        .and_then(|mut f| std::io::Write::write_all(&mut f, &body).map(|_| f))
-        .and_then(|f| f.metadata());
+    //
+    // `tokio::fs`, BUKAN `std::fs`: ini handler async yang dipanggil tiap ~4 detik
+    // per penyiar, dan tulis ke disk VPS bisa menghentikan thread pemanggilnya
+    // selama puluhan milidetik saat disk sibuk. Dengan std::fs, thread yang
+    // terhenti itu adalah worker runtime Tokio — di VPS 2 CPU hanya ada segelintir
+    // worker, sehingga SELURUH request lain (SSR halaman, server-fn) ikut tertahan.
+    let res = async {
+        let mut f = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(q.seq != 0)
+            .write(true)
+            .truncate(q.seq == 0)
+            .open(&path)
+            .await?;
+        tokio::io::AsyncWriteExt::write_all(&mut f, &body).await?;
+        f.metadata().await
+    }
+    .await;
 
     match res {
         Ok(meta) => {
@@ -174,14 +185,18 @@ pub async fn get_data(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let path = recording_file(session_id);
-    let Ok(mut f) = std::fs::File::open(&path) else {
+    // Async sepanjang jalur: endpoint ini di-poll TERUS-MENERUS oleh setiap santri
+    // di ruangan selama siaran berlangsung — jalur paling sering dieksekusi di
+    // seluruh aplikasi. I/O blocking di sini menahan worker Tokio dikalikan jumlah
+    // santri (lihat alasan lengkap di post_chunk).
+    let Ok(mut f) = tokio::fs::File::open(&path).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let len = f.metadata().await.map(|m| m.len()).unwrap_or(0);
     let from = q.from.min(len);
     let take = (len - from).min(1_048_576) as usize;
     let mut buf = vec![0u8; take];
-    if f.seek(SeekFrom::Start(from)).is_err() || f.read_exact(&mut buf).is_err() {
+    if f.seek(SeekFrom::Start(from)).await.is_err() || f.read_exact(&mut buf).await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     (
@@ -197,6 +212,12 @@ pub async fn get_data(
 }
 
 /// GET /api/live-audio/{id}/download — unduh rekaman penuh (login apa pun).
+///
+/// DI-STREAM, tidak dibaca sekaligus. Rekaman pengajian 1–2 jam berukuran puluhan
+/// MB; `std::fs::read` (versi lama) menaruh SELURUH file di RAM sebelum satu byte
+/// pun terkirim, jadi beberapa wali santri yang mengunduh bersamaan bisa
+/// menghabiskan memori VPS 4GB — dan pembacaannya blocking, menahan worker Tokio
+/// selama itu. `ReaderStream` mengirim per potongan dengan memori tetap kecil.
 pub async fn download(
     Extension(state): Extension<Arc<AppState>>,
     Path(session_id): Path<i64>,
@@ -205,19 +226,30 @@ pub async fn download(
     if auth(&state, &headers).is_err() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    match std::fs::read(recording_file(session_id)) {
-        Ok(bytes) => (
-            StatusCode::OK,
-            [
-                (header::CONTENT_TYPE.as_str(), "audio/webm".to_string()),
-                (
-                    header::CONTENT_DISPOSITION.as_str(),
-                    format!("attachment; filename=\"sesi-{session_id}.webm\""),
-                ),
-            ],
-            bytes,
-        )
-            .into_response(),
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    let path = recording_file(session_id);
+    let Ok(file) = tokio::fs::File::open(&path).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    // Content-Length diisi bila ukuran diketahui → browser bisa menampilkan
+    // progres unduhan (tanpa ini hanya "unknown size").
+    let len = file.metadata().await.ok().map(|m| m.len());
+    let body = Body::from_stream(tokio_util::io::ReaderStream::new(file));
+
+    let mut resp = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "audio/webm")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"sesi-{session_id}.webm\""),
+        );
+    if let Some(len) = len {
+        resp = resp.header(header::CONTENT_LENGTH, len);
+    }
+    match resp.body(body) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(session_id, "gagal menyusun respons unduhan: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
 }

@@ -2,7 +2,7 @@
 //! ganjil/genap + tahun + rentang tanggal; satu yang aktif jadi acuan
 //! `current_semester` (kehadiran %, laporan).
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use chrono::NaiveDate;
 use deadpool_postgres::Pool;
 
@@ -67,26 +67,26 @@ pub async fn create_semester(
     end: &str,
 ) -> Result<i64> {
     if !matches!(kind, "ganjil" | "genap") {
-        bail!("Jenis semester harus ganjil atau genap.");
+        bail_user!("Jenis semester harus ganjil atau genap.");
     }
     let year: i16 = year
         .trim()
         .parse()
         .map_err(|_| anyhow::anyhow!("Tahun harus angka (mis. 2026)."))?;
     if !(1990..=2100).contains(&year) {
-        bail!("Tahun tidak masuk akal (1990–2100).");
+        bail_user!("Tahun tidak masuk akal (1990–2100).");
     }
     let parse = |s: &str| NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d");
     let sd = parse(start).map_err(|_| anyhow::anyhow!("Tanggal mulai tidak valid (YYYY-MM-DD)."))?;
     let ed = parse(end).map_err(|_| anyhow::anyhow!("Tanggal selesai tidak valid (YYYY-MM-DD)."))?;
     // Tak boleh mundur: tanggal selesai harus SETELAH tanggal mulai.
     if ed <= sd {
-        bail!("Tanggal selesai harus setelah tanggal mulai (tidak boleh mundur/sama).");
+        bail_user!("Tanggal selesai harus setelah tanggal mulai (tidak boleh mundur/sama).");
     }
     // Tak boleh tumpang tindih dengan semester lain (ujung yang sama pun ditolak —
     // mis. ganjil s/d 1 Agu → genap harus mulai ≥ 2 Agu).
     if let Some(bentrok) = repo::overlapping_semester(pool, sd, ed, 0).await? {
-        bail!(
+        bail_user!(
             "Rentang tanggal bertabrakan dengan {} ({} → {}). Mulai minimal sehari setelahnya.",
             semester_label(&bentrok.kind, bentrok.year),
             bentrok.start_date,
@@ -98,7 +98,7 @@ pub async fn create_semester(
 
 pub async fn delete_semester(pool: &Pool, id: i64) -> Result<()> {
     if !repo::delete_semester(pool, id).await? {
-        bail!("Semester tidak ditemukan.");
+        bail_user!("Semester tidak ditemukan.");
     }
     Ok(())
 }

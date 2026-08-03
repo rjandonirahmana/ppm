@@ -26,11 +26,11 @@ pub async fn log_hafalan(
     note: &str,
 ) -> Result<()> {
     if !is_staff(&staff.role) {
-        anyhow::bail!("forbidden");
+        bail_user!("forbidden");
     }
     let surah = surah.trim();
     if surah.is_empty() {
-        anyhow::bail!("Nama surah wajib diisi.");
+        bail_user!("Nama surah wajib diisi.");
     }
     let quality = match quality {
         "perlu_perbaikan" | "mengulang" => quality,

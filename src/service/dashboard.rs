@@ -1,6 +1,6 @@
 //! service/dashboard.rs — Perakitan payload dashboard (query paralel + format).
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use chrono::Datelike;
 use deadpool_postgres::Pool;
 
@@ -23,7 +23,7 @@ pub async fn santri_home(pool: &Pool, user_id: i64) -> Result<SantriHome> {
     );
 
     let Some(home) = home? else {
-        bail!("unauth");
+        bail_user!("unauth");
     };
 
     let recent = recent?

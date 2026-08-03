@@ -33,6 +33,9 @@ pub fn TamuPage() -> impl IntoView {
     let checkin = move || status.get().and_then(|r| r.ok()).flatten();
 
     // Interval polling (WASM) — mulai saat kode ada, berhenti saat sudah ✅.
+    // Hanya dibaca oleh Effect di bawah yang khusus wasm; di build SSR memang
+    // tak terpakai (lihat catatan serupa di pages/tagihan.rs).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
     let interval_id = StoredValue::new(None::<i32>);
     #[cfg(target_arch = "wasm32")]
     Effect::new(move |_| {

@@ -76,7 +76,7 @@ pub async fn upload(
     let Some(bytes) = file_bytes else {
         return (StatusCode::BAD_REQUEST, "File wajib diunggah.").into_response();
     };
-    if bytes.is_empty() || bytes.len() > 10_000_000 {
+    if bytes.is_empty() || bytes.len() > crate::web::limits::IMAGE_MAX {
         return (StatusCode::BAD_REQUEST, "Ukuran gambar tidak valid (maks 10MB).")
             .into_response();
     }

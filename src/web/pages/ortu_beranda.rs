@@ -9,11 +9,12 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{ChildMonitor, ParentHome, StudentSearchItem};
+use crate::models::{BookProgressItem, ChildMonitor, ParentHome, StudentSearchItem};
 use crate::web::api::{
     parent_home, request_connection_action, search_students_action,
+    student_book_progress_for_viewer,
 };
-use crate::web::components::{FetchError, DeviceFrame, MobileHeader};
+use crate::web::components::{BookProgressDetail, DeviceFrame, FetchError, MobileHeader};
 
 #[component]
 pub fn OrtuBerandaPage() -> impl IntoView {
@@ -371,12 +372,28 @@ fn SearchPanel(refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
     }
 }
 
-/// Panel pantauan anak terpilih (mockup: kartu anak + status + ring + izin).
+/// Panel pantauan anak terpilih (kartu anak + status + ring + izin +
+/// tombol detail progres materi).
 #[component]
 fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
     let initial = m.name.chars().next().unwrap_or('S').to_string();
     let meta = format!("{} • NIS: {}", m.class_name, m.nis);
     let dash = format!("{},100", m.pct.clamp(0, 100));
+
+    // Sheet detail progres materi (orang tua melihat seperti tampilan santri).
+    let show_detail = RwSignal::new(false);
+    let student_id = m.id;
+    let student_name = RwSignal::new(m.name.clone());
+    let detail_data = Resource::new(
+        move || show_detail.get(),
+        move |show| async move {
+            if show {
+                student_book_progress_for_viewer(student_id).await.ok()
+            } else {
+                None
+            }
+        },
+    );
 
     view! {
         // Desktop: profil+status+ring col-span-2 (kiri), izin jadi sidebar
@@ -439,49 +456,59 @@ fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
             }}
         </div>
 
-        // Ring persentase + hitungan
-        <div class="grid grid-cols-2 gap-3">
-            <div class="ppm-card p-4 flex flex-col items-center">
-                <p class="text-[11px] font-bold tracking-[0.12em] text-on-surface-variant text-center">
-                    "PERSENTASE KEHADIRAN"
-                </p>
-                <div class="relative w-28 h-28 mt-3">
-                    <svg viewBox="0 0 36 36" class="w-full h-full -rotate-90">
-                        <circle cx="18" cy="18" r="15.9" fill="none" stroke="#dce2f3" stroke-width="3.6"></circle>
-                        <circle
-                            cx="18" cy="18" r="15.9" fill="none" stroke="#064e3b"
-                            stroke-width="3.6" stroke-linecap="round"
-                            pathLength="100" stroke-dasharray=dash
-                        ></circle>
-                    </svg>
-                    <div class="absolute inset-0 flex items-center justify-center">
-                        <span class="text-2xl font-bold text-primary" data-count=m.pct.to_string()>
-                            {m.pct}
+        // Ring persentase + hitungan + tombol detail progres
+        <div class="space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+                <div class="ppm-card p-4 flex flex-col items-center">
+                    <p class="text-[11px] font-bold tracking-[0.12em] text-on-surface-variant text-center">
+                        "PERSENTASE KEHADIRAN"
+                    </p>
+                    <div class="relative w-28 h-28 mt-3">
+                        <svg viewBox="0 0 36 36" class="w-full h-full -rotate-90">
+                            <circle cx="18" cy="18" r="15.9" fill="none" stroke="#dce2f3" stroke-width="3.6"></circle>
+                            <circle
+                                cx="18" cy="18" r="15.9" fill="none" stroke="#064e3b"
+                                stroke-width="3.6" stroke-linecap="round"
+                                pathLength="100" stroke-dasharray=dash
+                            ></circle>
+                        </svg>
+                        <div class="absolute inset-0 flex items-center justify-center">
+                            <span class="text-2xl font-bold text-primary" data-count=m.pct.to_string()>
+                                {m.pct}
+                            </span>
+                            <span class="text-body-sm font-bold text-primary">"%"</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="ppm-card p-4 flex flex-col justify-center divide-y divide-outline-variant/40">
+                    <div class="flex items-center justify-between py-2">
+                        <span class="text-body-md text-on-surface-variant">"Hadir"</span>
+                        <span class="text-body-lg font-bold text-success" data-count=m.hadir.to_string()>
+                            {m.hadir}
                         </span>
-                        <span class="text-body-sm font-bold text-primary">"%"</span>
+                    </div>
+                    <div class="flex items-center justify-between py-2">
+                        <span class="text-body-md text-on-surface-variant">"Terlambat"</span>
+                        <span class="text-body-lg font-bold text-warning" data-count=m.terlambat.to_string()>
+                            {m.terlambat}
+                        </span>
+                    </div>
+                    <div class="flex items-center justify-between py-2">
+                        <span class="text-body-md text-on-surface-variant">"Absen"</span>
+                        <span class="text-body-lg font-bold text-error" data-count=m.absen.to_string()>
+                            {m.absen}
+                        </span>
                     </div>
                 </div>
             </div>
-            <div class="ppm-card p-4 flex flex-col justify-center divide-y divide-outline-variant/40">
-                <div class="flex items-center justify-between py-2">
-                    <span class="text-body-md text-on-surface-variant">"Hadir"</span>
-                    <span class="text-body-lg font-bold text-success" data-count=m.hadir.to_string()>
-                        {m.hadir}
-                    </span>
-                </div>
-                <div class="flex items-center justify-between py-2">
-                    <span class="text-body-md text-on-surface-variant">"Terlambat"</span>
-                    <span class="text-body-lg font-bold text-warning" data-count=m.terlambat.to_string()>
-                        {m.terlambat}
-                    </span>
-                </div>
-                <div class="flex items-center justify-between py-2">
-                    <span class="text-body-md text-on-surface-variant">"Absen"</span>
-                    <span class="text-body-lg font-bold text-error" data-count=m.absen.to_string()>
-                        {m.absen}
-                    </span>
-                </div>
-            </div>
+
+            <button
+                class="w-full py-3 bg-secondary-container text-primary rounded-xl text-body-md font-semibold press flex items-center justify-center gap-2"
+                on:click=move |_| show_detail.set(true)
+            >
+                <span class="material-symbols-outlined text-xl">"auto_stories"</span>
+                "Lihat Detail Progres Materi"
+            </button>
         </div>
         </div>
 
@@ -531,5 +558,57 @@ fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
             }}
         </div>
         </div>
+
+        // ── Bottom-sheet detail progres materi ─────────────────────────────────
+        {move || {
+            show_detail
+                .get()
+                .then(|| {
+                    view! {
+                        <div
+                            class="fixed inset-0 z-40 bg-black/45 fade-in"
+                            on:click=move |_| show_detail.set(false)
+                        ></div>
+                        <div class="fixed bottom-0 inset-x-0 z-50 max-w-md mx-auto bg-surface rounded-t-3xl p-6 pb-10 sheet-in max-h-[85vh] overflow-y-auto">
+                            <div class="w-10 h-1.5 bg-outline-variant rounded-full mx-auto mb-5"></div>
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="text-headline-sm text-on-background">
+                                    "Detail Progres Materi"
+                                </h3>
+                                <button
+                                    class="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container"
+                                    on:click=move |_| show_detail.set(false)
+                                >
+                                    <span class="material-symbols-outlined text-lg">"close"</span>
+                                </button>
+                            </div>
+
+                            <Suspense fallback=|| {
+                                view! {
+                                    <div class="space-y-3 animate-pulse">
+                                        <div class="h-40 bg-surface-container rounded-2xl"></div>
+                                        <div class="h-40 bg-surface-container rounded-2xl"></div>
+                                    </div>
+                                }
+                            }>
+                                {move || {
+                                    detail_data
+                                        .get()
+                                        .flatten()
+                                        .map(|items: Vec<BookProgressItem>| {
+                                            view! {
+                                                <BookProgressDetail
+                                                    student_name=student_name.get()
+                                                    items=items
+                                                />
+                                            }
+                                                .into_any()
+                                        })
+                                }}
+                            </Suspense>
+                        </div>
+                    }
+                })
+        }}
     }
 }

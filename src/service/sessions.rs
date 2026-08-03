@@ -177,10 +177,10 @@ pub async fn detail_for(
     session_id: i64,
 ) -> Result<crate::models::SessionDetailData> {
     if !matches!(user.role.as_str(), "admin" | "supervisor" | "dewan_guru" | "teacher") {
-        anyhow::bail!("forbidden");
+        bail_user!("forbidden");
     }
     let Some(d) = repo::session_detail(pool, session_id).await? else {
-        anyhow::bail!("Sesi tidak ditemukan.");
+        bail_user!("Sesi tidak ditemukan.");
     };
 
     let (att_rows, chat_rows, teachers, pamongs, books) = tokio::join!(
@@ -292,10 +292,10 @@ pub async fn mark_present(
     student_id: i64,
 ) -> Result<()> {
     if !matches!(user.role.as_str(), "admin" | "supervisor" | "dewan_guru" | "teacher") {
-        anyhow::bail!("forbidden");
+        bail_user!("forbidden");
     }
     if !repo::mark_manual_present(pool, student_id, session_id).await? {
-        anyhow::bail!("Sudah tercatat sebelumnya.");
+        bail_user!("Sudah tercatat sebelumnya.");
     }
     tracing::info!(by = user.id, student_id, session_id, "absensi manual ditandai staf");
     Ok(())
@@ -311,14 +311,14 @@ pub async fn mark_bulk(
     status: &str,
 ) -> Result<i64> {
     if !matches!(user.role.as_str(), "admin" | "supervisor" | "dewan_guru" | "teacher") {
-        anyhow::bail!("forbidden");
+        bail_user!("forbidden");
     }
     if !matches!(status, "present" | "absent") {
-        anyhow::bail!("Status tidak valid.");
+        bail_user!("Status tidak valid.");
     }
     let ids: Vec<i64> = student_ids.into_iter().filter(|&x| x > 0).collect();
     if ids.is_empty() {
-        anyhow::bail!("Pilih minimal satu santri.");
+        bail_user!("Pilih minimal satu santri.");
     }
     let n = repo::mark_attendance_bulk(pool, session_id, &ids, status).await?;
     tracing::info!(by = user.id, session_id, status, n, "absensi massal ditandai staf");
@@ -342,7 +342,7 @@ async fn guard_live_access(
     if is_staff(&user.role) || repo::is_class_participant(pool, class_id, user.id).await? {
         Ok(())
     } else {
-        anyhow::bail!("forbidden")
+        bail_user!("forbidden")
     }
 }
 
@@ -352,7 +352,7 @@ pub async fn live_for(
     session_id: i64,
 ) -> Result<crate::models::SessionLiveData> {
     let Some(d) = repo::session_detail(pool, session_id).await? else {
-        anyhow::bail!("Sesi tidak ditemukan.");
+        bail_user!("Sesi tidak ditemukan.");
     };
     guard_live_access(pool, user, d.class_id).await?;
 
@@ -399,10 +399,10 @@ pub async fn post_chat(
 ) -> Result<()> {
     let msg = message.trim();
     if msg.is_empty() || msg.chars().count() > 500 {
-        anyhow::bail!("Pesan 1–500 karakter.");
+        bail_user!("Pesan 1–500 karakter.");
     }
     let Some(d) = repo::session_detail(pool, session_id).await? else {
-        anyhow::bail!("Sesi tidak ditemukan.");
+        bail_user!("Sesi tidak ditemukan.");
     };
     guard_live_access(pool, user, d.class_id).await?;
     // Chat HANYA saat sesi berlangsung. Sebelum dimulai tak ada yang menyimak;
@@ -411,9 +411,9 @@ pub async fn post_chat(
     // menyembunyikan kotak ketiknya di UI.
     match d.status.as_str() {
         "ongoing" => {}
-        "cancelled" => anyhow::bail!("Sesi dibatalkan (libur)."),
-        "finished" => anyhow::bail!("Sesi sudah berakhir — chat ditutup."),
-        _ => anyhow::bail!("Sesi belum dimulai — chat dibuka saat sesi berlangsung."),
+        "cancelled" => bail_user!("Sesi dibatalkan (libur)."),
+        "finished" => bail_user!("Sesi sudah berakhir — chat ditutup."),
+        _ => bail_user!("Sesi belum dimulai — chat dibuka saat sesi berlangsung."),
     }
     repo::insert_session_chat(pool, session_id, user.id, msg).await
 }
@@ -428,19 +428,19 @@ pub async fn set_live(
     start: bool,
 ) -> Result<()> {
     if !is_staff(&user.role) {
-        anyhow::bail!("forbidden");
+        bail_user!("forbidden");
     }
     if start {
         let Some(d) = repo::session_detail(pool, session_id).await? else {
-            anyhow::bail!("Sesi tidak ditemukan.");
+            bail_user!("Sesi tidak ditemukan.");
         };
         if let Some(reason) = start_window_reason(d.session_date, d.start_time, d.end_time) {
-            anyhow::bail!(reason);
+            bail_user!(reason);
         }
     }
     let status = if start { "ongoing" } else { "finished" };
     if !repo::set_session_status(pool, session_id, status).await? {
-        anyhow::bail!("Sesi tidak ditemukan.");
+        bail_user!("Sesi tidak ditemukan.");
     }
     tracing::info!(by = user.id, session_id, status, "status sesi live diubah");
     Ok(())

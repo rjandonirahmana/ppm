@@ -1,9 +1,11 @@
 //! web/components.rs — Komponen bersama.
 
+use std::collections::HashMap;
+
 use leptos::prelude::*;
 use leptos_router::hooks::use_location;
 
-use crate::models::SessionUser;
+use crate::models::{BookProgressItem, SessionUser, Surah};
 
 /// Header: mobile = sticky bar (judul + lonceng + setting). Desktop (md+, ala
 /// TOPBAR mockup Admin Portal) = judul lebih besar non-sticky + **identitas
@@ -649,4 +651,184 @@ pub fn RoleGuard(
     });
 
     view! { <Suspense>{children()}</Suspense> }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Detail Progres Materi (read-only) — ditampilkan orang tua / staf / guru.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Panel detail progres materi satu santri dalam bentuk grid per-unit (ayat/
+/// halaman) — MIRIP tampilan santri saat mengisi di /akademik, tapi read-only.
+/// Dipakai oleh modal/sheet "Lihat Detail Progres" di beranda orang tua dan
+/// panel progres buku halaman Students.
+#[component]
+pub fn BookProgressDetail(
+    student_name: String,
+    items: Vec<BookProgressItem>,
+) -> impl IntoView {
+    view! {
+        <div class="space-y-4">
+            <p class="text-body-sm font-bold text-on-background flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-primary text-[18px]">"auto_stories"</span>
+                {format!("Detail Progres Materi — {student_name}")}
+            </p>
+
+            <div class="ppm-card p-3 flex items-center justify-around text-[11px]">
+                <span class="flex items-center gap-1.5">
+                    <span class="w-3.5 h-3.5 rounded bg-surface-container-highest border border-outline-variant"></span>
+                    "Kosong"
+                </span>
+                <span class="flex items-center gap-1.5">
+                    <span class="w-3.5 h-3.5 rounded bg-warning/70"></span>
+                    "Setengah"
+                </span>
+                <span class="flex items-center gap-1.5">
+                    <span class="w-3.5 h-3.5 rounded bg-primary"></span>
+                    "Penuh"
+                </span>
+            </div>
+
+            {if items.is_empty() {
+                view! {
+                    <div class="bg-surface-container rounded-2xl p-5 text-center text-body-sm text-on-surface-variant">
+                        "Belum ada materi terdaftar."
+                    </div>
+                }
+                    .into_any()
+            } else {
+                items
+                    .into_iter()
+                    .map(|b| view! { <BookProgressDetailCard b=b /> })
+                    .collect_view()
+                    .into_any()
+            }}
+        </div>
+    }
+}
+
+#[component]
+fn BookProgressDetailCard(b: BookProgressItem) -> impl IntoView {
+    let total = b.total_pages.max(1);
+    let is_quran = b.category == "quran";
+    let title = b.book_title.clone();
+    let surahs = b.surahs.clone();
+    let status = b.unit_status.clone();
+    let pct = b.percentage as i32;
+
+    let cat_badge = if is_quran {
+        "ppm-chip-sm bg-primary/10 text-primary"
+    } else {
+        "ppm-chip-sm bg-secondary-container text-primary"
+    };
+    let cat_label = if is_quran { "QUR'AN" } else { "HADIST" };
+
+    view! {
+        <div class="ppm-card p-4 space-y-3 anim-in">
+            <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                    <span class=cat_badge>{cat_label}</span>
+                    <p class="text-body-md font-semibold text-on-background truncate">{title}</p>
+                </div>
+                <span class="text-body-sm font-bold text-primary shrink-0">{format!("{pct}%")}</span>
+            </div>
+            <div class="h-1.5 bg-surface-container rounded-full overflow-hidden">
+                <div class="h-full bg-primary" style=format!("width: {pct}%")></div>
+            </div>
+
+            {if is_quran {
+                view! {
+                    <BookProgressQuran surahs=surahs status=status />
+                }
+                    .into_any()
+            } else {
+                view! {
+                    <BookProgressHadist total=total status=status />
+                }
+                    .into_any()
+            }}
+        </div>
+    }
+}
+
+#[component]
+fn BookProgressQuran(surahs: Vec<Surah>, status: HashMap<String, u8>) -> impl IntoView {
+    let sel_surah = RwSignal::new(0usize);
+    let surahs = StoredValue::new(surahs);
+
+    view! {
+        <div class="space-y-2">
+            <div class="flex flex-wrap gap-1.5">
+                {surahs
+                    .get_value()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let nm = s.name.clone();
+                        let cls = move || {
+                            if sel_surah.get() == i {
+                                "px-2.5 py-1 rounded-full text-[11px] font-semibold bg-primary text-on-primary whitespace-nowrap"
+                            } else {
+                                "px-2.5 py-1 rounded-full text-[11px] bg-surface-container text-on-surface whitespace-nowrap"
+                            }
+                        };
+                        view! {
+                            <button type="button" class=cls on:click=move |_| sel_surah.set(i)>
+                                {nm}
+                            </button>
+                        }
+                    })
+                    .collect_view()}
+            </div>
+            {move || {
+                let idx = sel_surah.get();
+                let list = surahs.get_value();
+                let Some(s) = list.get(idx) else { return ().into_any() };
+                let ayat = s.ayat.max(0);
+                let sname = s.name.clone();
+                view! {
+                    <p class="text-[11px] text-on-surface-variant">
+                        {format!("{sname} — {ayat} ayat")}
+                    </p>
+                    <div class="grid grid-cols-10 gap-1 max-h-72 overflow-y-auto">
+                        {(1..=ayat)
+                            .map(|a| {
+                                let key = format!("{idx}:{a}");
+                                let st = status.get(&key).copied().unwrap_or(0);
+                                view! { <ProgressUnitCell label=a status=st /> }
+                            })
+                            .collect_view()}
+                    </div>
+                }
+                    .into_any()
+            }}
+        </div>
+    }
+}
+
+#[component]
+fn BookProgressHadist(total: i32, status: HashMap<String, u8>) -> impl IntoView {
+    view! {
+        <div class="grid grid-cols-10 gap-1 max-h-72 overflow-y-auto">
+            {(1..=total)
+                .map(|p| {
+                    let key = p.to_string();
+                    let st = status.get(&key).copied().unwrap_or(0);
+                    view! { <ProgressUnitCell label=p status=st /> }
+                })
+                .collect_view()}
+        </div>
+    }
+}
+
+/// Satu unit (ayat/halaman) read-only: warna menunjukkan status.
+#[component]
+fn ProgressUnitCell(label: i32, status: u8) -> impl IntoView {
+    let cls = match status {
+        2 => "aspect-square rounded text-[10px] font-bold flex items-center justify-center bg-primary text-on-primary",
+        1 => "aspect-square rounded text-[10px] font-bold flex items-center justify-center bg-warning/70 text-on-background",
+        _ => "aspect-square rounded text-[10px] flex items-center justify-center bg-surface-container-highest text-on-surface-variant",
+    };
+    view! {
+        <div class=cls>{label}</div>
+    }
 }

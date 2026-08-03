@@ -1,6 +1,6 @@
 //! service/santri.rs — Logika halaman santri: riwayat kehadiran, izin, profil.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use chrono::{Datelike, NaiveDate, TimeZone, Utc};
 use deadpool_postgres::Pool;
 
@@ -171,22 +171,22 @@ pub async fn submit_permit(
     reason: &str,
 ) -> Result<Vec<super::permits::PermitSplit>> {
     if !matches!(kind, "sick" | "leave" | "keperluan") {
-        bail!("Jenis izin tidak valid.");
+        bail_user!("Jenis izin tidak valid.");
     }
     let Ok(start_date) = NaiveDate::parse_from_str(start.trim(), "%Y-%m-%d") else {
-        bail!("Tanggal mulai wajib diisi.");
+        bail_user!("Tanggal mulai wajib diisi.");
     };
     let end_date = match end.trim() {
         "" => None,
         s => match NaiveDate::parse_from_str(s, "%Y-%m-%d") {
             Ok(d) if d >= start_date => Some(d),
-            Ok(_) => bail!("Tanggal selesai tidak boleh sebelum tanggal mulai."),
-            Err(_) => bail!("Tanggal selesai tidak valid."),
+            Ok(_) => bail_user!("Tanggal selesai tidak boleh sebelum tanggal mulai."),
+            Err(_) => bail_user!("Tanggal selesai tidak valid."),
         },
     };
     let reason = reason.trim();
     if reason.chars().count() < 5 {
-        bail!("Tuliskan alasan izin (minimal 5 karakter).");
+        bail_user!("Tuliskan alasan izin (minimal 5 karakter).");
     }
     let reason: String = reason.chars().take(500).collect();
 
@@ -199,7 +199,7 @@ pub async fn submit_permit(
 /// Data profil pengguna.
 pub async fn profil(pool: &Pool, user_id: i64) -> Result<ProfilData> {
     let Some(p) = repo::profil_row(pool, user_id).await? else {
-        bail!("unauth");
+        bail_user!("unauth");
     };
     let role_label = match p.role.as_str() {
         "admin" => "ADMIN",
@@ -260,7 +260,7 @@ pub async fn update_profile_extra(
             .parse()
             .map_err(|_| anyhow::anyhow!("Tahun masuk PPM harus berupa angka (mis. 2024)."))?;
         if !(1990..=2100).contains(&y) {
-            bail!("Tahun masuk PPM tidak masuk akal (1990–2100).");
+            bail_user!("Tahun masuk PPM tidak masuk akal (1990–2100).");
         }
         Some(y)
     };
@@ -280,7 +280,7 @@ pub async fn update_profile_extra(
 pub async fn update_contact(pool: &Pool, user_id: i64, email: &str, address: &str) -> Result<()> {
     let email = email.trim();
     if !email.is_empty() && (!email.contains('@') || !email.contains('.') || email.len() < 5) {
-        bail!("Format email tidak valid.");
+        bail_user!("Format email tidak valid.");
     }
     let opt = |s: &str| -> Option<String> {
         let t = s.trim();
@@ -293,7 +293,7 @@ pub async fn update_contact(pool: &Pool, user_id: i64, email: &str, address: &st
 pub async fn add_ipk(pool: &Pool, user_id: i64, semester: &str, ipk: &str) -> Result<i64> {
     let semester = semester.trim();
     if semester.is_empty() {
-        bail!("Semester wajib diisi (mis. 2024/2025 Ganjil).");
+        bail_user!("Semester wajib diisi (mis. 2024/2025 Ganjil).");
     }
     let val: f64 = ipk
         .trim()
@@ -301,14 +301,14 @@ pub async fn add_ipk(pool: &Pool, user_id: i64, semester: &str, ipk: &str) -> Re
         .parse()
         .map_err(|_| anyhow::anyhow!("IPK harus berupa angka (mis. 3.75)."))?;
     if !(0.0..=4.0).contains(&val) {
-        bail!("IPK harus di antara 0.00 sampai 4.00.");
+        bail_user!("IPK harus di antara 0.00 sampai 4.00.");
     }
     repo::add_ipk(pool, user_id, semester, val).await
 }
 
 pub async fn delete_ipk(pool: &Pool, user_id: i64, id: i64) -> Result<()> {
     if !repo::delete_ipk(pool, user_id, id).await? {
-        bail!("Entri IPK tidak ditemukan.");
+        bail_user!("Entri IPK tidak ditemukan.");
     }
     Ok(())
 }

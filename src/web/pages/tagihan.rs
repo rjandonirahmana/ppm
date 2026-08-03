@@ -438,6 +438,12 @@ pub fn MyBillsPage() -> impl IntoView {
 }
 
 #[component]
+// `refetch` & `id` hanya dipakai di blok `cfg(target_arch = "wasm32")` (unggah
+// bukti bayar lewat fetch browser). Di build SSR keduanya memang menganggur —
+// itu benar, bukan sisa kode mati, jadi peringatannya dibungkam KHUSUS untuk
+// target non-wasm alih-alih diberi awalan garis bawah (yang akan menyesatkan
+// pembaca sisi klien).
+#[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
 fn MyBillRow(b: BillItem, refetch: impl Fn() + Copy + Send + Sync + 'static) -> impl IntoView {
     let lunas = b.status == "lunas";
     let id = b.id;
@@ -450,7 +456,6 @@ fn MyBillRow(b: BillItem, refetch: impl Fn() + Copy + Send + Sync + 'static) -> 
     let on_pick = move |_ev: leptos::ev::Event| {
         #[cfg(target_arch = "wasm32")]
         {
-            use wasm_bindgen::JsCast;
             let Some(input) = file_input.get() else { return };
             let Some(files) = input.files() else { return };
             let Some(file) = files.get(0) else { return };

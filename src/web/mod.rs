@@ -15,6 +15,9 @@ pub mod components;
 // Unduh laporan PDF/Excel (server, axum — di luar server-fn).
 #[cfg(feature = "ssr")]
 pub mod export;
+// Batas ukuran unggahan — dipakai bersama oleh router (main.rs) & handler.
+#[cfg(feature = "ssr")]
+pub mod limits;
 // Siaran suara sesi: handler axum (server) + komponen klien (universal).
 #[cfg(feature = "ssr")]
 pub mod live_audio;

@@ -97,40 +97,52 @@ pub async fn download(
         Err(s) => return s.into_response(),
     };
 
-    match q.format.as_str() {
-        "pdf" => {
-            let bytes = render_pdf(&doc);
+    // Penyusunan PDF/XLSX murni CPU dan sepenuhnya sinkron: menata ratusan baris
+    // laporan institusi bisa memakan ratusan milidetik sampai beberapa detik.
+    // Dijalankan langsung di sini, ia MENAHAN worker Tokio selama itu — di VPS
+    // 2 CPU artinya request lain (SSR halaman, absensi, siaran) ikut membeku
+    // hanya karena seorang admin mengunduh laporan. `spawn_blocking` memindahkan
+    // pekerjaan itu ke kolam thread khusus; alasannya sama persis dengan yang
+    // sudah dipakai untuk bcrypt di service/auth.rs.
+    let format = q.format;
+    let rendered = tokio::task::spawn_blocking(move || match format.as_str() {
+        "pdf" => Some(Ok(("application/pdf", "pdf", render_pdf(&doc)))),
+        "xlsx" => Some(render_xlsx(&doc).map(|b| {
             (
-                StatusCode::OK,
-                [
-                    (header::CONTENT_TYPE.as_str(), "application/pdf".to_string()),
-                    (
-                        header::CONTENT_DISPOSITION.as_str(),
-                        "attachment; filename=\"laporan-ppm-afm.pdf\"".to_string(),
-                    ),
-                ],
-                bytes,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "xlsx",
+                b,
             )
-                .into_response()
+        })),
+        _ => None,
+    })
+    .await;
+
+    let (content_type, ext, bytes) = match rendered {
+        Ok(Some(Ok(v))) => v,
+        Ok(None) => return StatusCode::BAD_REQUEST.into_response(),
+        Ok(Some(Err(e))) => {
+            tracing::error!("render laporan gagal: {e}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-        "xlsx" => match render_xlsx(&doc) {
-            Ok(bytes) => (
-                StatusCode::OK,
-                [
-                    (
-                        header::CONTENT_TYPE.as_str(),
-                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".to_string(),
-                    ),
-                    (
-                        header::CONTENT_DISPOSITION.as_str(),
-                        "attachment; filename=\"laporan-ppm-afm.xlsx\"".to_string(),
-                    ),
-                ],
-                bytes,
-            )
-                .into_response(),
-            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        },
-        _ => StatusCode::BAD_REQUEST.into_response(),
-    }
+        // JoinError = task panik. Dulu panik di dalam render menjatuhkan seluruh
+        // request tanpa jejak; sekarang tercatat dan terbalas 500 yang rapi.
+        Err(e) => {
+            tracing::error!("task render laporan panik: {e}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE.as_str(), content_type.to_string()),
+            (
+                header::CONTENT_DISPOSITION.as_str(),
+                format!("attachment; filename=\"laporan-ppm-afm.{ext}\""),
+            ),
+        ],
+        bytes,
+    )
+        .into_response()
 }

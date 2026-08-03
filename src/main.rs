@@ -14,6 +14,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use std::sync::Arc;
 
 use anyhow::Result;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -319,10 +320,21 @@ async fn main() -> Result<()> {
         .route("/api/rfid/gate", post(ppm::device_api::rfid_gate))
         .layer(axum::Extension(state.clone()));
 
+    // ── Batas ukuran body per rute ───────────────────────────────────────────
+    // WAJIB DISETEL EKSPLISIT: tanpa layer ini berlaku bawaan axum, yaitu 2 MB —
+    // jauh di bawah batas yang divalidasi (dan dijanjikan ke pengguna) di dalam
+    // handler. Angkanya ada di web::limits, satu tempat bersama handler-nya,
+    // supaya keduanya tak bisa diam-diam berbeda lagi.
+    use ppm::web::limits;
+
     // ── Siaran suara sesi (chunked HTTP; file = rekaman) ─────────────────────
     use ppm::web::live_audio;
     let live_audio_routes: axum::Router = axum::Router::new()
-        .route("/api/live-audio/{id}/chunk", post(live_audio::post_chunk))
+        .route(
+            "/api/live-audio/{id}/chunk",
+            post(live_audio::post_chunk)
+                .layer(DefaultBodyLimit::max(limits::body_limit(limits::AUDIO_CHUNK_MAX))),
+        )
         .route("/api/live-audio/{id}/data", get(live_audio::get_data))
         .route("/api/live-audio/{id}/download", get(live_audio::download))
         .route("/api/live-events/{id}", get(ppm::web::live_events::events))
@@ -330,13 +342,26 @@ async fn main() -> Result<()> {
 
     // ── Upload file Materials Library (multipart, di luar server-fn) ─────────
     let materials_routes: axum::Router = axum::Router::new()
-        .route("/api/materials/upload", post(ppm::web::materials::upload))
+        .route(
+            "/api/materials/upload",
+            post(ppm::web::materials::upload)
+                .layer(DefaultBodyLimit::max(limits::body_limit(limits::MATERIAL_MAX))),
+        )
         .route(
             "/api/activity-photos/upload",
-            post(ppm::web::activity_photos::upload),
+            post(ppm::web::activity_photos::upload)
+                .layer(DefaultBodyLimit::max(limits::body_limit(limits::IMAGE_MAX))),
         )
-        .route("/api/guestbook", post(ppm::web::guestbook::checkin))
-        .route("/api/bills/proof", post(ppm::web::bills::upload_proof))
+        .route(
+            "/api/guestbook",
+            post(ppm::web::guestbook::checkin)
+                .layer(DefaultBodyLimit::max(limits::body_limit(limits::IMAGE_MAX))),
+        )
+        .route(
+            "/api/bills/proof",
+            post(ppm::web::bills::upload_proof)
+                .layer(DefaultBodyLimit::max(limits::body_limit(limits::IMAGE_MAX))),
+        )
         .layer(axum::Extension(state.clone()));
 
     // ── Unduh laporan PDF/Excel (biner, di luar server-fn) ───────────────────
@@ -352,7 +377,21 @@ async fn main() -> Result<()> {
         .merge(export_routes)
         .merge(static_routes)
         .merge(leptos_router)
-        .layer(tower_http::compression::CompressionLayer::new());
+        .layer(tower_http::compression::CompressionLayer::new())
+        // Log akses. Fitur `trace` tower-http sudah ikut ter-compile sejak awal
+        // tapi tak pernah dipasang — biayanya dibayar tanpa manfaat. Level DEBUG
+        // untuk request (tak membanjiri log produksi; EnvFilter default `ppm=info`
+        // menyembunyikannya) dan respons diringkas pada level INFO hanya bila
+        // lambat/gagal, lewat filter bawaan tower-http.
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(
+                    tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::DEBUG),
+                )
+                .on_response(
+                    tower_http::trace::DefaultOnResponse::new().level(tracing::Level::DEBUG),
+                ),
+        );
 
     let listener = TcpListener::bind(socket_addr).await?;
     tracing::info!("ppm (SSR) listening on http://{}", bind_addr);

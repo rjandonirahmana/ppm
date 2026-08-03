@@ -3,7 +3,7 @@
 //! (sudah lengkap: kehadiran, tren, ranking kelas) — di sini hanya menambah
 //! ranking hafalan "Santri Teladan".
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use chrono::Datelike;
 use deadpool_postgres::Pool;
 
@@ -153,12 +153,12 @@ pub async fn laporan_ortu(pool: &Pool, parent_id: i64, child_id: Option<i64>) ->
         conns.iter().filter(|c| c.status == "connected").map(|c| c.student_id).collect();
     let target = match child_id {
         Some(id) if connected.contains(&id) => id,
-        Some(_) => bail!("forbidden"),
+        Some(_) => bail_user!("forbidden"),
         None => *connected.first().ok_or_else(|| anyhow::anyhow!("Belum ada anak terhubung."))?,
     };
 
     let Some(info) = repo::child_info(pool, target).await? else {
-        bail!("Santri tidak ditemukan.");
+        bail_user!("Santri tidak ditemukan.");
     };
     let (since, _label) = super::santri::current_semester(pool).await?;
     let (stats, points, hafalan, juz, gate, home) = tokio::join!(

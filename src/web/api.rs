@@ -106,13 +106,21 @@ mod ssr_helpers {
     }
 
     /// Map error service → ServerFnError. SEKALIGUS kirim alert Telegram
-    /// (service::telegram, no-op bila tak dikonfigurasi) untuk SEMUA error API,
-    /// KECUALI error rutin klien (unauth/forbidden) agar tak spam brute-force.
-    pub fn err<E: std::fmt::Display>(e: E) -> ServerFnError {
+    /// (service::telegram, no-op bila tak dikonfigurasi) untuk galat yang benar-
+    /// benar menandakan SERVER bermasalah.
+    ///
+    /// TIDAK dialarmkan:
+    ///   • `UserError` (dari `bail_user!`) — validasi/aturan bisnis yang ditolak.
+    ///   • unauth/forbidden/session_expired — peristiwa sesi yang rutin, dan
+    ///     mengalarmkannya justru memberi penyerang cara membanjiri admin.
+    /// Pesan yang sampai ke pengguna sama persis di kedua kasus; yang berbeda
+    /// hanya apakah admin dibangunkan.
+    pub fn err<E: Into<anyhow::Error>>(e: E) -> ServerFnError {
+        let e: anyhow::Error = e.into();
+        let by_user = e.downcast_ref::<crate::service::UserError>().is_some();
         let msg = e.to_string();
         let low = msg.to_ascii_lowercase();
-        // Sesi habis/tak sah bukan galat server — jangan spam alarm Telegram.
-        if !crate::web::components::is_auth_error(&low) {
+        if !by_user && !crate::web::components::is_auth_error(&low) {
             crate::service::telegram::report_error(500, "ServerFn", msg.clone());
         }
         ServerFnError::new(msg)
@@ -128,7 +136,8 @@ use ssr_helpers::*;
 #[server(LoginAction, "/api-fn")]
 pub async fn login_action(login: String, password: String) -> Result<String, ServerFnError> {
     let state = app_state().await?;
-    let ok = crate::service::auth::login(&state.pool, &state.jwt, &login, &password)
+    let mut redis = state.redis.clone();
+    let ok = crate::service::auth::login(&state.pool, &mut redis, &state.jwt, &login, &password)
         .await
         .map_err(err)?;
     set_auth_cookie(&ok.token);
@@ -1471,6 +1480,24 @@ pub async fn student_book_progress_data(
     crate::service::books::student_progress(&state.pool, user_id)
         .await
         .map_err(err)
+}
+
+/// Progres satu santri dilihat oleh PENGGUNA LAIN (orang tua terhubung /
+/// staf / guru / santri sendiri). Authorization di service, bukan hanya role.
+#[server(GetStudentBookProgressForViewer, "/api-fn")]
+pub async fn student_book_progress_for_viewer(
+    user_id: i64,
+) -> Result<Vec<crate::models::BookProgressItem>, ServerFnError> {
+    let sess = require_session().await?;
+    let state = app_state().await?;
+    crate::service::books::student_progress_for_viewer(
+        &state.pool,
+        sess.id,
+        &sess.role,
+        user_id,
+    )
+    .await
+    .map_err(err)
 }
 
 /// Simpan progres per-unit satu santri pada satu materi (peta unit→status JSON,

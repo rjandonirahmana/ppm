@@ -8,7 +8,7 @@
 //!      `mark_done` set `tamu:done:{kode}` (TTL 10 mnt) untuk polling HP.
 //!   3. Halaman /tamu polling `check_status` → tampil ✅ + wajah saat done.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use rand::RngExt;
 use redis::{aio::ConnectionManager, AsyncCommands};
 use serde::{Deserialize, Serialize};
@@ -48,7 +48,7 @@ pub async fn register_guest(
     let name = name.trim();
     let phone = phone.trim();
     if name.is_empty() || phone.len() < 6 {
-        bail!("Nama dan nomor HP wajib diisi dengan benar.");
+        bail_user!("Nama dan nomor HP wajib diisi dengan benar.");
     }
     let g = PendingGuest {
         name: name.to_string(),
@@ -65,7 +65,7 @@ pub async fn register_guest(
         let _: () = redis.set_ex(code_key(&code), &json, CODE_TTL).await?;
         return Ok(code);
     }
-    bail!("Gagal membuat kode unik, coba lagi.");
+    bail_user!("Gagal membuat kode unik, coba lagi.");
 }
 
 /// Cari kode → data tamu, lalu HAPUS kode (sekali pakai). None = tak ada/kadaluarsa.

@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use deadpool_postgres::Pool;
 
 use super::fmt::{fmt_range, fmt_when};
@@ -90,7 +90,7 @@ pub async fn is_two_stage(pool: &Pool) -> bool {
 /// Ubah mode persetujuan izin (admin). Validasi nilai.
 pub async fn set_approval_mode(pool: &Pool, mode: &str) -> Result<()> {
     if !matches!(mode, "two_stage" | "direct_guru") {
-        bail!("Mode persetujuan tidak valid.");
+        bail_user!("Mode persetujuan tidak valid.");
     }
     repo::set_setting(pool, PERMIT_MODE_KEY, mode).await
 }
@@ -171,7 +171,7 @@ pub async fn decide_permit(
         repo::decide_guru_permit(pool, permit_id, approve, wali_id, default_require, staff_id).await?
     };
     if !ok {
-        bail!("Izin tidak ditemukan, sudah diproses, atau di luar wewenang Anda.");
+        bail_user!("Izin tidak ditemukan, sudah diproses, atau di luar wewenang Anda.");
     }
 
     // Izin yang LOLOS TAHAP AKHIR diwujudkan jadi baris absensi 'permit'/'sick'.

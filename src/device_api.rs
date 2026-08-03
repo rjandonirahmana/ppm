@@ -45,8 +45,16 @@ pub async fn rfid_scan(
         Err(ScanError::BadApiKey) => fail(StatusCode::UNAUTHORIZED, "api_key tidak dikenal"),
         Err(ScanError::UnknownCard) => fail(StatusCode::NOT_FOUND, "kartu tidak terdaftar"),
         Err(ScanError::Db(e)) => {
+            // Sebab teknisnya masuk log + alarm admin, TIDAK dikirim ke perangkat:
+            // pesan galat Postgres bisa memuat nama tabel/kolom dan potongan
+            // query, sedangkan endpoint ini terbuka di jaringan pondok dan hanya
+            // dijaga api_key. Layar scanner pun cuma perlu tahu "coba lagi".
+            tracing::error!("RFID scan gagal: {e}");
             crate::service::telegram::report_error(500, "RFID scan", e.to_string());
-            fail(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            fail(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Sistem sedang bermasalah, coba lagi",
+            )
         }
     }
 }
@@ -61,8 +69,13 @@ pub async fn rfid_gate(
         Err(ScanError::BadApiKey) => fail_gate(StatusCode::UNAUTHORIZED, "api_key tidak dikenal"),
         Err(ScanError::UnknownCard) => fail_gate(StatusCode::NOT_FOUND, "kartu tidak terdaftar"),
         Err(ScanError::Db(e)) => {
+            // Sama seperti rfid_scan: sebab teknis hanya untuk log/admin.
+            tracing::error!("RFID gate gagal: {e}");
             crate::service::telegram::report_error(500, "RFID gate", e.to_string());
-            fail_gate(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            fail_gate(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Sistem sedang bermasalah, coba lagi",
+            )
         }
     }
 }

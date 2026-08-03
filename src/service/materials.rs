@@ -4,7 +4,7 @@
 //! memanggil `repository::materials` langsung setelah upload ke RustFS —
 //! pola sama `web/live_audio.rs`.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use deadpool_postgres::Pool;
 
 use super::fmt::wib;
@@ -51,18 +51,18 @@ pub async fn list_materials(pool: &Pool, limit: i64) -> Result<Vec<MaterialItem>
 pub async fn add_link(pool: &Pool, uploaded_by: i64, title: &str, url: &str) -> Result<i64> {
     let title = title.trim();
     if title.is_empty() {
-        bail!("Judul materi wajib diisi.");
+        bail_user!("Judul materi wajib diisi.");
     }
     let url = url.trim();
     if !(url.starts_with("http://") || url.starts_with("https://")) {
-        bail!("Tautan harus diawali http:// atau https://");
+        bail_user!("Tautan harus diawali http:// atau https://");
     }
     repo::insert_material(pool, None, uploaded_by, title, "link", url, None, None).await
 }
 
 pub async fn delete_material(pool: &Pool, id: i64) -> Result<()> {
     if !repo::delete_material(pool, id).await? {
-        bail!("Materi tidak ditemukan.");
+        bail_user!("Materi tidak ditemukan.");
     }
     Ok(())
 }

@@ -2,7 +2,7 @@
 //! user + statistik, aktif/nonaktifkan akun, ganti peran — semua aksi tercatat
 //! ke activity_logs.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use deadpool_postgres::Pool;
 
 use super::fmt::fmt_ago;
@@ -62,7 +62,7 @@ fn norm_category(c: &str) -> Result<String> {
         return Ok("custom".to_string());
     }
     if !crate::models::DEVICE_CATEGORIES.iter().any(|(v, _)| *v == c) {
-        bail!("Kategori perangkat tidak dikenal.");
+        bail_user!("Kategori perangkat tidak dikenal.");
     }
     Ok(c.to_string())
 }
@@ -95,7 +95,7 @@ pub async fn create_rfid_device(
 ) -> Result<(i64, String)> {
     let name = device_name.trim();
     if name.is_empty() {
-        bail!("Nama perangkat/ruang wajib diisi.");
+        bail_user!("Nama perangkat/ruang wajib diisi.");
     }
     let serial = serial_number.trim();
     let loc = location.trim();
@@ -127,7 +127,7 @@ pub async fn update_rfid_device(
 ) -> Result<()> {
     let name = device_name.trim();
     if name.is_empty() {
-        bail!("Nama perangkat/ruang wajib diisi.");
+        bail_user!("Nama perangkat/ruang wajib diisi.");
     }
     let serial = serial_number.trim();
     let loc = location.trim();
@@ -142,7 +142,7 @@ pub async fn update_rfid_device(
     )
     .await?
     {
-        bail!("Perangkat tidak ditemukan.");
+        bail_user!("Perangkat tidak ditemukan.");
     }
     Ok(())
 }
@@ -151,14 +151,14 @@ pub async fn update_rfid_device(
 pub async fn regenerate_rfid_key(pool: &Pool, id: i64) -> Result<String> {
     let key = gen_api_key();
     if !repo::set_api_key(pool, id, &key).await? {
-        bail!("Perangkat tidak ditemukan.");
+        bail_user!("Perangkat tidak ditemukan.");
     }
     Ok(key)
 }
 
 pub async fn delete_rfid_device(pool: &Pool, id: i64) -> Result<()> {
     if !repo::delete_device(pool, id).await? {
-        bail!("Perangkat tidak ditemukan.");
+        bail_user!("Perangkat tidak ditemukan.");
     }
     Ok(())
 }
@@ -228,10 +228,10 @@ pub async fn recent_activity(pool: &Pool, limit: i64) -> Result<Vec<ActivityLogI
 
 pub async fn toggle_active(pool: &Pool, actor_id: i64, target_id: i64, active: bool) -> Result<()> {
     if actor_id == target_id {
-        bail!("Tidak bisa mengubah status akun sendiri.");
+        bail_user!("Tidak bisa mengubah status akun sendiri.");
     }
     if !repo::set_active(pool, target_id, active).await? {
-        bail!("Pengguna tidak ditemukan.");
+        bail_user!("Pengguna tidak ditemukan.");
     }
     let action = if active { "user.activate" } else { "user.deactivate" };
     let _ = repo::insert_log(pool, actor_id, Some(target_id), action, None).await;
@@ -240,10 +240,10 @@ pub async fn toggle_active(pool: &Pool, actor_id: i64, target_id: i64, active: b
 
 pub async fn change_role(pool: &Pool, actor_id: i64, target_id: i64, new_role: &str) -> Result<()> {
     if actor_id == target_id {
-        bail!("Tidak bisa mengubah peran akun sendiri.");
+        bail_user!("Tidak bisa mengubah peran akun sendiri.");
     }
     if !repo::set_role(pool, target_id, new_role).await? {
-        bail!("Peran tidak valid atau pengguna tidak ditemukan.");
+        bail_user!("Peran tidak valid atau pengguna tidak ditemukan.");
     }
     let detail = format!("Peran baru: {}", role_label(new_role));
     let _ = repo::insert_log(pool, actor_id, Some(target_id), "user.role_change", Some(&detail)).await;

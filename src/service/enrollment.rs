@@ -18,7 +18,7 @@
 //! otomatis berarti tak ada sampah yang perlu dibersihkan, dan kartu asing
 //! milik orang lewat (kartu KRL, kartu kantor) hilang sendiri.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use redis::{aio::ConnectionManager, AsyncCommands};
 use serde::{Deserialize, Serialize};
 
@@ -116,11 +116,11 @@ pub async fn assign_card(
     actor_id: i64,
 ) -> Result<()> {
     if card <= 0 {
-        bail!("Nomor kartu tidak valid.");
+        bail_user!("Nomor kartu tidak valid.");
     }
     if let Some((owner_id, owner_name)) = repo::find_user_by_card(pool, card).await? {
         if owner_id != user_id {
-            bail!("Kartu ini sudah terpasang pada {owner_name}. Lepaskan dulu dari sana.");
+            bail_user!("Kartu ini sudah terpasang pada {owner_name}. Lepaskan dulu dari sana.");
         }
     }
     repo::set_rfid_card(pool, user_id, Some(card)).await?;

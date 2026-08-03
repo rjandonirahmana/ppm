@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use deadpool_postgres::Pool;
 use serde_json::Value;
 
@@ -81,7 +81,7 @@ fn parse_book_input(
 ) -> Result<(String, String, i32, Value)> {
     let title = title.trim();
     if title.is_empty() {
-        bail!("Judul materi wajib diisi.");
+        bail_user!("Judul materi wajib diisi.");
     }
     let category = if category == "quran" { "quran" } else { "hadist" };
     if category == "quran" {
@@ -92,7 +92,7 @@ fn parse_book_input(
             .filter(|s| !s.name.trim().is_empty() && s.ayat > 0)
             .collect();
         if surahs.is_empty() {
-            bail!("Tambahkan minimal satu surat (nama + jumlah ayat).");
+            bail_user!("Tambahkan minimal satu surat (nama + jumlah ayat).");
         }
         let total: i32 = surahs.iter().map(|s| s.ayat).sum();
         Ok((title.into(), "quran".into(), total, serde_json::to_value(&surahs)?))
@@ -102,7 +102,7 @@ fn parse_book_input(
             .parse()
             .map_err(|_| anyhow::anyhow!("Jumlah halaman harus berupa angka."))?;
         if pages <= 0 {
-            bail!("Jumlah halaman harus lebih dari 0.");
+            bail_user!("Jumlah halaman harus lebih dari 0.");
         }
         Ok((title.into(), "hadist".into(), pages, Value::Array(vec![])))
     }
@@ -132,14 +132,14 @@ pub async fn update_book(
 ) -> Result<()> {
     let (title, cat, total, surahs) = parse_book_input(title, category, pages, surahs_json)?;
     if !repo::update_book(pool, id, &title, &cat, total, &surahs).await? {
-        bail!("Materi tidak ditemukan.");
+        bail_user!("Materi tidak ditemukan.");
     }
     Ok(())
 }
 
 pub async fn delete_book(pool: &Pool, id: i64) -> Result<()> {
     if !repo::delete_book(pool, id).await? {
-        bail!("Materi tidak ditemukan.");
+        bail_user!("Materi tidak ditemukan.");
     }
     Ok(())
 }
@@ -158,6 +158,27 @@ pub async fn student_progress(pool: &Pool, user_id: i64) -> Result<Vec<BookProgr
             percentage: r.percentage,
         })
         .collect())
+}
+
+/// Progres materi satu santri DARI SUDUT PANDANG pengguna lain (orang tua /
+/// staf / guru). Authorization: admin/dewan/guru/pamong bebas; orang tua hanya
+/// anak yang terhubung; santri hanya dirinya sendiri.
+pub async fn student_progress_for_viewer(
+    pool: &Pool,
+    viewer_id: i64,
+    viewer_role: &str,
+    student_id: i64,
+) -> Result<Vec<BookProgressItem>> {
+    let allowed = match viewer_role {
+        "admin" | "ketua" | "dewan_guru" | "supervisor" | "teacher" => true,
+        "parent" => repo::is_connected(pool, viewer_id, student_id).await?,
+        "santri" | "santri_finance" => viewer_id == student_id,
+        _ => false,
+    };
+    if !allowed {
+        bail_user!("forbidden");
+    }
+    student_progress(pool, student_id).await
 }
 
 /// Audit akademik SEMUA santri — rata-rata persentase lintas materi.
@@ -186,7 +207,7 @@ pub async fn set_unit_status(
     unit_status_json: &str,
 ) -> Result<()> {
     let Some(book) = repo::get_book(pool, book_id).await? else {
-        bail!("Materi tidak ditemukan.");
+        bail_user!("Materi tidak ditemukan.");
     };
     let raw: Value = serde_json::from_str(unit_status_json.trim().is_empty().then_some("{}").unwrap_or(unit_status_json.trim()))
         .map_err(|_| anyhow::anyhow!("Data progres tidak valid."))?;
@@ -236,7 +257,7 @@ pub(crate) fn parse_page_ranges(text: &str, total_pages: i32) -> Result<Value> {
             }
         };
         if start < 1 || end > total_pages || start > end {
-            bail!("Rentang halaman \"{part}\" di luar batas (materi ini {total_pages} halaman/ayat).");
+            bail_user!("Rentang halaman \"{part}\" di luar batas (materi ini {total_pages} halaman/ayat).");
         }
         ranges.push(serde_json::json!([start, end]));
     }

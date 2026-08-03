@@ -1,7 +1,7 @@
 //! service/parent.rs — Logika sisi ORANG TUA: cari santri, koneksi (approval
 //! santri), pantauan banyak anak, izin & riwayat anak (dgn guard kepemilikan).
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use chrono::Utc;
 use deadpool_postgres::Pool;
 
@@ -35,10 +35,10 @@ pub async fn search_students(pool: &Pool, q: &str) -> Result<Vec<StudentSearchIt
 pub async fn request_connection(pool: &Pool, parent_id: i64, student_id: i64) -> Result<()> {
     // Pastikan target memang santri.
     if repo::child_info(pool, student_id).await?.is_none() {
-        bail!("Santri tidak ditemukan.");
+        bail_user!("Santri tidak ditemukan.");
     }
     if !repo::insert_connection(pool, parent_id, student_id).await? {
-        bail!("Permintaan sudah pernah dikirim ke santri ini.");
+        bail_user!("Permintaan sudah pernah dikirim ke santri ini.");
     }
     Ok(())
 }
@@ -158,10 +158,10 @@ pub async fn parent_home(pool: &Pool, parent_id: i64, child: Option<i64>) -> Res
 /// Riwayat kehadiran ANAK (guard: harus terhubung).
 pub async fn child_riwayat(pool: &Pool, parent_id: i64, child_id: i64) -> Result<ChildRiwayat> {
     if !repo::is_connected(pool, parent_id, child_id).await? {
-        bail!("forbidden");
+        bail_user!("forbidden");
     }
     let Some(info) = repo::child_info(pool, child_id).await? else {
-        bail!("Santri tidak ditemukan.");
+        bail_user!("Santri tidak ditemukan.");
     };
     let data = super::santri::riwayat(pool, child_id).await?;
     Ok(ChildRiwayat {
@@ -205,7 +205,7 @@ pub async fn submit_child_permit(
     reason: &str,
 ) -> Result<Vec<super::permits::PermitSplit>> {
     if !repo::is_connected(pool, parent_id, child_id).await? {
-        bail!("forbidden");
+        bail_user!("forbidden");
     }
     super::santri::submit_permit(pool, child_id, parent_id, kind, start, end, reason).await
 }

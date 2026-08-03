@@ -3,7 +3,7 @@
 //! jadwal (buat/ubah/hapus + generate sesi bulanan), tambah/keluarkan santri,
 //! serta payload halaman Students (daftar santri + antrean verifikasi per-peran).
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Utc};
 use deadpool_postgres::Pool;
 
@@ -88,7 +88,7 @@ pub async fn ensure_upcoming_all(pool: &Pool) -> Result<i64> {
 fn validate_end_date(ed: Option<NaiveDate>, today: NaiveDate) -> Result<()> {
     if let Some(end) = ed {
         if end <= today {
-            bail!(
+            bail_user!(
                 "Tanggal berakhir jadwal minimal BESOK. Hari ini mungkin ada sesi \
                  yang sudah berjalan — untuk membatalkannya, tandai sesi sebagai LIBUR."
             );
@@ -110,7 +110,7 @@ fn parse_point_magnitude(s: &str, field: &str) -> Result<Option<i16>> {
         .parse()
         .map_err(|_| anyhow::anyhow!("Poin {field} harus berupa angka positif (mis. 10)."))?;
     if !(0..=100).contains(&n) {
-        bail!("Poin {field} harus di antara 0 sampai 100 (tanpa minus).");
+        bail_user!("Poin {field} harus di antara 0 sampai 100 (tanpa minus).");
     }
     Ok(Some(n))
 }
@@ -226,7 +226,7 @@ pub async fn kelas_list(pool: &Pool, role: &str) -> Result<KelasData> {
 /// Detail satu kelas (anggota, jadwal, sesi, kategori, opsi form, statistik).
 pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<KelasDetail> {
     let Some(ci) = repo::class_info(pool, class_id).await? else {
-        bail!("Kelas tidak ditemukan.");
+        bail_user!("Kelas tidak ditemukan.");
     };
 
     // CATATAN PERF: materialisasi sesi (menulis) TIDAK lagi di sini — dulu tiap
@@ -430,7 +430,7 @@ pub async fn create_class(
 ) -> Result<i64> {
     let name = name.trim();
     if name.is_empty() {
-        bail!("Nama kelas wajib diisi.");
+        bail_user!("Nama kelas wajib diisi.");
     }
     repo::create_class(
         pool,
@@ -451,7 +451,7 @@ pub async fn update_class(
 ) -> Result<()> {
     let name = name.trim();
     if name.is_empty() {
-        bail!("Nama kelas wajib diisi.");
+        bail_user!("Nama kelas wajib diisi.");
     }
     if !repo::update_class(
         pool,
@@ -462,7 +462,7 @@ pub async fn update_class(
     )
     .await?
     {
-        bail!("Kelas tidak ditemukan.");
+        bail_user!("Kelas tidak ditemukan.");
     }
     Ok(())
 }
@@ -483,7 +483,7 @@ pub async fn set_class_staff(
     let wali = (wali_kelas_id > 0).then_some(wali_kelas_id);
     let pamong = (pamong_id > 0).then_some(pamong_id);
     if !repo::set_class_staff(pool, class_id, wali, pamong, require_pamong).await? {
-        bail!("Kelas tidak ditemukan.");
+        bail_user!("Kelas tidak ditemukan.");
     }
     Ok(())
 }
@@ -510,7 +510,7 @@ fn parse_schedule_fields(
     let st = parse_time(start_time, "jam mulai")?;
     let et = parse_time(end_time, "jam selesai")?;
     if et <= st {
-        bail!("Jam selesai harus setelah jam mulai.");
+        bail_user!("Jam selesai harus setelah jam mulai.");
     }
     let lt = if limit_time.trim().is_empty() {
         st
@@ -558,7 +558,7 @@ pub async fn create_schedule(
     // diturunkan dari min/max tanggal, bukan dari form.
     let custom = if recurrence == "custom" { parse_custom_dates(custom_dates)? } else { Vec::new() };
     if recurrence == "custom" && custom.is_empty() {
-        bail!("Pilih minimal satu tanggal untuk jadwal tanggal-tertentu.");
+        bail_user!("Pilih minimal satu tanggal untuk jadwal tanggal-tertentu.");
     }
     let (sd_str, ed_str) = if recurrence == "custom" {
         (
@@ -586,7 +586,7 @@ pub async fn create_schedule(
     // TIDAK AKAN PERNAH bisa diabsen (tap di gerbang cuma toggle keluar/masuk).
     if let Some(rid) = room {
         if repo::is_gate_device(pool, rid).await? {
-            bail!(
+            bail_user!(
                 "Gerbang utama tidak bisa dipakai sebagai ruang kelas — tap di sana \
                  hanya menandai keluar/masuk pondok, bukan kehadiran kelas. \
                  Kosongkan ruang bila kelas ini boleh diabsen di mana saja."
@@ -635,7 +635,7 @@ pub async fn update_schedule(
     let today = Utc::now().with_timezone(&wib()).date_naive();
     let custom = if recurrence == "custom" { parse_custom_dates(custom_dates)? } else { Vec::new() };
     if recurrence == "custom" && custom.is_empty() {
-        bail!("Pilih minimal satu tanggal untuk jadwal tanggal-tertentu.");
+        bail_user!("Pilih minimal satu tanggal untuk jadwal tanggal-tertentu.");
     }
     let (sd_str, ed_str) = if recurrence == "custom" {
         (
@@ -663,7 +663,7 @@ pub async fn update_schedule(
     // TIDAK AKAN PERNAH bisa diabsen (tap di gerbang cuma toggle keluar/masuk).
     if let Some(rid) = room {
         if repo::is_gate_device(pool, rid).await? {
-            bail!(
+            bail_user!(
                 "Gerbang utama tidak bisa dipakai sebagai ruang kelas — tap di sana \
                  hanya menandai keluar/masuk pondok, bukan kehadiran kelas. \
                  Kosongkan ruang bila kelas ini boleh diabsen di mana saja."
@@ -677,7 +677,7 @@ pub async fn update_schedule(
     )
     .await?
     {
-        bail!("Jadwal tidak ditemukan.");
+        bail_user!("Jadwal tidak ditemukan.");
     }
 
     // Sinkronkan SESI MENDATANG: hapus sesi mendatang yang kini DI LUAR
@@ -708,7 +708,7 @@ pub async fn update_schedule(
 pub async fn delete_schedule(pool: &Pool, schedule_id: i64) -> Result<()> {
     let today = Utc::now().with_timezone(&wib()).date_naive();
     if !repo::delete_schedule(pool, schedule_id, today).await? {
-        bail!("Jadwal tidak ditemukan.");
+        bail_user!("Jadwal tidak ditemukan.");
     }
     Ok(())
 }
@@ -722,14 +722,14 @@ pub async fn generate_month_sessions(
     month: u32,
 ) -> Result<i64> {
     if !(1..=12).contains(&month) {
-        bail!("Bulan tidak valid.");
+        bail_user!("Bulan tidak valid.");
     }
     let Some((class_id, title, rec, start_date)) = repo::schedule_info(pool, schedule_id).await?
     else {
-        bail!("Jadwal tidak ditemukan.");
+        bail_user!("Jadwal tidak ditemukan.");
     };
     let Some(first) = NaiveDate::from_ymd_opt(year, month, 1) else {
-        bail!("Bulan/tahun tidak valid.");
+        bail_user!("Bulan/tahun tidak valid.");
     };
     // Akhir bulan = sehari sebelum tanggal 1 bulan berikutnya.
     let (ny, nm) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
@@ -778,7 +778,7 @@ async fn book_pages_value(
     match book_id {
         Some(id) => {
             let Some(book) = repo::get_book(pool, id).await? else {
-                bail!("Buku tidak ditemukan.");
+                bail_user!("Buku tidak ditemukan.");
             };
             super::books::parse_page_ranges(pages_text, book.total_pages)
         }
@@ -797,7 +797,7 @@ pub async fn set_session_book(
     let book = Some(book_id).filter(|v| *v > 0);
     let pages = book_pages_value(pool, book, book_pages_text).await?;
     if !repo::set_session_book(pool, session_id, book, &pages).await? {
-        bail!("Sesi tidak ditemukan.");
+        bail_user!("Sesi tidak ditemukan.");
     }
     Ok(())
 }
@@ -812,7 +812,7 @@ pub async fn set_session_target(
     let book = Some(book_id).filter(|v| *v > 0);
     let pages = book_pages_value(pool, book, pages_text).await?;
     if !repo::set_session_target(pool, session_id, book, &pages).await? {
-        bail!("Sesi tidak ditemukan.");
+        bail_user!("Sesi tidak ditemukan.");
     }
     Ok(())
 }
@@ -821,20 +821,20 @@ pub async fn set_session_target(
 pub async fn set_session_actual_detail(pool: &Pool, session_id: i64, detail: &str) -> Result<()> {
     let d = detail.trim();
     if d.chars().count() > 500 {
-        bail!("Catatan maksimal 500 karakter.");
+        bail_user!("Catatan maksimal 500 karakter.");
     }
     if !repo::set_session_actual_detail(pool, session_id, d).await? {
-        bail!("Sesi tidak ditemukan.");
+        bail_user!("Sesi tidak ditemukan.");
     }
     Ok(())
 }
 
 pub async fn add_member(pool: &Pool, class_id: i64, schedule_id: i64, student_id: i64) -> Result<()> {
     if schedule_id <= 0 {
-        bail!("Pilih jadwal untuk menempatkan santri.");
+        bail_user!("Pilih jadwal untuk menempatkan santri.");
     }
     if !repo::add_member(pool, class_id, schedule_id, student_id).await? {
-        bail!("Santri sudah terdaftar pada jadwal ini.");
+        bail_user!("Santri sudah terdaftar pada jadwal ini.");
     }
     Ok(())
 }
@@ -847,18 +847,18 @@ pub async fn add_members(
     student_ids: Vec<i64>,
 ) -> Result<i64> {
     if schedule_id <= 0 {
-        bail!("Pilih jadwal untuk menempatkan santri.");
+        bail_user!("Pilih jadwal untuk menempatkan santri.");
     }
     let ids: Vec<i64> = student_ids.into_iter().filter(|&x| x > 0).collect();
     if ids.is_empty() {
-        bail!("Pilih minimal satu santri.");
+        bail_user!("Pilih minimal satu santri.");
     }
     repo::add_members(pool, class_id, schedule_id, &ids).await
 }
 
 pub async fn remove_member(pool: &Pool, class_id: i64, student_id: i64) -> Result<()> {
     if !repo::remove_member(pool, class_id, student_id).await? {
-        bail!("Santri tidak ada di kelas ini.");
+        bail_user!("Santri tidak ada di kelas ini.");
     }
     Ok(())
 }
@@ -883,7 +883,7 @@ pub async fn search_students(pool: &Pool, q: &str, class_id: i64) -> Result<Vec<
 pub async fn set_session_teacher(pool: &Pool, session_id: i64, teacher_id: i64) -> Result<()> {
     let tid = (teacher_id > 0).then_some(teacher_id);
     if !repo::set_session_teacher(pool, session_id, tid).await? {
-        bail!("Sesi tidak ditemukan.");
+        bail_user!("Sesi tidak ditemukan.");
     }
     Ok(())
 }
@@ -892,7 +892,7 @@ pub async fn set_session_teacher(pool: &Pool, session_id: i64, teacher_id: i64) 
 pub async fn set_session_pamong(pool: &Pool, session_id: i64, pamong_id: i64) -> Result<()> {
     let pid = (pamong_id > 0).then_some(pamong_id);
     if !repo::set_session_pamong(pool, session_id, pid).await? {
-        bail!("Sesi tidak ditemukan.");
+        bail_user!("Sesi tidak ditemukan.");
     }
     Ok(())
 }
@@ -901,7 +901,7 @@ pub async fn set_session_pamong(pool: &Pool, session_id: i64, pamong_id: i64) ->
 pub async fn set_session_libur(pool: &Pool, session_id: i64, libur: bool) -> Result<()> {
     let status = if libur { "cancelled" } else { "scheduled" };
     if !repo::set_session_status(pool, session_id, status).await? {
-        bail!("Sesi tidak ditemukan.");
+        bail_user!("Sesi tidak ditemukan.");
     }
     Ok(())
 }
@@ -994,7 +994,7 @@ fn parse_progress(s: &str) -> Result<i16> {
     }
     let n: i16 = s.parse().map_err(|_| anyhow::anyhow!("Progres harus berupa angka 0-100."))?;
     if !(0..=100).contains(&n) {
-        bail!("Progres harus di antara 0 sampai 100.");
+        bail_user!("Progres harus di antara 0 sampai 100.");
     }
     Ok(n)
 }
@@ -1013,7 +1013,7 @@ pub async fn create_curriculum(
 ) -> Result<i64> {
     let title = title.trim();
     if title.is_empty() {
-        bail!("Judul materi/kitab wajib diisi.");
+        bail_user!("Judul materi/kitab wajib diisi.");
     }
     let pct = parse_progress(progress_pct)?;
     repo::create_curriculum(
@@ -1044,7 +1044,7 @@ pub async fn update_curriculum(
 ) -> Result<()> {
     let title = title.trim();
     if title.is_empty() {
-        bail!("Judul materi/kitab wajib diisi.");
+        bail_user!("Judul materi/kitab wajib diisi.");
     }
     let pct = parse_progress(progress_pct)?;
     if !repo::update_curriculum(
@@ -1060,14 +1060,14 @@ pub async fn update_curriculum(
     )
     .await?
     {
-        bail!("Materi kurikulum tidak ditemukan.");
+        bail_user!("Materi kurikulum tidak ditemukan.");
     }
     Ok(())
 }
 
 pub async fn delete_curriculum(pool: &Pool, id: i64) -> Result<()> {
     if !repo::delete_curriculum(pool, id).await? {
-        bail!("Materi kurikulum tidak ditemukan.");
+        bail_user!("Materi kurikulum tidak ditemukan.");
     }
     Ok(())
 }
