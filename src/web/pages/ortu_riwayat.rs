@@ -223,7 +223,7 @@ fn RiwayatList(items: Vec<RiwayatItem>) -> impl IntoView {
                         </span>
                         <h3 class="text-body-lg font-bold text-on-background">{m}</h3>
                     </div>
-                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                    <div class="ppm-card-grid">
                         {items
                             .into_iter()
                             .map(|it| {

@@ -84,7 +84,7 @@ pub(super) fn JadwalTab(
                     .into_any()
             } else {
                 view! {
-                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                    <div class="ppm-card-grid">
                         {schedules
                             .into_iter()
                             .map(|s| view! { <JadwalCard s=s room_options=room_opts book_options=book_opts refetch=refetch /> })

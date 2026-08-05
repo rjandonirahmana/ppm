@@ -105,7 +105,7 @@ pub(super) fn SantriTab(
                         .into_any();
                 }
                 view! {
-                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                    <div class="ppm-card-grid">
                         {list.into_iter()
                     .map(|m| {
                         let sid = m.id;

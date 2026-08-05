@@ -193,7 +193,7 @@ fn RiwayatContent(d: RiwayatData, l: LaporanSantriData, month_filter: RwSignal<S
                                 </span>
                                 <h3 class="text-body-lg font-bold text-on-background">{m}</h3>
                             </div>
-                            <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                            <div class="ppm-card-grid">
                                 {items.into_iter().map(|it| view! { <RiwayatCard it=it /> }).collect_view()}
                             </div>
                         </div>

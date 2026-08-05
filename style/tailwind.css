@@ -181,6 +181,26 @@ button:active{transform:scale(.96)}
   .ppm-scrim,.ppm-sheet{animation:none}
 }
 
+/* Daftar KARTU MANDIRI: satu kolom di ponsel, dua kolom di layar lebar.
+   `align-items:start` itu intinya — tanpa itu CSS Grid meregangkan setiap
+   kartu setinggi kartu TERTINGGI di barisnya, sehingga membuka satu kartu
+   (misal daftar santri atau form sunting) ikut menarik kartu di sebelahnya jadi
+   tinggi dengan ruang kosong di bawahnya. Kartu yang isinya berdiri sendiri
+   tak boleh saling menentukan tinggi.
+
+   Ditulis sebagai SATU kelas, bukan lima utility yang disalin ke tiap halaman:
+   sebelumnya idiom ini tersebar di belasan tempat dan `items-start`-nya
+   terlewat di semuanya. */
+.ppm-card-grid{display:flex;flex-direction:column;gap:.75rem}
+@media (min-width:768px){
+  .ppm-card-grid{
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:.75rem;
+    align-items:start;
+  }
+}
+
 /* Dek jadwal yang bisa digeser (beranda guru & pamong).
    Scroll-snap NATIVE, bukan animasi JS: geser jari di ponsel, trackpad dua jari
    di desktop, dan Shift+roda mouse semuanya langsung terasa berhenti pas di

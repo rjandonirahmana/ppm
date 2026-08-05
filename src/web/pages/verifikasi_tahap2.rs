@@ -123,7 +123,7 @@ pub fn VerifikasiTahap2Page() -> impl IntoView {
                                                     .into_any()
                                             } else {
                                                 view! {
-                                                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                                                    <div class="ppm-card-grid">
                                                         {d.pending
                                                             .into_iter()
                                                             .map(|p| {

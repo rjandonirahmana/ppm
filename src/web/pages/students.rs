@@ -520,7 +520,7 @@ fn VerifyPanel(
             } else {
                 // Desktop: antrean verifikasi 2 kolom (mockup dashboard pamong).
                 view! {
-                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                    <div class="ppm-card-grid">
                         {pending
                     .into_iter()
                     .map(|p| {

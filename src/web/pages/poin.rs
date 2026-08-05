@@ -109,7 +109,7 @@ fn PoinPageInner() -> impl IntoView {
                                                     </p>
                                                 </div>
                                             </div>
-                                            <div class="space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-2">
+                                            <div class="ppm-card-grid">
                                                 {if d.top.is_empty() {
                                                     view! {
                                                         <p class="text-body-sm text-on-surface-variant text-center py-6 md:col-span-2">

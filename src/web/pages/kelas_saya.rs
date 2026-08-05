@@ -71,7 +71,7 @@ pub fn KelasSayaPage() -> impl IntoView {
                                     }
                                     Ok(d) => {
                                         view! {
-                                            <div class="space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-4">
+                                            <div class="ppm-card-grid">
                                                 {d.items
                                                     .into_iter()
                                                     .map(|k| view! { <KelasCard k=k /> })

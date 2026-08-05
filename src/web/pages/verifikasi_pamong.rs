@@ -55,14 +55,21 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                 </header>
 
                 <div class="px-5 pt-5 space-y-5 stagger">
-                    // Pintasan Rekap Mingguan (pamong juga boleh — server izinkan).
-                    <a
-                        href="/rekap-mingguan"
-                        class="ppm-card p-3 flex items-center gap-2 press md:max-w-lg"
-                    >
-                        <span class="material-symbols-outlined text-primary">"summarize"</span>
-                        <span class="text-body-sm font-semibold text-on-background">"Rekap Mingguan"</span>
-                    </a>
+                    // Pintasan dikumpulkan SEBARIS di atas — sebelumnya "Rekap
+                    // Mingguan" di sini sementara "Kelas Saya" terselip jauh di
+                    // bawah, di tengah badan Suspense, sehingga dua tombol yang
+                    // sejenis terlihat berserak. Pola dua kolom ini sama dengan
+                    // beranda guru/dewan guru.
+                    <div class="grid grid-cols-2 gap-3 md:max-w-lg">
+                        <a href="/rekap-mingguan" class="ppm-card p-3 flex items-center gap-2 press">
+                            <span class="material-symbols-outlined text-primary">"summarize"</span>
+                            <span class="text-body-sm font-semibold text-on-background">"Rekap Mingguan"</span>
+                        </a>
+                        <a href="/kelas-saya" class="ppm-card p-3 flex items-center gap-2 press">
+                            <span class="material-symbols-outlined text-primary">"school"</span>
+                            <span class="text-body-sm font-semibold text-on-background">"Kelas Saya"</span>
+                        </a>
+                    </div>
                     <Suspense fallback=|| {
                         view! {
                             <div class="animate-pulse space-y-3">
@@ -135,25 +142,6 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                 </div>
                                             </div>
 
-                                            // Kelas yang DIDAMPINGI sendiri sebagai pamong.
-                                            <a
-                                                href="/kelas-saya"
-                                                class="ppm-card p-4 flex items-center justify-between card-hover press md:max-w-lg"
-                                            >
-                                                <div class="flex items-center gap-3">
-                                                    <span class="w-10 h-10 ppm-tile">
-                                                        <span class="material-symbols-outlined">"school"</span>
-                                                    </span>
-                                                    <div>
-                                                        <p class="text-body-md font-semibold text-on-background">"Kelas Saya"</p>
-                                                        <p class="text-body-sm text-on-surface-variant">
-                                                            "Kurikulum, materi berjalan & santri kelas dampinganmu"
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                                <span class="material-symbols-outlined text-on-surface-variant">"chevron_right"</span>
-                                            </a>
-
                                             // ── Jadwal berikutnya, bisa digeser ──
                                             <JadwalDeck sesi=d.today.clone() />
 
@@ -205,7 +193,7 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                             } else {
                                                 // Desktop: antrean 2 kolom (mockup dashboard pamong).
                                                 view! {
-                                                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                                                    <div class="ppm-card-grid">
                                                         {d.pending
                                                             .into_iter()
                                                             .map(|p| {
@@ -225,7 +213,7 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                             <h3 class="text-body-lg font-bold text-on-background mb-2">
                                                                 "Sesi Hari Ini"
                                                             </h3>
-                                                            <div class="space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-2">
+                                                            <div class="ppm-card-grid">
                                                                 {d.today
                                                                     .iter()
                                                                     .cloned()

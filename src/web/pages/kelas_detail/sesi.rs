@@ -53,7 +53,7 @@ pub(super) fn SesiTab(
                     .into_any()
             } else {
                 view! {
-                    <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                    <div class="ppm-card-grid">
                         {sessions
                             .into_iter()
                             .map(|s| view! { <SesiCard s=s teacher_options=teacher_opts pamong_options=pamong_opts refetch=refetch /> })

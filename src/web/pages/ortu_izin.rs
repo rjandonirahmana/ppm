@@ -259,7 +259,7 @@ pub fn OrtuIzinPage() -> impl IntoView {
                                             .into_any()
                                     } else {
                                         view! {
-                                            <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                                            <div class="ppm-card-grid">
                                                 {list
                                                     .into_iter()
                                                     .map(|p| view! { <PermitCard p=p /> })

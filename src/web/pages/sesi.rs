@@ -115,7 +115,7 @@ pub fn SesiContent() -> impl IntoView {
                                     </button>
                                 </div>
                                 // Desktop: kartu sesi 2 kolom.
-                                <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
+                                <div class="ppm-card-grid">
                                     {move || {
                                         let (up, past) = lists.get_value();
                                         let (items, empty) = if show_past.get() {
