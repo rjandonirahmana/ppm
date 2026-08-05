@@ -63,13 +63,13 @@ fn KurikulumCard(
     let msg = RwSignal::new(Option::<(bool, String)>::None);
 
     let editing = RwSignal::new(false);
-    let e_title = RwSignal::new(c.title.clone());
-    let e_desc = RwSignal::new(c.description.clone());
-    let e_start = RwSignal::new(c.scope_start.clone());
-    let e_end = RwSignal::new(c.scope_end.clone());
-    let e_pct = RwSignal::new(c.progress_pct.to_string());
-    let e_status = RwSignal::new(c.status.clone());
     let e_book = RwSignal::new(c.book_id);
+    let e_ss = RwSignal::new(c.start_surah);
+    let e_su = RwSignal::new(c.start_unit);
+    let e_es = RwSignal::new(c.end_surah);
+    let e_eu = RwSignal::new(c.end_unit);
+    let e_cs = RwSignal::new(c.current_surah);
+    let e_cu = RwSignal::new(c.current_unit);
 
     let save = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -78,17 +78,11 @@ fn KurikulumCard(
         }
         busy.set(true);
         msg.set(None);
-        let a = (
-            e_title.get_untracked(),
-            e_desc.get_untracked(),
-            e_start.get_untracked(),
-            e_end.get_untracked(),
-            e_pct.get_untracked(),
-            e_status.get_untracked(),
-            e_book.get_untracked(),
-        );
+        let a = e_book.get_untracked();
+        let p = (e_cs.get_untracked(), e_cu.get_untracked());
+        let r = (e_ss.get_untracked(), e_su.get_untracked(), e_es.get_untracked(), e_eu.get_untracked());
         leptos::task::spawn_local(async move {
-            match update_curriculum_action(cid, a.0, a.1, a.2, a.3, a.4, a.5, a.6).await {
+            match update_curriculum_action(cid, a, r.0, r.1, r.2, r.3, p.0, p.1).await {
                 Ok(_) => {
                     editing.set(false);
                     refetch();
@@ -118,18 +112,22 @@ fn KurikulumCard(
     let status_label = c.status_label.clone();
     let pct = c.progress_pct;
     let book_ro = c.book_title.clone();
-    let scope_label = if c.scope_start.is_empty() && c.scope_end.is_empty() {
-        String::new()
+    // Label rentang sudah disusun di server (mengikuti jenis materi, atau teks
+    // lama untuk baris yang belum tertaut) — di sini tinggal ditampilkan.
+    let scope_label = c.range_label.clone();
+    let belum_tertaut = c.book_id == 0;
+    let current_ro = c.current_label.clone();
+    // Bar hijau saat khatam — penanda visual bahwa statusnya "Selesai".
+    let bar_cls = if pct >= 100 {
+        "h-full bg-success bar-grow"
     } else {
-        format!("{} → {}", c.scope_start, c.scope_end)
+        "h-full bg-primary bar-grow"
     };
     let badge = match c.status.as_str() {
         "completed" => "ppm-chip bg-success/10 text-success",
         "upcoming" => "ppm-chip bg-surface-container-highest text-on-surface-variant",
         _ => "ppm-chip bg-primary/10 text-primary",
     };
-    let field =
-        "w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface";
 
     view! {
         <div class="ppm-card p-4 card-hover anim-in" style="border-left:4px solid #064e3b">
@@ -162,83 +160,27 @@ fn KurikulumCard(
                 if editing.get() {
                     view! {
                         <form class="mt-3 space-y-2 anim-in" method="post" on:submit=save>
-                            <input
-                                type="text"
-                                class=field
-                                placeholder="Judul materi/kitab"
-                                prop:value=move || e_title.get()
-                                on:input=move |ev| e_title.set(event_target_value(&ev))
+                            <PilihMateri
+                                books=book_options
+                                book=e_book
+                                on_ganti=move || {
+                                    e_ss.set(0);
+                                    e_su.set(0);
+                                    e_es.set(0);
+                                    e_eu.set(0);
+                                    e_cs.set(0);
+                                    e_cu.set(0);
+                                }
                             />
-                            <input
-                                type="text"
-                                class=field
-                                placeholder="Sub-judul/topik (opsional)"
-                                prop:value=move || e_desc.get()
-                                on:input=move |ev| e_desc.set(event_target_value(&ev))
+                            <RentangMateri
+                                books=book_options
+                                book=e_book
+                                s_surah=e_ss
+                                s_unit=e_su
+                                e_surah=e_es
+                                e_unit=e_eu
                             />
-                            <div class="grid grid-cols-2 gap-2">
-                                <input
-                                    type="text"
-                                    class=field
-                                    placeholder="Dari (mis. Al-Fatihah)"
-                                    prop:value=move || e_start.get()
-                                    on:input=move |ev| e_start.set(event_target_value(&ev))
-                                />
-                                <input
-                                    type="text"
-                                    class=field
-                                    placeholder="Sampai (mis. Juz 15)"
-                                    prop:value=move || e_end.get()
-                                    on:input=move |ev| e_end.set(event_target_value(&ev))
-                                />
-                            </div>
-                            <div class="grid grid-cols-2 gap-2">
-                                <label class="space-y-1">
-                                    <span class="text-[11px] text-on-surface-variant">"Progres (%)"</span>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        max="100"
-                                        class=field
-                                        prop:value=move || e_pct.get()
-                                        on:input=move |ev| e_pct.set(event_target_value(&ev))
-                                    />
-                                </label>
-                                <label class="space-y-1">
-                                    <span class="text-[11px] text-on-surface-variant">"Status"</span>
-                                    <select class=field on:change=move |ev| e_status.set(event_target_value(&ev))>
-                                        <option value="active" selected=move || e_status.get() == "active">"Berjalan"</option>
-                                        <option value="completed" selected=move || e_status.get() == "completed">"Selesai"</option>
-                                        <option value="upcoming" selected=move || e_status.get() == "upcoming">"Akan Datang"</option>
-                                    </select>
-                                </label>
-                            </div>
-                            <label class="space-y-1 block">
-                                <span class="text-[11px] text-on-surface-variant">
-                                    "Tautkan ke materi terdaftar (opsional)"
-                                </span>
-                                <select
-                                    class=field
-                                    on:change=move |ev| e_book.set(event_target_value(&ev).parse().unwrap_or(0))
-                                >
-                                    <option value="0" selected=move || e_book.get() == 0>
-                                        "— Tanpa tautan —"
-                                    </option>
-                                    {book_options
-                                        .get_value()
-                                        .into_iter()
-                                        .map(|b| {
-                                            let val = b.id.to_string();
-                                            let sel = move || e_book.get() == b.id;
-                                            view! {
-                                                <option value=val selected=sel>
-                                                    {b.title}
-                                                </option>
-                                            }
-                                        })
-                                        .collect_view()}
-                                </select>
-                            </label>
+                            <TitikMateri books=book_options book=e_book surah=e_cs unit=e_cu />
                             <div class="grid grid-cols-2 gap-2 pt-1">
                                 <button
                                     type="button"
@@ -279,19 +221,57 @@ fn KurikulumCard(
                                         </p>
                                     }
                                 })}
+                            // Baris warisan dari sebelum materi diwajibkan. Ditandai
+                            // supaya jelas ia perlu ditautkan, bukan dibiarkan diam.
+                            {belum_tertaut
+                                .then(|| {
+                                    view! {
+                                        <p class="text-[11px] text-warning flex items-center gap-1">
+                                            <span class="material-symbols-outlined text-[15px]">"link_off"</span>
+                                            "Belum tertaut materi — sunting untuk memilihnya."
+                                        </p>
+                                    }
+                                })}
                             {(!scope_label.is_empty())
                                 .then(|| {
                                     view! {
-                                        <p class="text-body-sm text-on-surface-variant">{scope_label.clone()}</p>
+                                        <p class="text-body-sm text-on-surface-variant flex items-center gap-1">
+                                            <span class="material-symbols-outlined text-[15px]">"straighten"</span>
+                                            {scope_label.clone()}
+                                        </p>
                                     }
                                 })}
-                            <div class="flex items-center justify-between text-xs font-semibold mt-2">
+                            // Posisi terakhir — inilah SATU-SATUNYA angka yang
+                            // diisi tangan; persen & status di bawah turunannya.
+                            {if current_ro.is_empty() {
+                                view! {
+                                    <p class="text-body-sm text-on-surface-variant flex items-center gap-1">
+                                        <span class="material-symbols-outlined text-[15px]">"more_horiz"</span>
+                                        "Belum mulai — isi posisi lewat tombol sunting."
+                                    </p>
+                                }
+                                    .into_any()
+                            } else {
+                                view! {
+                                    <p class="text-body-sm text-on-background font-semibold flex items-center gap-1">
+                                        <span class="material-symbols-outlined text-[15px] text-primary">
+                                            "trending_flat"
+                                        </span>
+                                        "Sudah sampai " {current_ro.clone()}
+                                    </p>
+                                }
+                                    .into_any()
+                            }}
+                            <div class="flex items-center justify-between text-xs font-semibold mt-2.5">
                                 <span class="text-on-surface-variant">"Progres"</span>
                                 <span class="text-on-background">{format!("{pct}%")}</span>
                             </div>
                             <div class="h-2 bg-surface-container rounded-full overflow-hidden mt-1">
-                                <div class="h-full bg-primary bar-grow" style=format!("width: {pct}%")></div>
+                                <div class=bar_cls style=format!("width: {pct}%")></div>
                             </div>
+                            <p class="text-[10px] text-on-surface-variant mt-1">
+                                "Persen & status dihitung otomatis dari posisi di atas."
+                            </p>
                         </div>
                     }
                         .into_any()
@@ -308,13 +288,13 @@ fn BuatKurikulumForm(
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
     let open = RwSignal::new(false);
-    let title = RwSignal::new(String::new());
-    let desc = RwSignal::new(String::new());
-    let scope_start = RwSignal::new(String::new());
-    let scope_end = RwSignal::new(String::new());
-    let pct = RwSignal::new(String::new());
-    let status = RwSignal::new("active".to_string());
     let book = RwSignal::new(0i64);
+    let ss = RwSignal::new(0i32);
+    let su = RwSignal::new(0i32);
+    let es = RwSignal::new(0i32);
+    let eu = RwSignal::new(0i32);
+    let cs = RwSignal::new(0i32);
+    let cu = RwSignal::new(0i32);
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
 
@@ -325,25 +305,18 @@ fn BuatKurikulumForm(
         }
         busy.set(true);
         msg.set(None);
-        let a = (
-            title.get_untracked(),
-            desc.get_untracked(),
-            scope_start.get_untracked(),
-            scope_end.get_untracked(),
-            pct.get_untracked(),
-            status.get_untracked(),
-            book.get_untracked(),
-        );
+        let a = book.get_untracked();
+        let p = (cs.get_untracked(), cu.get_untracked());
+        let r = (ss.get_untracked(), su.get_untracked(), es.get_untracked(), eu.get_untracked());
         leptos::task::spawn_local(async move {
-            match create_curriculum_action(class_id, a.0, a.1, a.2, a.3, a.4, a.5, a.6).await {
+            match create_curriculum_action(class_id, a, r.0, r.1, r.2, r.3, p.0, p.1).await {
                 Ok(_) => {
                     msg.set(Some((true, "Materi ditambahkan.".into())));
-                    title.set(String::new());
-                    desc.set(String::new());
-                    scope_start.set(String::new());
-                    scope_end.set(String::new());
-                    pct.set(String::new());
                     book.set(0);
+                    ss.set(0);
+                    su.set(0);
+                    es.set(0);
+                    eu.set(0);
                     refetch();
                 }
                 Err(e) => {
@@ -355,8 +328,6 @@ fn BuatKurikulumForm(
         });
     };
 
-    let field =
-        "w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface";
     view! {
         {move || {
             if !open.get() {
@@ -371,7 +342,6 @@ fn BuatKurikulumForm(
                 }
                     .into_any();
             }
-            let field = field;
             view! {
                 <form class="ppm-card p-4 space-y-3 anim-in" method="post" on:submit=submit>
                     <h3 class="text-body-md font-bold text-on-background">"Materi/Kitab Baru"</h3>
@@ -386,68 +356,30 @@ fn BuatKurikulumForm(
                                 view! { <div class=cls>{t}</div> }
                             })
                     }}
-                    <input
-                        type="text"
-                        class=field
-                        placeholder="Judul (mis. Al-Qur'an, Sahih Bukhari)"
-                        prop:value=move || title.get()
-                        on:input=move |ev| title.set(event_target_value(&ev))
+                    // Judul & keterangan TIDAK diketik di sini — semuanya ikut
+                    // dari materi yang dipilih (books), supaya tak ada dua
+                    // versi judul untuk kitab yang sama.
+                    <PilihMateri
+                        books=book_options
+                        book=book
+                        on_ganti=move || {
+                            ss.set(0);
+                            su.set(0);
+                            es.set(0);
+                            eu.set(0);
+                            cs.set(0);
+                            cu.set(0);
+                        }
                     />
-                    <input
-                        type="text"
-                        class=field
-                        placeholder="Sub-judul/topik (opsional)"
-                        prop:value=move || desc.get()
-                        on:input=move |ev| desc.set(event_target_value(&ev))
+                    <RentangMateri
+                        books=book_options
+                        book=book
+                        s_surah=ss
+                        s_unit=su
+                        e_surah=es
+                        e_unit=eu
                     />
-                    // Tautkan ke materi terdaftar (opsional) — konsisten dgn daftar materi.
-                    <label class="space-y-1 block">
-                        <span class="text-label-md text-on-surface-variant">
-                            "Tautkan ke materi terdaftar (opsional)"
-                        </span>
-                        <select
-                            class=field
-                            on:change=move |ev| book.set(event_target_value(&ev).parse().unwrap_or(0))
-                        >
-                            <option value="0">"— Tanpa tautan (judul manual) —"</option>
-                            {book_options
-                                .get_value()
-                                .into_iter()
-                                .map(|b| {
-                                    let val = b.id.to_string();
-                                    view! { <option value=val>{b.title}</option> }
-                                })
-                                .collect_view()}
-                        </select>
-                    </label>
-                    <div class="grid grid-cols-2 gap-2">
-                        <input
-                            type="text"
-                            class=field
-                            placeholder="Dari (mis. Al-Fatihah)"
-                            prop:value=move || scope_start.get()
-                            on:input=move |ev| scope_start.set(event_target_value(&ev))
-                        />
-                        <input
-                            type="text"
-                            class=field
-                            placeholder="Sampai (mis. Juz 15)"
-                            prop:value=move || scope_end.get()
-                            on:input=move |ev| scope_end.set(event_target_value(&ev))
-                        />
-                    </div>
-                    <label class="space-y-1 block">
-                        <span class="text-label-md text-on-surface-variant">"Progres awal (%)"</span>
-                        <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            class=field
-                            placeholder="0"
-                            prop:value=move || pct.get()
-                            on:input=move |ev| pct.set(event_target_value(&ev))
-                        />
-                    </label>
+                    <TitikMateri books=book_options book=book surah=cs unit=cu />
                     <div class="grid grid-cols-2 gap-3">
                         <button
                             type="button"
@@ -468,5 +400,239 @@ fn BuatKurikulumForm(
             }
                 .into_any()
         }}
+    }
+}
+
+// ── Bidang materi & rentang (migrasi 57) ─────────────────────────────────────
+
+const FIELD: &str =
+    "w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface";
+
+/// Pemilih materi terdaftar — WAJIB diisi untuk kurikulum baru.
+///
+/// Mengganti materi ikut MENGOSONGKAN rentangnya: angka halaman/ayat hanya
+/// bermakna terhadap materi tertentu, dan membiarkannya berpindah kitab berarti
+/// menyimpan rentang yang sudah pasti salah.
+#[component]
+pub(super) fn PilihMateri(
+    books: StoredValue<Vec<crate::models::BookItem>>,
+    book: RwSignal<i64>,
+    /// Dipanggil saat materi BERGANTI — pemanggil mengosongkan angka miliknya
+    /// sendiri. Lewat callback, bukan daftar sinyal tetap, karena tiap
+    /// pemanggil punya angka berbeda: kurikulum punya rentang + posisi,
+    /// jadwal tak punya angka sama sekali.
+    on_ganti: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
+    view! {
+        <label class="space-y-1 block">
+            <span class="text-[11px] text-on-surface-variant">"Materi terdaftar"</span>
+            <select
+                class=FIELD
+                on:change=move |ev| {
+                    let baru = event_target_value(&ev).parse().unwrap_or(0);
+                    if baru != book.get_untracked() {
+                        on_ganti();
+                    }
+                    book.set(baru);
+                }
+            >
+                <option value="0" selected=move || book.get() == 0>"— Pilih materi —"</option>
+                {books
+                    .get_value()
+                    .into_iter()
+                    .map(|b| {
+                        let id = b.id;
+                        let ket = if b.category == "quran" {
+                            format!("{} · {} surat", b.title, b.surahs.len())
+                        } else {
+                            format!("{} · {} halaman", b.title, b.total_pages)
+                        };
+                        view! {
+                            <option value=id.to_string() selected=move || book.get() == id>
+                                {ket}
+                            </option>
+                        }
+                    })
+                    .collect_view()}
+            </select>
+        </label>
+    }
+}
+
+/// Satu ujung rentang: [surat ▾][ayat] untuk Qur'an, [halaman] untuk Hadist.
+#[component]
+pub(super) fn UjungRentang(
+    label: &'static str,
+    surahs: Vec<crate::models::Surah>,
+    quran: bool,
+    maks_halaman: i32,
+    surah: RwSignal<i32>,
+    unit: RwSignal<i32>,
+) -> impl IntoView {
+    // Batas ayat mengikuti surat yang sedang dipilih, bukan angka tetap —
+    // tiap surat panjangnya beda.
+    let maks_ayat = {
+        let surahs = surahs.clone();
+        move || {
+            let i = surah.get().max(1) as usize;
+            surahs.get(i - 1).map(|s: &crate::models::Surah| s.ayat).unwrap_or(0)
+        }
+    };
+    view! {
+        <div class="space-y-1">
+            <span class="text-[11px] text-on-surface-variant">{label}</span>
+            {if quran {
+                view! {
+                    <div class="grid grid-cols-2 gap-1.5">
+                        <select
+                            class=FIELD
+                            on:change=move |ev| surah.set(event_target_value(&ev).parse().unwrap_or(0))
+                        >
+                            {surahs
+                                .clone()
+                                .into_iter()
+                                .enumerate()
+                                .map(|(i, s)| {
+                                    let idx = i as i32 + 1;
+                                    view! {
+                                        <option
+                                            value=idx.to_string()
+                                            selected=move || surah.get().max(1) == idx
+                                        >
+                                            {s.name}
+                                        </option>
+                                    }
+                                })
+                                .collect_view()}
+                        </select>
+                        <input
+                            type="number"
+                            min="1"
+                            class=FIELD
+                            placeholder="Ayat"
+                            prop:max=maks_ayat
+                            prop:value=move || {
+                                let u = unit.get();
+                                if u > 0 { u.to_string() } else { String::new() }
+                            }
+                            on:input=move |ev| unit.set(event_target_value(&ev).parse().unwrap_or(0))
+                        />
+                    </div>
+                }
+                    .into_any()
+            } else {
+                view! {
+                    <input
+                        type="number"
+                        min="1"
+                        max=maks_halaman.to_string()
+                        class=FIELD
+                        placeholder="Halaman"
+                        prop:value=move || {
+                            let u = unit.get();
+                            if u > 0 { u.to_string() } else { String::new() }
+                        }
+                        on:input=move |ev| unit.set(event_target_value(&ev).parse().unwrap_or(0))
+                    />
+                }
+                    .into_any()
+            }}
+        </div>
+    }
+}
+
+/// Rentang materi — bentuknya MENGIKUTI jenis materi yang sedang dipilih.
+/// Kosongkan keduanya = seluruh materi.
+#[component]
+pub(super) fn RentangMateri(
+    books: StoredValue<Vec<crate::models::BookItem>>,
+    book: RwSignal<i64>,
+    s_surah: RwSignal<i32>,
+    s_unit: RwSignal<i32>,
+    e_surah: RwSignal<i32>,
+    e_unit: RwSignal<i32>,
+) -> impl IntoView {
+    move || {
+        let id = book.get();
+        let Some(b) = books.get_value().into_iter().find(|b| b.id == id) else {
+            return view! {
+                <p class="text-[11px] text-on-surface-variant">
+                    "Pilih materi dulu untuk menentukan rentang halaman/ayat."
+                </p>
+            }
+                .into_any();
+        };
+        let quran = b.category == "quran";
+        let surahs = b.surahs.clone();
+        let total = b.total_pages;
+        view! {
+            <div class="space-y-1.5">
+                <div class="grid grid-cols-2 gap-2">
+                    <UjungRentang
+                        label="Dari"
+                        surahs=surahs.clone()
+                        quran=quran
+                        maks_halaman=total
+                        surah=s_surah
+                        unit=s_unit
+                    />
+                    <UjungRentang
+                        label="Sampai"
+                        surahs=surahs
+                        quran=quran
+                        maks_halaman=total
+                        surah=e_surah
+                        unit=e_unit
+                    />
+                </div>
+                <p class="text-[10px] text-on-surface-variant">
+                    {if quran {
+                        "Boleh melintasi surat. Kosongkan keduanya = seluruh materi.".to_string()
+                    } else {
+                        format!("Materi ini {total} halaman. Kosongkan keduanya = seluruh materi.")
+                    }}
+                </p>
+            </div>
+        }
+            .into_any()
+    }
+}
+
+/// SATU titik posisi (bukan rentang) — dipakai penanda "sedang berjalan" di
+/// kartu jadwal. Bentuknya mengikuti jenis materi, sama seperti ujung rentang.
+#[component]
+pub(super) fn TitikMateri(
+    books: StoredValue<Vec<crate::models::BookItem>>,
+    book: RwSignal<i64>,
+    surah: RwSignal<i32>,
+    unit: RwSignal<i32>,
+) -> impl IntoView {
+    move || {
+        let id = book.get();
+        let Some(b) = books.get_value().into_iter().find(|b| b.id == id) else {
+            return view! {
+                <p class="text-[11px] text-on-surface-variant">
+                    "Pilih materi dulu untuk menandai posisinya."
+                </p>
+            }
+                .into_any();
+        };
+        let quran = b.category == "quran";
+        view! {
+            <div class="space-y-1.5">
+                <UjungRentang
+                    label="Posisi sekarang"
+                    surahs=b.surahs.clone()
+                    quran=quran
+                    maks_halaman=b.total_pages
+                    surah=surah
+                    unit=unit
+                />
+                <p class="text-[10px] text-on-surface-variant">
+                    "Kosongkan angkanya bila materi sudah dipilih tapi belum mulai."
+                </p>
+            </div>
+        }
+            .into_any()
     }
 }

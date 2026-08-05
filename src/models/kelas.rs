@@ -205,10 +205,30 @@ pub struct ScheduleItem {
     /// ("2026-07-24,2026-08-01") — prefill picker tanggal di form edit.
     pub custom_dates: String,
     /// Jenis kegiatan PRD (migrasi 28): kbm|non_kbm|piket|apel_kepulangan; ""
-    /// = legacy. Menentukan preset poin default (lihat models::category_points).
+    /// = legacy. Menentukan preset poin default — presetnya ada di fungsi SQL
+    /// `cat_default_points()` (migrasi 28), satu-satunya sumber angka poin.
     pub activity_type: String,
     /// Poin DIPOTONG saat IZIN biasa (migrasi 28). "" = preset kategori.
     pub izin_points: String,
+    /// Materi yang sedang DIBAHAS jadwal rutin ini (migrasi 57). 0 = belum
+    /// diset. Hanya "materi apa" — "sampai mana" milik baris kurikulum
+    /// (migrasi 59), tempat rentangnya berada.
+    pub current_book_id: i64,
+    pub current_book_title: String,
+    /// "quran" | "hadist" | "" — menentukan bentuk posisinya.
+    pub current_book_category: String,
+    /// Posisi milik JADWAL INI: hadist → halaman; quran → ayat `current_unit`
+    /// pada surat ke-`current_surah` (indeks 1-based ke daftar surat materi).
+    /// 0 = belum diisi.
+    ///
+    /// Sengaja terpisah dari posisi di kurikulum: yang ini menjawab "jadwal ini
+    /// sampai mana", sedangkan kurikulum menjawab "kelas ini sampai mana atas
+    /// materi itu" — dan itulah yang jadi dasar persen progres.
+    pub current_surah: i32,
+    pub current_unit: i32,
+    /// Posisi jadwal ini siap-tampil, mis. "Al Baqarah ayat 20". Kosong bila
+    /// belum diisi.
+    pub current_label: String,
 }
 
 /// Opsi jadwal (dropdown tambah santri / buat sesi).
@@ -281,10 +301,9 @@ pub struct KelasDetail {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CurriculumItem {
     pub id: i64,
+    /// Judul materi — IKUT dari `books` lewat `book_id`, bukan diketik di
+    /// kurikulum. Baris lama yang belum tertaut memakai judul lamanya sendiri.
     pub title: String,
-    pub description: String,
-    pub scope_start: String,
-    pub scope_end: String,
     pub progress_pct: i16,
     pub order_index: i16,
     /// "active" | "completed" | "upcoming" mentah (untuk form edit).
@@ -293,8 +312,30 @@ pub struct CurriculumItem {
     pub status_label: String,
     /// Tautan materi terdaftar (migrasi 22). 0 = tak tertaut (materi bebas-teks);
     /// >0 = id `books`. `book_title` untuk tampilan.
+    ///
+    /// Kurikulum BARU wajib menautkan materi; 0 hanya tersisa pada baris lama
+    /// dari sebelum aturan itu — UI menandainya "belum tertaut".
     pub book_id: i64,
     pub book_title: String,
+    /// "quran" | "hadist" | "" (bila tak tertaut) — menentukan bentuk rentang.
+    pub book_category: String,
+    /// Rentang terstruktur (migrasi 57). 0 = belum diisi.
+    /// hadist → halaman `start_unit`..`end_unit`, surat diabaikan.
+    /// quran  → ayat, dengan `start_surah`/`end_surah` = indeks 1-based ke
+    ///          daftar surat materinya (rentang boleh melintasi surat).
+    pub start_surah: i32,
+    pub start_unit: i32,
+    pub end_surah: i32,
+    pub end_unit: i32,
+    /// Rentang siap-tampil, mis. "Halaman 5–20" / "Al Baqarah 1 – An-Nisa 10".
+    /// Kosong bila rentangnya belum diisi.
+    pub range_label: String,
+    /// Sudah sampai mana (migrasi 59). 0 = belum mulai. Dari SINI progres persen
+    /// dan status diturunkan — keduanya tak lagi diisi tangan.
+    pub current_surah: i32,
+    pub current_unit: i32,
+    /// Posisi siap-tampil, mis. "Halaman 42" / "Al Baqarah ayat 120".
+    pub current_label: String,
 }
 
 /// Satu kelas yang diikuti santri, berlabel golongan (migrasi 16) — santri

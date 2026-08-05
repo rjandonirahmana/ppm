@@ -837,6 +837,18 @@ pub struct SchedRow {
     /// Tanggal manual (migrasi 23) untuk recurrence 'custom' — ISO "YYYY-MM-DD".
     /// Kosong utk pola biasa (harian/mingguan/bulanan/sekali).
     pub custom_dates: Vec<String>,
+    /// Materi yang SEDANG BERJALAN (migrasi 57) — pointer yang maju tiap
+    /// pertemuan. None = belum diset.
+    pub current_book_id: Option<i64>,
+    pub current_book_title: Option<String>,
+    pub current_book_category: Option<String>,
+    pub current_book_surahs: Option<serde_json::Value>,
+    /// Posisi milik JADWAL INI sendiri — "jadwal ini sudah sampai mana".
+    /// Berbeda dari posisi di `curriculum`, yang mewakili kemajuan KELAS secara
+    /// keseluruhan atas materi itu. Dua jadwal boleh membaca kitab sama di
+    /// titik berbeda (mis. kelas pagi ayat 50, kelas malam ayat 30).
+    pub current_surah: Option<i16>,
+    pub current_unit: Option<i32>,
 }
 
 /// Opsi ruang (perangkat RFID) untuk dropdown jadwal — hanya id + nama (tanpa
@@ -875,9 +887,12 @@ pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>
             "SELECT cs.id, COALESCE(cs.title, ''), cs.start_time, cs.end_time, \
                     cs.limit_entery_time, cs.recurrence_type, cs.start_date, cs.end_date, \
                     cs.category, cs.present_points, cs.late_points, cs.absent_points, \
-                    cs.room_id, dev.device_name, cs.custom_dates, cs.activity_type, cs.izin_points \
+                    cs.room_id, dev.device_name, cs.custom_dates, cs.activity_type, cs.izin_points, \
+                    cs.current_book_id, cb.title, cb.category, cb.surahs, \
+                    cs.current_surah, cs.current_unit \
              FROM class_schedules cs \
              LEFT JOIN rfid_devices dev ON dev.id = cs.room_id \
+             LEFT JOIN books cb ON cb.id = cs.current_book_id \
              WHERE cs.class_id = $1 ORDER BY cs.start_time",
             &[&class_id],
         )
@@ -903,8 +918,61 @@ pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>
             custom_dates: json_dates(&r.get::<_, serde_json::Value>(14)),
             activity_type: r.get(15),
             izin_points: r.get(16),
+            current_book_id: r.get(17),
+            current_book_title: r.get(18),
+            current_book_category: r.get(19),
+            current_book_surahs: r.get(20),
+            current_surah: r.get(21),
+            current_unit: r.get(22),
         })
         .collect())
+}
+
+/// Setel materi & posisi yang SEDANG BERJALAN pada satu jadwal (migrasi 57).
+/// `book_id` None = lepaskan penanda (surat/unit ikut dikosongkan).
+pub async fn set_schedule_current(
+    pool: &Pool,
+    schedule_id: i64,
+    book_id: Option<i64>,
+    surah: Option<i16>,
+    unit: Option<i32>,
+) -> Result<bool> {
+    let c = pool.get().await?;
+    // Materi dilepas → posisinya ikut dikosongkan; kalau tidak, angka lama
+    // menggantung tanpa materi dan terbaca seolah masih berlaku.
+    let (surah, unit) = if book_id.is_none() { (None, None) } else { (surah, unit) };
+    let n = c
+        .execute(
+            "UPDATE class_schedules \
+                SET current_book_id = $2, current_surah = $3, current_unit = $4 \
+              WHERE id = $1",
+            &[&schedule_id, &book_id, &surah, &unit],
+        )
+        .await
+        .context("set_schedule_current")?;
+    Ok(n > 0)
+}
+
+/// Apakah materi `book_id` ada di kurikulum KELAS pemilik jadwal ini?
+///
+/// Penjagaan sisi server untuk aturan "materi jadwal hanya dari kurikulum
+/// kelas". Dropdown di UI sudah disaring, tapi request bisa dikirim langsung.
+pub async fn schedule_book_in_curriculum(
+    pool: &Pool,
+    schedule_id: i64,
+    book_id: i64,
+) -> Result<bool> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(
+            "SELECT 1 FROM class_schedules cs \
+               JOIN curriculum cu ON cu.class_id = cs.class_id AND cu.book_id = $2 \
+              WHERE cs.id = $1 LIMIT 1",
+            &[&schedule_id, &book_id],
+        )
+        .await
+        .context("schedule_book_in_curriculum")?;
+    Ok(row.is_some())
 }
 
 /// Buat jadwal baru → id.
@@ -1444,15 +1512,24 @@ pub async fn active_schedules_all(
 pub struct CurriculumRow {
     pub id: i64,
     pub title: String,
-    pub description: Option<String>,
-    pub scope_start: Option<String>,
-    pub scope_end: Option<String>,
-    pub progress_pct: i16,
     pub order_index: i16,
-    pub status: String,
-    /// Tautan ke materi terdaftar (migrasi 22) — None = materi bebas-teks.
+    /// Tautan ke materi terdaftar (migrasi 22) — None = materi bebas-teks
+    /// (hanya baris lama; kurikulum baru wajib tertaut).
     pub book_id: Option<i64>,
     pub book_title: Option<String>,
+    pub book_category: Option<String>,
+    /// `books.surahs` mentah — dipakai service menyusun label rentang.
+    pub book_surahs: Option<serde_json::Value>,
+    /// `books.total_pages` — pembagi saat rentang dikosongkan (seluruh materi).
+    pub book_total_pages: Option<i32>,
+    /// Rentang terstruktur (migrasi 57). None = belum diisi.
+    pub start_surah: Option<i16>,
+    pub start_unit: Option<i32>,
+    pub end_surah: Option<i16>,
+    pub end_unit: Option<i32>,
+    /// Sudah sampai mana (migrasi 59) — dasar progres & status.
+    pub current_surah: Option<i16>,
+    pub current_unit: Option<i32>,
 }
 
 /// Cakupan materi/kitab kelas ini, terurut sesuai order_index.
@@ -1460,8 +1537,11 @@ pub async fn class_curriculum(pool: &Pool, class_id: i64) -> Result<Vec<Curricul
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT cu.id, cu.title, cu.description, cu.scope_start, cu.scope_end, \
-                    cu.progress_pct, cu.order_index, cu.status, cu.book_id, b.title \
+            "SELECT cu.id, cu.title, \
+                    cu.order_index, cu.book_id, b.title, \
+                    b.category, b.surahs, b.total_pages, \
+                    cu.start_surah, cu.start_unit, cu.end_surah, cu.end_unit, \
+                    cu.current_surah, cu.current_unit \
              FROM curriculum cu \
              LEFT JOIN books b ON b.id = cu.book_id \
              WHERE cu.class_id = $1 ORDER BY cu.order_index, cu.id",
@@ -1474,16 +1554,39 @@ pub async fn class_curriculum(pool: &Pool, class_id: i64) -> Result<Vec<Curricul
         .map(|r| CurriculumRow {
             id: r.get(0),
             title: r.get(1),
-            description: r.get(2),
-            scope_start: r.get(3),
-            scope_end: r.get(4),
-            progress_pct: r.get(5),
-            order_index: r.get(6),
-            status: r.get(7),
-            book_id: r.get(8),
-            book_title: r.get(9),
+            order_index: r.get(2),
+            book_id: r.get(3),
+            book_title: r.get(4),
+            book_category: r.get(5),
+            book_surahs: r.get(6),
+            book_total_pages: r.get(7),
+            start_surah: r.get(8),
+            start_unit: r.get(9),
+            end_surah: r.get(10),
+            end_unit: r.get(11),
+            current_surah: r.get(12),
+            current_unit: r.get(13),
         })
         .collect())
+}
+
+/// Rentang materi kurikulum (migrasi 57).
+///
+/// Dikemas jadi satu struct, bukan empat argumen angka berurutan: `(None,
+/// Some(1), None, Some(20))` di tempat panggilan tak terbaca, dan menukar dua
+/// di antaranya tetap lolos compiler.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CurriculumRange {
+    /// Indeks surat 1-based (quran); None untuk hadist.
+    pub start_surah: Option<i16>,
+    /// Halaman (hadist) atau ayat (quran).
+    pub start_unit: Option<i32>,
+    pub end_surah: Option<i16>,
+    pub end_unit: Option<i32>,
+    /// Posisi berjalan (migrasi 59) — bukan bagian rentang, tapi diperiksa &
+    /// disimpan bersamanya karena batasnya materi yang sama.
+    pub current_surah: Option<i16>,
+    pub current_unit: Option<i32>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1491,12 +1594,8 @@ pub async fn create_curriculum(
     pool: &Pool,
     class_id: i64,
     title: &str,
-    description: &str,
-    scope_start: &str,
-    scope_end: &str,
-    progress_pct: i16,
-    status: &str,
     book_id: Option<i64>,
+    range: CurriculumRange,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let order_index: i16 = c
@@ -1515,12 +1614,13 @@ pub async fn create_curriculum(
     let row = c
         .query_one(
             "INSERT INTO curriculum \
-                (class_id, title, description, scope_start, scope_end, progress_pct, \
-                 order_index, status, book_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
+                (class_id, title, order_index, book_id, \
+                 start_surah, start_unit, end_surah, end_unit, current_surah, current_unit) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id",
             &[
-                &class_id, &title, &description, &scope_start, &scope_end, &progress_pct,
-                &order_index, &status, &book_id,
+                &class_id, &title, &order_index, &book_id,
+                &range.start_surah, &range.start_unit, &range.end_surah, &range.end_unit,
+                &range.current_surah, &range.current_unit,
             ],
         )
         .await
@@ -1533,20 +1633,21 @@ pub async fn update_curriculum(
     pool: &Pool,
     id: i64,
     title: &str,
-    description: &str,
-    scope_start: &str,
-    scope_end: &str,
-    progress_pct: i16,
-    status: &str,
     book_id: Option<i64>,
+    range: CurriculumRange,
 ) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
         .execute(
-            "UPDATE curriculum SET title = $2, description = $3, scope_start = $4, \
-                scope_end = $5, progress_pct = $6, status = $7, book_id = $8, updated_at = NOW() \
+            "UPDATE curriculum SET title = $2, book_id = $3, \
+                start_surah = $4, start_unit = $5, end_surah = $6, end_unit = $7, \
+                current_surah = $8, current_unit = $9, updated_at = NOW() \
              WHERE id = $1",
-            &[&id, &title, &description, &scope_start, &scope_end, &progress_pct, &status, &book_id],
+            &[
+                &id, &title, &book_id,
+                &range.start_surah, &range.start_unit, &range.end_surah, &range.end_unit,
+                &range.current_surah, &range.current_unit,
+            ],
         )
         .await
         .context("update_curriculum")?;

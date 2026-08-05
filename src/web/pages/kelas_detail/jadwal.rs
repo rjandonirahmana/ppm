@@ -25,6 +25,18 @@ pub(super) fn JadwalTab(
     let weekly = d.weekly_sessions;
     let avg = d.avg_duration_min;
     let room_opts = StoredValue::new(d.room_options.clone());
+    // Materi jadwal HANYA boleh dari kurikulum kelas ini — bukan seluruh daftar
+    // materi. Jadwal mengajarkan apa yang direncanakan kelasnya; menawarkan
+    // kitab di luar itu membuat progres kurikulum tak pernah tersentuh.
+    let dalam_kurikulum: std::collections::HashSet<i64> =
+        d.curriculum.iter().map(|c| c.book_id).filter(|b| *b > 0).collect();
+    let book_opts = StoredValue::new(
+        d.book_options
+            .iter()
+            .filter(|b| dalam_kurikulum.contains(&b.id))
+            .cloned()
+            .collect::<Vec<_>>(),
+    );
     let status = if schedules.is_empty() {
         "Belum diatur"
     } else {
@@ -75,7 +87,7 @@ pub(super) fn JadwalTab(
                     <div class="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
                         {schedules
                             .into_iter()
-                            .map(|s| view! { <JadwalCard s=s room_options=room_opts refetch=refetch /> })
+                            .map(|s| view! { <JadwalCard s=s room_options=room_opts book_options=book_opts refetch=refetch /> })
                             .collect_view()}
                     </div>
                 }
@@ -89,9 +101,12 @@ pub(super) fn JadwalTab(
 fn JadwalCard(
     s: ScheduleItem,
     room_options: StoredValue<Vec<crate::models::RoomOption>>,
+    book_options: StoredValue<Vec<crate::models::BookItem>>,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
     let sid = s.id;
+    // Salinan untuk panel posisi — `s` sendiri sebagian di-move ke closure di bawah.
+    let s_posisi = s.clone();
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
 
@@ -494,6 +509,12 @@ fn JadwalCard(
                                     </p>
                                 }
                             })}
+                        <PosisiBerjalan
+                            schedule_id=sid
+                            s=s_posisi.clone()
+                            books=book_options
+                            refetch=refetch
+                        />
                         <div class="flex justify-end mt-3 pt-3 border-t border-outline-variant/40">
                             <button
                                 class="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-error-container/60 text-error text-body-sm font-semibold press disabled:opacity-60"
@@ -507,6 +528,155 @@ fn JadwalCard(
                     }
                         .into_any()
                 }
+            }}
+        </div>
+    }
+}
+
+// ── Posisi materi yang SEDANG BERJALAN (migrasi 57) ──────────────────────────
+
+/// Panel kecil di kartu jadwal: materi apa yang sedang dibahas dan sampai
+/// halaman/ayat berapa.
+///
+/// Ditaruh di JADWAL, bukan di tiap sesi: jadwal rutin berjalan berminggu-minggu
+/// dan yang ingin dilihat pengelola adalah "sekarang sampai mana", satu angka
+/// yang MAJU — bukan menelusuri catatan pertemuan satu per satu.
+///
+/// Bentuk isiannya mengikuti jenis materi (ayat+surat untuk Qur'an, halaman
+/// untuk Hadist), memakai komponen yang sama dengan rentang kurikulum supaya
+/// keduanya tak bisa berbeda cara membacanya.
+#[component]
+pub(super) fn PosisiBerjalan(
+    schedule_id: i64,
+    s: crate::models::ScheduleItem,
+    books: StoredValue<Vec<crate::models::BookItem>>,
+    refetch: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
+    let buka = RwSignal::new(false);
+    let busy = RwSignal::new(false);
+    let msg = RwSignal::new(Option::<String>::None);
+
+    let book = RwSignal::new(s.current_book_id);
+    let surah = RwSignal::new(s.current_surah);
+    let unit = RwSignal::new(s.current_unit);
+
+    let judul_ro = s.current_book_title.clone();
+    let posisi_ro = s.current_label.clone();
+
+    let simpan = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        msg.set(None);
+        let (b, sr, u) = (book.get_untracked(), surah.get_untracked(), unit.get_untracked());
+        leptos::task::spawn_local(async move {
+            match crate::web::api::set_schedule_current_action(schedule_id, b, sr, u).await {
+                Ok(()) => {
+                    buka.set(false);
+                    refetch();
+                }
+                Err(e) => {
+                    let m = e.to_string();
+                    msg.set(Some(m.rsplit(": ").next().unwrap_or(&m).to_string()));
+                }
+            }
+            busy.set(false);
+        });
+    };
+
+    view! {
+        <div class="mt-3 pt-3 border-t border-outline-variant/50">
+            <div class="flex items-center justify-between gap-2">
+                <div class="min-w-0">
+                    <p class="text-[10px] font-bold tracking-wide text-on-surface-variant">
+                        "MATERI DIBAHAS"
+                    </p>
+                    {if judul_ro.is_empty() {
+                        view! {
+                            <p class="text-body-sm text-on-surface-variant">"Belum ditentukan"</p>
+                        }
+                            .into_any()
+                    } else {
+                        // Posisi milik jadwal INI — beda makna dari posisi di
+                        // kartu kurikulum, yang mewakili kemajuan kelas secara
+                        // keseluruhan atas materi yang sama.
+                        let posisi = posisi_ro.clone();
+                        view! {
+                            <p class="text-body-sm font-semibold text-on-background truncate">
+                                {judul_ro.clone()}
+                            </p>
+                            {if posisi.is_empty() {
+                                view! {
+                                    <p class="text-[11px] text-on-surface-variant">
+                                        "Posisi jadwal ini belum diisi."
+                                    </p>
+                                }
+                                    .into_any()
+                            } else {
+                                view! {
+                                    <p class="text-[11px] text-primary font-semibold flex items-center gap-1">
+                                        <span class="material-symbols-outlined text-[14px]">
+                                            "trending_flat"
+                                        </span>
+                                        "Sudah sampai " {posisi}
+                                    </p>
+                                }
+                                    .into_any()
+                            }}
+                        }
+                            .into_any()
+                    }}
+                </div>
+                <button
+                    class="w-8 h-8 rounded-lg bg-surface-container text-primary flex items-center justify-center press shrink-0"
+                    on:click=move |_| buka.update(|b| *b = !*b)
+                    aria-label="Ubah materi yang dibahas"
+                >
+                    <span class="material-symbols-outlined text-[18px]">"menu_book"</span>
+                </button>
+            </div>
+
+            {move || {
+                buka.get()
+                    .then(|| {
+                        view! {
+                            <form class="mt-2 space-y-2 anim-in" method="post" on:submit=simpan>
+                                {move || {
+                                    msg.get()
+                                        .map(|t| {
+                                            view! {
+                                                <div class="p-2 bg-error-container text-on-error-container rounded-lg text-body-sm">
+                                                    {t}
+                                                </div>
+                                            }
+                                        })
+                                }}
+                                <super::kurikulum::PilihMateri
+                                    books=books
+                                    book=book
+                                    on_ganti=move || {
+                                        surah.set(0);
+                                        unit.set(0);
+                                    }
+                                />
+                                <super::kurikulum::TitikMateri
+                                    books=books
+                                    book=book
+                                    surah=surah
+                                    unit=unit
+                                />
+                                <button
+                                    type="submit"
+                                    class="w-full py-2.5 rounded-lg bg-primary text-on-primary font-semibold text-body-sm disabled:opacity-60"
+                                    disabled=move || busy.get()
+                                >
+                                    {move || if busy.get() { "Menyimpan…" } else { "Simpan Materi" }}
+                                </button>
+                            </form>
+                        }
+                    })
             }}
         </div>
     }

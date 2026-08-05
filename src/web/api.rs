@@ -1197,19 +1197,19 @@ pub async fn staff_search_students(
 #[server(CreateCurriculum, "/api-fn")]
 pub async fn create_curriculum_action(
     class_id: i64,
-    title: String,
-    description: String,
-    scope_start: String,
-    scope_end: String,
-    progress_pct: String,
-    status: String,
     book_id: i64,
+    start_surah: i32,
+    start_unit: i32,
+    end_surah: i32,
+    end_unit: i32,
+    cur_surah: i32,
+    cur_unit: i32,
 ) -> Result<i64, ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
     crate::service::kelas::create_curriculum(
-        &state.pool, class_id, &title, &description, &scope_start, &scope_end, &progress_pct,
-        &status, book_id,
+        &state.pool, class_id, book_id, start_surah, start_unit, end_surah, end_unit,
+        cur_surah, cur_unit,
     )
     .await
     .map_err(err)
@@ -1219,22 +1219,37 @@ pub async fn create_curriculum_action(
 #[server(UpdateCurriculum, "/api-fn")]
 pub async fn update_curriculum_action(
     id: i64,
-    title: String,
-    description: String,
-    scope_start: String,
-    scope_end: String,
-    progress_pct: String,
-    status: String,
     book_id: i64,
+    start_surah: i32,
+    start_unit: i32,
+    end_surah: i32,
+    end_unit: i32,
+    cur_surah: i32,
+    cur_unit: i32,
 ) -> Result<(), ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
     crate::service::kelas::update_curriculum(
-        &state.pool, id, &title, &description, &scope_start, &scope_end, &progress_pct, &status,
-        book_id,
+        &state.pool, id, book_id, start_surah, start_unit, end_surah, end_unit, cur_surah,
+        cur_unit,
     )
     .await
     .map_err(err)
+}
+
+/// Setel materi & posisi yang SEDANG BERJALAN pada satu jadwal (migrasi 57).
+#[server(SetScheduleCurrent, "/api-fn")]
+pub async fn set_schedule_current_action(
+    schedule_id: i64,
+    book_id: i64,
+    surah: i32,
+    unit: i32,
+) -> Result<(), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::set_schedule_current(&state.pool, schedule_id, book_id, surah, unit)
+        .await
+        .map_err(err)
 }
 
 /// Hapus materi/kitab kurikulum.

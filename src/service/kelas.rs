@@ -160,6 +160,293 @@ fn recurrence_label(t: &str) -> &'static str {
     }
 }
 
+// ── Rentang & posisi materi (migrasi 57) ─────────────────────────────────────
+
+/// `books.surahs` (JSONB) → daftar surat. Bentuk tak dikenal → kosong, bukan
+/// galat: materi yang datanya aneh lebih baik tampil tanpa nama surat daripada
+/// menggagalkan seluruh halaman kelas.
+fn surahs_of(v: Option<&serde_json::Value>) -> Vec<crate::models::Surah> {
+    v.and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default()
+}
+
+/// Nama surat ke-`idx` (1-based). Di luar jangkauan → "Surat {idx}" supaya
+/// tetap terbaca ketimbang kosong.
+fn surah_name(surahs: &[crate::models::Surah], idx: i32) -> String {
+    usize::try_from(idx)
+        .ok()
+        .filter(|i| *i >= 1)
+        .and_then(|i| surahs.get(i - 1))
+        .map(|s| s.name.clone())
+        .unwrap_or_else(|| format!("Surat {idx}"))
+}
+
+/// Satu titik posisi: "Halaman 42" (hadist) / "Al Baqarah ayat 120" (quran).
+fn titik_label(
+    category: &str,
+    surahs: &[crate::models::Surah],
+    surah: Option<i16>,
+    unit: Option<i32>,
+) -> String {
+    let Some(u) = unit else { return String::new() };
+    if category == "quran" {
+        let s = surah.unwrap_or(1) as i32;
+        format!("{} ayat {u}", surah_name(surahs, s))
+    } else {
+        format!("Halaman {u}")
+    }
+}
+
+/// Rentang siap-tampil. Kosong-nya rentang BUKAN kesalahan: itu berarti
+/// seluruh materi dipakai, dan mengatakannya lebih jujur daripada bidang kosong.
+fn range_label(
+    category: &str,
+    surahs: &[crate::models::Surah],
+    r: &repo::CurriculumRange,
+) -> String {
+    match (r.start_unit, r.end_unit) {
+        (None, None) => "Seluruh materi".into(),
+        _ => {
+            let a = titik_label(category, surahs, r.start_surah, r.start_unit);
+            let b = titik_label(category, surahs, r.end_surah, r.end_unit);
+            match (a.is_empty(), b.is_empty()) {
+                (false, false) if a == b => a,
+                (false, false) => format!("{a} – {b}"),
+                (false, true) => format!("Mulai {a}"),
+                (true, false) => format!("Sampai {b}"),
+                (true, true) => String::new(),
+            }
+        }
+    }
+}
+
+/// Posisi sebagai SATU angka berurutan dari awal materi.
+///
+/// Perlu karena posisi Qur'an berdimensi dua (surat + ayat) sehingga tak bisa
+/// dikurangkan langsung: "surat 2 ayat 10" dikurangi "surat 1 ayat 5" tak ada
+/// artinya. Diratakan jadi nomor ayat kumulatif — ayat-ayat surat sebelumnya
+/// dijumlahkan dulu — barulah selisihnya bermakna. Hadist sudah satu dimensi
+/// (halaman), jadi angkanya dipakai apa adanya.
+fn unit_absolut(
+    category: &str,
+    surahs: &[crate::models::Surah],
+    surah: i32,
+    unit: i32,
+) -> i32 {
+    if category != "quran" {
+        return unit;
+    }
+    let idx = surah.max(1) as usize;
+    let sebelumnya: i32 = surahs.iter().take(idx.saturating_sub(1)).map(|s| s.ayat).sum();
+    sebelumnya + unit
+}
+
+/// Jumlah unit seluruh materi (total ayat semua surat, atau total halaman).
+fn total_unit(category: &str, surahs: &[crate::models::Surah], total_pages: i32) -> i32 {
+    if category == "quran" {
+        surahs.iter().map(|s| s.ayat).sum()
+    } else {
+        total_pages
+    }
+}
+
+/// Progres kurikulum DIHITUNG dari posisi yang sedang berjalan, bukan diketik.
+///
+/// Angka yang diketik tangan cepat basi: pengelola memperbarui posisi materi di
+/// jadwal tapi lupa menyetel persennya, lalu dua tempat itu bercerita berbeda.
+/// Di sini persennya diturunkan dari satu-satunya fakta yang memang dirawat —
+/// sampai ayat/halaman berapa materinya berjalan.
+///
+/// `posisi` None (jadwal belum menandai materi ini) → 0%.
+fn progres_dari_posisi(
+    category: &str,
+    surahs: &[crate::models::Surah],
+    total_pages: i32,
+    r: &repo::CurriculumRange,
+    posisi: Option<i32>,
+) -> i16 {
+    let Some(pos) = posisi else { return 0 };
+    // Rentang kosong = seluruh materi.
+    let awal = r
+        .start_unit
+        .map(|u| unit_absolut(category, surahs, r.start_surah.unwrap_or(1) as i32, u))
+        .unwrap_or(1);
+    let akhir = r
+        .end_unit
+        .map(|u| unit_absolut(category, surahs, r.end_surah.unwrap_or(1) as i32, u))
+        .unwrap_or_else(|| total_unit(category, surahs, total_pages));
+    let panjang = akhir - awal + 1;
+    if panjang <= 0 {
+        return 0;
+    }
+    let maju = (pos - awal + 1).clamp(0, panjang);
+    ((maju as f64 / panjang as f64) * 100.0).round().clamp(0.0, 100.0) as i16
+}
+
+/// Periksa rentang terhadap materi yang ditunjuk, lalu kembalikan bentuk yang
+/// siap disimpan.
+///
+/// Batas ATAS tak bisa dicek di CHECK constraint (bergantung materi mana yang
+/// ditunjuk), jadi di sinilah tempatnya — di satu fungsi yang dipakai bersama
+/// pembuatan maupun penyuntingan, supaya aturannya tak jadi dua salinan.
+///
+/// Rentang kosong = seluruh materi, itu sah. Yang ditolak adalah rentang yang
+/// separuh terisi atau melampaui materinya.
+/// Periksa satu POSISI (surat+ayat / halaman) terhadap materinya.
+///
+/// Dipakai dua tempat dengan arti berbeda tapi aturan sama: posisi milik
+/// jadwal ("jadwal ini sampai mana") dan posisi milik kurikulum ("kelas ini
+/// sampai mana"). Batas atasnya bergantung materi, jadi tak bisa jadi CHECK
+/// constraint — di sinilah tempatnya, satu salinan untuk keduanya.
+///
+/// `unit` 0 = belum diisi, itu sah.
+async fn periksa_posisi(
+    pool: &Pool,
+    book_id: i64,
+    surah: i32,
+    unit: i32,
+) -> Result<(Option<i16>, Option<i32>)> {
+    if unit <= 0 {
+        return Ok((None, None));
+    }
+    let Some(book) = repo::get_book(pool, book_id).await? else {
+        bail_user!("Materi yang dipilih tidak ditemukan.");
+    };
+    posisi_dalam_materi(&book, surah, unit)
+}
+
+/// Inti pemeriksaan posisi, dipakai [`periksa_posisi`] & [`periksa_rentang`]
+/// (yang materinya sudah terlanjur diambil, jadi tak perlu query ulang).
+fn posisi_dalam_materi(
+    book: &repo::BookRow,
+    surah: i32,
+    unit: i32,
+) -> Result<(Option<i16>, Option<i32>)> {
+    if unit <= 0 {
+        return Ok((None, None));
+    }
+    if book.category == "quran" {
+        let surahs = surahs_of(Some(&book.surahs));
+        let n = surahs.len() as i32;
+        let cs = surah.max(1);
+        if cs > n {
+            bail_user!("Surat posisi di luar materi ini (hanya ada {n} surat).");
+        }
+        let batas = surahs[(cs - 1) as usize].ayat;
+        if unit > batas {
+            bail_user!("{} hanya sampai ayat {}.", surah_name(&surahs, cs), batas);
+        }
+        return Ok((Some(cs as i16), Some(unit)));
+    }
+    if unit > book.total_pages {
+        bail_user!("Materi ini hanya {} halaman.", book.total_pages);
+    }
+    Ok((None, Some(unit)))
+}
+
+/// Mengembalikan (judul materi, rentang) — judulnya dipakai mengisi
+/// `curriculum.title` supaya kurikulum tak perlu mengetik judul sendiri.
+#[allow(clippy::too_many_arguments)]
+async fn periksa_rentang(
+    pool: &Pool,
+    book_id: i64,
+    start_surah: i32,
+    start_unit: i32,
+    end_surah: i32,
+    end_unit: i32,
+    cur_surah: i32,
+    cur_unit: i32,
+) -> Result<(String, repo::CurriculumRange)> {
+    let Some(book) = repo::get_book(pool, book_id).await? else {
+        bail_user!("Materi yang dipilih tidak ditemukan.");
+    };
+    let judul = book.title.clone();
+    let posisi = posisi_dalam_materi(&book, cur_surah, cur_unit)?;
+
+    if start_unit == 0 && end_unit == 0 {
+        return Ok((
+            judul,
+            repo::CurriculumRange {
+                current_surah: posisi.0,
+                current_unit: posisi.1,
+                ..Default::default()
+            },
+        ));
+    }
+    if start_unit == 0 || end_unit == 0 {
+        bail_user!("Isi kedua ujung rentang, atau kosongkan keduanya untuk seluruh materi.");
+    }
+
+    if book.category == "quran" {
+        let surahs = surahs_of(Some(&book.surahs));
+        if surahs.is_empty() {
+            bail_user!("Materi Qur'an ini belum punya daftar surat, jadi rentangnya tak bisa diisi.");
+        }
+        let n = surahs.len() as i32;
+        let (ss, es) = (start_surah.max(1), end_surah.max(1));
+        if ss > n || es > n {
+            bail_user!("Surat yang dipilih di luar materi ini (hanya ada {n} surat).");
+        }
+        let batas = |i: i32| surahs[(i - 1) as usize].ayat;
+        if start_unit > batas(ss) {
+            bail_user!("{} hanya sampai ayat {}.", surah_name(&surahs, ss), batas(ss));
+        }
+        if end_unit > batas(es) {
+            bail_user!("{} hanya sampai ayat {}.", surah_name(&surahs, es), batas(es));
+        }
+        // Bandingkan sebagai pasangan (surat, ayat) — rentang boleh melintasi
+        // surat, jadi membandingkan ayatnya saja akan salah.
+        if (ss, start_unit) > (es, end_unit) {
+            bail_user!("Awal rentang harus sebelum akhirnya.");
+        }
+        return Ok((
+            judul,
+            repo::CurriculumRange {
+                start_surah: Some(ss as i16),
+                start_unit: Some(start_unit),
+                end_surah: Some(es as i16),
+                end_unit: Some(end_unit),
+                current_surah: posisi.0,
+                current_unit: posisi.1,
+            },
+        ));
+    }
+
+    // Hadist: halaman, tanpa surat.
+    if start_unit > end_unit {
+        bail_user!("Halaman awal harus sebelum halaman akhir.");
+    }
+    if end_unit > book.total_pages {
+        bail_user!("Materi ini hanya {} halaman.", book.total_pages);
+    }
+    Ok((
+        judul,
+        repo::CurriculumRange {
+            start_surah: None,
+            start_unit: Some(start_unit),
+            end_surah: None,
+            end_unit: Some(end_unit),
+            current_surah: posisi.0,
+            current_unit: posisi.1,
+        },
+    ))
+}
+
+/// Status kurikulum DITURUNKAN dari progres, bukan dipilih tangan.
+///
+/// Dulu persen dan status dua isian terpisah: seseorang bisa menandai "Selesai"
+/// padahal progresnya 40%, atau materinya sudah khatam tapi statusnya masih
+/// "Berjalan" karena lupa diubah. Sekarang keduanya turunan dari satu angka
+/// yang sama — posisi terakhir — jadi mustahil bertentangan.
+fn status_dari_progres(pct: i16, sudah_mulai: bool) -> &'static str {
+    if pct >= 100 {
+        "completed"
+    } else if sudah_mulai {
+        "active"
+    } else {
+        "upcoming"
+    }
+}
+
 fn curriculum_status_label(status: &str) -> &'static str {
     match status {
         "completed" => "Selesai",
@@ -289,9 +576,22 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
             ),
         })
         .collect();
+    let cur_rows = curriculum?;
+
     let schedules = scheds
         .into_iter()
-        .map(|s| ScheduleItem {
+        .map(|s| {
+            let cur_cat = s.current_book_category.clone().unwrap_or_default();
+            let cur_surahs = surahs_of(s.current_book_surahs.as_ref());
+            let current_label =
+                titik_label(&cur_cat, &cur_surahs, s.current_surah, s.current_unit);
+            ScheduleItem {
+            current_book_id: s.current_book_id.unwrap_or(0),
+            current_book_title: s.current_book_title.clone().unwrap_or_default(),
+            current_book_category: cur_cat,
+            current_surah: s.current_surah.unwrap_or(0) as i32,
+            current_unit: s.current_unit.unwrap_or(0),
+            current_label,
             duration_min: (s.end_time - s.start_time).num_minutes().max(0),
             title: if s.title.is_empty() {
                 "Jadwal Kelas".into()
@@ -324,6 +624,7 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
             custom_dates: s.custom_dates.join(","),
             activity_type: s.activity_type.clone().unwrap_or_default(),
             izin_points: s.izin_points.map(|n| n.to_string()).unwrap_or_default(),
+            }
         })
         .collect();
 
@@ -358,26 +659,72 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
         .map(|(id, name)| TeacherOption { id, name })
         .collect();
 
-    let curriculum = curriculum?
+    let curriculum = cur_rows
         .into_iter()
-        .map(|c| CurriculumItem {
-            id: c.id,
-            title: c.title,
-            description: c.description.unwrap_or_default(),
-            scope_start: c.scope_start.unwrap_or_default(),
-            scope_end: c.scope_end.unwrap_or_default(),
-            progress_pct: c.progress_pct,
-            order_index: c.order_index,
-            status_label: curriculum_status_label(&c.status).into(),
-            status: c.status,
-            book_id: c.book_id.unwrap_or(0),
-            book_title: c.book_title.unwrap_or_default(),
+        .map(|c| {
+            let category = c.book_category.clone().unwrap_or_default();
+            let surahs = surahs_of(c.book_surahs.as_ref());
+            let range = repo::CurriculumRange {
+                start_surah: c.start_surah,
+                start_unit: c.start_unit,
+                end_surah: c.end_surah,
+                end_unit: c.end_unit,
+                current_surah: c.current_surah,
+                current_unit: c.current_unit,
+            };
+            // Cakupan teks-bebas lama sudah dibuang (migrasi 58) — semua baris
+            // kini bersandar pada materi + rentang angkanya.
+            let range_label = range_label(&category, &surahs, &range);
+            // Posisi milik baris kurikulum ini sendiri (migrasi 59). Dari SATU
+            // angka ini persen dan status sama-sama diturunkan.
+            let posisi = c.current_unit.map(|u| {
+                unit_absolut(&category, &surahs, c.current_surah.unwrap_or(1) as i32, u)
+            });
+            let progress_pct = progres_dari_posisi(
+                &category,
+                &surahs,
+                c.book_total_pages.unwrap_or(0),
+                &range,
+                posisi,
+            );
+            let status_kode = status_dari_progres(progress_pct, posisi.is_some());
+            let current_label =
+                titik_label(&category, &surahs, c.current_surah, c.current_unit);
+            CurriculumItem {
+                id: c.id,
+                // Judul mengikuti materinya; `curriculum.title` hanya dipakai
+                // untuk baris lama yang belum tertaut.
+                title: c.book_title.clone().unwrap_or(c.title),
+                progress_pct,
+                order_index: c.order_index,
+                status_label: curriculum_status_label(status_kode).into(),
+                status: status_kode.to_string(),
+                book_id: c.book_id.unwrap_or(0),
+                book_title: c.book_title.unwrap_or_default(),
+                book_category: category,
+                start_surah: range.start_surah.unwrap_or(0) as i32,
+                start_unit: range.start_unit.unwrap_or(0),
+                end_surah: range.end_surah.unwrap_or(0) as i32,
+                end_unit: range.end_unit.unwrap_or(0),
+                range_label,
+                current_surah: c.current_surah.unwrap_or(0) as i32,
+                current_unit: c.current_unit.unwrap_or(0),
+                current_label,
+            }
         })
         .collect();
 
     let book_options = books?
         .into_iter()
-        .map(|b| crate::models::BookItem { id: b.id, title: b.title, category: b.category, total_pages: b.total_pages, surahs: Vec::new() })
+        // Daftar surat IKUT dikirim (dulu selalu kosong): form kurikulum &
+        // jadwal memakainya untuk menyusun pilihan surat dan batas ayatnya.
+        .map(|b| crate::models::BookItem {
+            id: b.id,
+            title: b.title,
+            category: b.category,
+            total_pages: b.total_pages,
+            surahs: surahs_of(Some(&b.surahs)),
+        })
         .collect();
     let room_options = rooms?
         .into_iter()
@@ -979,88 +1326,104 @@ pub async fn students_data(pool: &Pool, user: &SessionUser) -> Result<StudentsDa
 
 // ── Kurikulum (migrasi 17) ───────────────────────────────────────────────────
 
-fn norm_status(status: &str) -> &'static str {
-    match status {
-        "completed" => "completed",
-        "upcoming" => "upcoming",
-        _ => "active",
-    }
-}
 
-fn parse_progress(s: &str) -> Result<i16> {
-    let s = s.trim();
-    if s.is_empty() {
-        return Ok(0);
-    }
-    let n: i16 = s.parse().map_err(|_| anyhow::anyhow!("Progres harus berupa angka 0-100."))?;
-    if !(0..=100).contains(&n) {
-        bail_user!("Progres harus di antara 0 sampai 100.");
-    }
-    Ok(n)
-}
 
+/// Tambah materi ke kurikulum kelas.
+///
+/// Kurikulum TIDAK lagi punya judul/deskripsi/cakupan teksnya sendiri: semua
+/// itu sudah ada di materinya (`books`), dan menyalinnya ke sini berarti dua
+/// tempat yang bisa berbeda isinya. Yang disimpan kurikulum hanyalah TAUTAN ke
+/// materi + rentang halaman/ayat + progres + status.
+///
+/// `curriculum.title` (kolom NOT NULL warisan migrasi 17) diisi otomatis dari
+/// judul materi supaya tetap terbaca oleh query lama, bukan diketik pengguna.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_curriculum(
     pool: &Pool,
     class_id: i64,
-    title: &str,
-    description: &str,
-    scope_start: &str,
-    scope_end: &str,
-    progress_pct: &str,
-    status: &str,
     book_id: i64,
+    start_surah: i32,
+    start_unit: i32,
+    end_surah: i32,
+    end_unit: i32,
+    cur_surah: i32,
+    cur_unit: i32,
 ) -> Result<i64> {
-    let title = title.trim();
-    if title.is_empty() {
-        bail_user!("Judul materi/kitab wajib diisi.");
+    if book_id <= 0 {
+        bail_user!("Pilih materi terdaftar untuk kurikulum ini.");
     }
-    let pct = parse_progress(progress_pct)?;
+    let (judul, range) =
+        periksa_rentang(pool, book_id, start_surah, start_unit, end_surah, end_unit, cur_surah, cur_unit)
+            .await?;
     repo::create_curriculum(
         pool,
         class_id,
-        title,
-        description.trim(),
-        scope_start.trim(),
-        scope_end.trim(),
-        pct,
-        norm_status(status),
-        (book_id > 0).then_some(book_id),
+        &judul,
+        Some(book_id),
+        range,
     )
     .await
 }
 
+/// Ubah satu baris kurikulum. Aturan & bentuknya sama dengan
+/// [`create_curriculum`] — judul tetap ikut materinya, bukan diketik ulang.
 #[allow(clippy::too_many_arguments)]
 pub async fn update_curriculum(
     pool: &Pool,
     id: i64,
-    title: &str,
-    description: &str,
-    scope_start: &str,
-    scope_end: &str,
-    progress_pct: &str,
-    status: &str,
     book_id: i64,
+    start_surah: i32,
+    start_unit: i32,
+    end_surah: i32,
+    end_unit: i32,
+    cur_surah: i32,
+    cur_unit: i32,
 ) -> Result<()> {
-    let title = title.trim();
-    if title.is_empty() {
-        bail_user!("Judul materi/kitab wajib diisi.");
+    if book_id <= 0 {
+        bail_user!("Pilih materi terdaftar untuk kurikulum ini.");
     }
-    let pct = parse_progress(progress_pct)?;
+    let (judul, range) =
+        periksa_rentang(pool, book_id, start_surah, start_unit, end_surah, end_unit, cur_surah, cur_unit)
+            .await?;
     if !repo::update_curriculum(
         pool,
         id,
-        title,
-        description.trim(),
-        scope_start.trim(),
-        scope_end.trim(),
-        pct,
-        norm_status(status),
-        (book_id > 0).then_some(book_id),
+        &judul,
+        Some(book_id),
+        range,
     )
     .await?
     {
         bail_user!("Materi kurikulum tidak ditemukan.");
+    }
+    Ok(())
+}
+
+/// Setel materi & posisi yang SEDANG BERJALAN pada satu jadwal (migrasi 57).
+///
+/// `book_id` 0 = lepaskan penanda. Posisi divalidasi terhadap materinya persis
+/// seperti rentang kurikulum — dipakai ulang lewat [`periksa_rentang`] dengan
+/// awal = akhir, supaya "ayat 300 di surat berayat 286" ditolak di sini juga,
+/// bukan hanya di form.
+pub async fn set_schedule_current(
+    pool: &Pool,
+    schedule_id: i64,
+    book_id: i64,
+    surah: i32,
+    unit: i32,
+) -> Result<()> {
+    if book_id <= 0 {
+        if !repo::set_schedule_current(pool, schedule_id, None, None, None).await? {
+            bail_user!("Jadwal tidak ditemukan.");
+        }
+        return Ok(());
+    }
+    if !repo::schedule_book_in_curriculum(pool, schedule_id, book_id).await? {
+        bail_user!("Materi itu belum ada di kurikulum kelas ini. Tambahkan dulu di tab Kurikulum.");
+    }
+    let (s, u) = periksa_posisi(pool, book_id, surah, unit).await?;
+    if !repo::set_schedule_current(pool, schedule_id, Some(book_id), s, u).await? {
+        bail_user!("Jadwal tidak ditemukan.");
     }
     Ok(())
 }
