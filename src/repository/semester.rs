@@ -91,6 +91,28 @@ pub async fn overlapping_semester(
     Ok(r.map(row))
 }
 
+/// Perbarui satu semester. `false` = id tak ada.
+pub async fn update_semester(
+    pool: &Pool,
+    id: i64,
+    kind: &str,
+    year: i16,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE academic_semesters \
+                SET kind = $2, year = $3, start_date = $4, end_date = $5 \
+              WHERE id = $1",
+            &[&id, &kind, &year, &start, &end],
+        )
+        .await
+        .context("update_semester")?;
+    Ok(n > 0)
+}
+
 pub async fn delete_semester(pool: &Pool, id: i64) -> Result<bool> {
     let c = pool.get().await?;
     let n = c

@@ -12,6 +12,11 @@ pub struct LiveSesi {
     /// live|upcoming|break — status tampilan kartu sesi.
     pub state: String,
     pub time_label: String,
+    /// Jam sesi sudah lewat menurut WIB. Dipakai kartu "Jadwal Berikutnya"
+    /// untuk berhenti menawarkan sesi yang sebenarnya sudah usai — `state`
+    /// tak bisa dipakai karena sesi tetap `scheduled` sampai akhir hari.
+    #[serde(default)]
+    pub past: bool,
 }
 
 /// Satu baris tabel "Kehadiran Terbaru" di dashboard staf.

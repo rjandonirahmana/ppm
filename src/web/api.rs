@@ -105,25 +105,56 @@ mod ssr_helpers {
         }
     }
 
-    /// Map error service → ServerFnError. SEKALIGUS kirim alert Telegram
-    /// (service::telegram, no-op bila tak dikonfigurasi) untuk galat yang benar-
-    /// benar menandakan SERVER bermasalah.
+    /// Satu-satunya pesan yang dilihat pengguna untuk galat yang BUKAN salahnya.
     ///
-    /// TIDAK dialarmkan:
-    ///   • `UserError` (dari `bail_user!`) — validasi/aturan bisnis yang ditolak.
-    ///   • unauth/forbidden/session_expired — peristiwa sesi yang rutin, dan
-    ///     mengalarmkannya justru memberi penyerang cara membanjiri admin.
-    /// Pesan yang sampai ke pengguna sama persis di kedua kasus; yang berbeda
-    /// hanya apakah admin dibangunkan.
+    /// Ditampilkan `FetchError` sebagai baris penjelas di bawah "Gagal memuat
+    /// data", jadi ditulis sebagai kalimat utuh, bukan kode galat.
+    pub const GENERIC_SERVER_ERROR: &str =
+        "Terjadi gangguan di server. Silakan coba lagi beberapa saat.";
+
+    /// Map error service → ServerFnError, sekaligus memutuskan siapa yang boleh
+    /// membaca apa.
+    ///
+    /// Ada tiga golongan galat, dan hanya dua yang pesannya pantas sampai ke
+    /// pengguna:
+    ///
+    ///   • `UserError` (dari `bail_user!`) — validasi/aturan bisnis. Pesannya
+    ///     memang ditulis untuk dibaca pengguna → diteruskan apa adanya, tanpa
+    ///     alarm. Diambil dari `.0` (bukan `to_string()`) supaya `.context()`
+    ///     yang menumpuk di atasnya tidak menutupi pesan aslinya.
+    ///   • Penanda sesi (unauth/forbidden/session_expired) — klien BERCABANG
+    ///     pada string ini lewat `is_auth_error`, jadi wajib utuh. Tak
+    ///     dialarmkan: peristiwa rutin, dan mengalarmkannya memberi penyerang
+    ///     cara membanjiri admin.
+    ///   • Sisanya = server yang bermasalah. Rantai `anyhow`-nya memuat teks
+    ///     galat Postgres mentah, nama tabel/kolom, dan isi tiap `.context()`.
+    ///     Itu bahan diagnosis, BUKAN untuk layar pengguna — dulu semuanya
+    ///     mengalir ke `ServerFnError` dan dirender 200 karakter pertamanya oleh
+    ///     `FetchError`. Sekarang detailnya hanya ke log + Telegram, penggunanya
+    ///     dapat [`GENERIC_SERVER_ERROR`].
+    ///
+    /// `tracing::error!` di bawah bukan pelengkap: `telegram::report_error`
+    /// langsung berhenti bila Telegram tak dikonfigurasi (mis. saat
+    /// pengembangan), jadi tanpa log itu galat yang disembunyikan dari layar
+    /// akan hilang sama sekali dan tak bisa ditelusuri.
     pub fn err<E: Into<anyhow::Error>>(e: E) -> ServerFnError {
         let e: anyhow::Error = e.into();
-        let by_user = e.downcast_ref::<crate::service::UserError>().is_some();
-        let msg = e.to_string();
-        let low = msg.to_ascii_lowercase();
-        if !by_user && !crate::web::components::is_auth_error(&low) {
-            crate::service::telegram::report_error(500, "ServerFn", msg.clone());
+
+        if let Some(u) = e.downcast_ref::<crate::service::UserError>() {
+            return ServerFnError::new(u.0.clone());
         }
-        ServerFnError::new(msg)
+
+        let msg = e.to_string();
+        if crate::web::components::is_auth_error(&msg) {
+            return ServerFnError::new(msg);
+        }
+
+        // `{:#}` merangkai SELURUH sebab (“gagal ambil kelas: relation ... does
+        // not exist”), bukan cuma lapisan teratas seperti `to_string()`.
+        let detail = format!("{e:#}");
+        tracing::error!(error = ?e, "server fn gagal");
+        crate::service::telegram::report_error(500, "ServerFn", detail);
+        ServerFnError::new(GENERIC_SERVER_ERROR)
     }
 }
 
@@ -535,6 +566,22 @@ pub async fn create_semester_action(
     require_roles(&["admin", "dewan_guru"]).await?;
     let state = app_state().await?;
     crate::service::semester::create_semester(&state.pool, &kind, &year, &start_date, &end_date)
+        .await
+        .map_err(err)
+}
+
+/// Sunting semester yang sudah ada (ganjil/genap, tahun, rentang tanggal).
+#[server(UpdateSemester, "/api-fn")]
+pub async fn update_semester_action(
+    id: i64,
+    kind: String,
+    year: String,
+    start_date: String,
+    end_date: String,
+) -> Result<(), ServerFnError> {
+    require_roles(&["admin", "dewan_guru"]).await?;
+    let state = app_state().await?;
+    crate::service::semester::update_semester(&state.pool, id, &kind, &year, &start_date, &end_date)
         .await
         .map_err(err)
 }

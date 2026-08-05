@@ -8,7 +8,7 @@ use leptos_meta::Title;
 
 use crate::models::PendingAtt;
 use crate::web::api::{decide_pamong, pamong_data, permit_queue_data};
-use crate::web::components::{FetchError, DeviceFrame};
+use crate::web::components::{DeviceFrame, FetchError, JadwalDeck};
 
 #[component]
 pub fn VerifikasiPamongPage() -> impl IntoView {
@@ -134,6 +134,9 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                     </p>
                                                 </div>
                                             </div>
+
+                                            // ── Jadwal berikutnya, bisa digeser ──
+                                            <JadwalDeck sesi=d.today.clone() />
 
                                             // ── Tautan Tinjau Izin (migrasi 17) ──
                                             <Suspense fallback=|| ()>

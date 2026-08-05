@@ -13,7 +13,11 @@ pub struct LoginRow {
 
 /// Cari user untuk login — UTAMANYA nomor HP (login = phone), tetap dukung
 /// username/email/NIS sbg fallback (mis. admin seed). `login_phone` = HP hasil
-/// normalisasi 08→62 (bentuk tersimpan di DB).
+/// normalisasi 08→62. Pencocokan HP toleran terhadap format tersimpan yang
+/// kotor ('+62 858-…', '0858…'): digit-nya dibandingkan dengan bentuk 62.. dan
+/// 0.. — data lama/seed tidak ternormalisasi konsisten. ORDER BY + LIMIT
+/// supaya deterministik bila identitas kebetulan cocok di >1 baris (mis. NIS
+/// satu santri sama dengan username user lain).
 pub async fn find_user_for_login(
     pool: &Pool,
     login: &str,
@@ -24,8 +28,11 @@ pub async fn find_user_for_login(
         .query_opt(
             "SELECT id, full_name, role, password_hash, phone_number FROM users \
              WHERE (username = $1 OR email = $1 OR nis = $1 \
-                    OR phone_number = $1 OR phone_number = $2) \
-               AND is_active = TRUE",
+                    OR phone_number = $1 OR phone_number = $2 \
+                    OR ($2 <> '' AND regexp_replace(coalesce(phone_number, ''), '\\D', '', 'g') \
+                        IN ($2, '0' || substring($2 from 3)))) \
+               AND is_active = TRUE \
+             ORDER BY id LIMIT 1",
             &[&login, &login_phone],
         )
         .await

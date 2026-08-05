@@ -22,12 +22,36 @@ WHERE scan_date IS NULL;
 -- Justru duplikat itulah alasan migrasi ini ada. Tanpa dibereskan dulu,
 -- CREATE UNIQUE INDEX gagal dan seluruh rantai migrasi berhenti.
 -- Sisakan baris TERTUA (id terkecil) — itu tap pertama yang sebenarnya.
+--
+-- PERBAIKAN: kunci dedup di bawah HARUS sama persis dengan kunci index yang
+-- dipasang di langkah 4, dan dipecah dua mengikuti keduanya. Versi sebelumnya
+-- memakai SATU kunci yang juga memuat `class_session_id` — lebih sempit
+-- daripada index (a) yang tak memuat kolom itu — sehingga baris yang berbeda
+-- hanya di `class_session_id` lolos dari DELETE tapi tetap melanggar index,
+-- dan langkah 4 gagal. Itu yang terjadi di produksi: DELETE menyapu 0 baris,
+-- lalu CREATE UNIQUE INDEX berhenti dengan galat.
+--
+-- Catatan: penyebab bentrok di produksi bukan duplikat sungguhan melainkan
+-- `scan_date` lama yang tak sinkron dengan `session_date` — itu dibereskan
+-- migrasi 56, yang untuk database seperti itu harus dijalankan LEBIH DULU.
+-- Dedup di bawah tetap ada sebagai jaring pengaman.
+
+-- (a) Sepadan dengan uq_attendance_schedule_daily.
 DELETE FROM attendances a USING attendances b
  WHERE a.id > b.id
+   AND a.class_schedule_id IS NOT NULL
+   AND b.class_schedule_id IS NOT NULL
    AND a.user_id = b.user_id
    AND a.scan_date = b.scan_date
-   AND a.class_schedule_id IS NOT DISTINCT FROM b.class_schedule_id
-   AND a.class_session_id IS NOT DISTINCT FROM b.class_session_id;
+   AND a.class_schedule_id = b.class_schedule_id;
+
+-- (b) Sepadan dengan uq_attendance_freescan_daily.
+DELETE FROM attendances a USING attendances b
+ WHERE a.id > b.id
+   AND a.class_schedule_id IS NULL AND b.class_schedule_id IS NULL
+   AND a.class_session_id IS NULL AND b.class_session_id IS NULL
+   AND a.user_id = b.user_id
+   AND a.scan_date = b.scan_date;
 
 -- ═ 4) UNIQUE yang BENAR-BENAR mencerminkan aturan dedup aplikasi ════════════
 -- Versi awal migrasi ini memakai (user_id, COALESCE(class_session_id,-1),

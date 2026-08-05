@@ -53,12 +53,25 @@ pub async fn upload_proof(
         return (StatusCode::BAD_REQUEST, "File bukti tidak valid (maks 10MB).").into_response();
     };
 
+    // Dulu APA PUN disimpan sebagai `.jpg` berlabel `image/jpeg` tanpa
+    // diperiksa — bukti bayar PNG pun ikut salah label, dan berkas yang sama
+    // sekali bukan gambar tetap diterima. Sekarang tipenya dibaca dari isi
+    // berkas, lalu label & ekstensinya mengikuti hasil itu.
+    let Some(content_type) = crate::web::filetype::sniff_image(&bytes) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Bukti bayar harus berupa gambar (jpg/png/webp/gif).",
+        )
+            .into_response();
+    };
+
     let key = format!(
-        "bills/{}-{}.jpg",
+        "bills/{}-{}.{}",
         chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
-        claims.user_id
+        claims.user_id,
+        crate::web::filetype::ext_for(content_type)
     );
-    let url = match storage.upload_bytes(bytes, &key, "image/jpeg").await {
+    let url = match storage.upload_bytes(bytes, &key, content_type).await {
         Ok(u) => u,
         Err(e) => {
             crate::service::telegram::report_error(502, "Bill proof upload", e.to_string());

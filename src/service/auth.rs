@@ -63,6 +63,10 @@ pub async fn login(
     password: &str,
 ) -> Result<LoginOk> {
     let login = login.trim();
+    // Sandi awal/reset dikirim lewat WhatsApp, dan menyalin dari bubble WA
+    // sangat sering ikut membawa spasi/newline — akibatnya tempel-then-login
+    // gagal sementara ketik manual berhasil ("kadang bisa kadang tidak").
+    let password = password.trim();
     let phone = normalize_phone(login);
 
     // Kunci hitungan memakai bentuk ternormalisasi bila input berupa nomor HP,

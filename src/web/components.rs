@@ -418,19 +418,30 @@ pub const NAV_SANTRI: &[NavDef] = &[
 // dgn tab Kelas/Sesi) — dulu 2 item terpisah; santri/ortu tetap via /sesi
 // standalone (nav mereka tak berubah).
 
-/// Nav peran: pamong (supervisor). Beranda → /verifikasi-pamong.
-pub const NAV_PAMONG: &[NavDef] = &[
-    NavDef { icon: "dashboard", label: "Beranda", href: "/verifikasi-pamong" },
-    NavDef { icon: "calendar_month", label: "Kalender", href: "/kalender" },
-    NavDef { icon: "groups", label: "Students", href: "/students" },
-    NavDef { icon: "school", label: "Kelas", href: "/kelas" },
-    NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
-    NavDef { icon: "group_add", label: "User Control", href: "/kontrol-pengguna" },
-];
+/// Deret nav STAF — satu-satunya yang berbeda antar peran adalah tujuan
+/// "Beranda", jadi itulah satu-satunya yang jadi parameter.
+///
+/// Dulu tiap peran menuliskan keenam itemnya sendiri. Hasilnya tiga salinan
+/// identik (empat, dengan `NAV_GURU` yang bahkan tak pernah dipakai): menambah
+/// satu menu berarti menyunting semuanya, dan yang terlewat baru ketahuan saat
+/// navbar seorang peran terlihat beda sendiri. Makro dipakai — bukan fungsi —
+/// supaya hasilnya tetap `&'static [NavDef]` yang bisa dipakai di `const`.
+macro_rules! nav_staf {
+    ($beranda:expr) => {
+        &[
+            NavDef { icon: "dashboard", label: "Beranda", href: $beranda },
+            NavDef { icon: "calendar_month", label: "Kalender", href: "/kalender" },
+            NavDef { icon: "groups", label: "Students", href: "/students" },
+            NavDef { icon: "school", label: "Kelas", href: "/kelas" },
+            NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
+            NavDef { icon: "group_add", label: "User Control", href: "/kontrol-pengguna" },
+        ]
+    };
+}
 
-/// Tampilan error fetch yang JUJUR: error autentikasi → ajak login; error lain
-/// (mis. DB/migrasi) → tampilkan pesannya + tombol Coba Lagi. Mencegah pesan
-/// menyesatkan "Sesi berakhir" untuk error non-auth.
+/// Nav peran: pamong (supervisor). Beranda → /verifikasi-pamong.
+pub const NAV_PAMONG: &[NavDef] = nav_staf!("/verifikasi-pamong");
+
 /// Apakah pesan galat ini berarti "pengguna harus masuk lagi"?
 ///
 /// SATU tempat, dipakai ~26 halaman yang dulu masing-masing mencocokkan string
@@ -443,6 +454,14 @@ pub fn is_auth_error(msg: &str) -> bool {
     m.contains("unauth") || m.contains("session_expired") || m.contains("forbidden")
 }
 
+/// Tampilan galat fetch yang JUJUR: galat autentikasi → ajak masuk lagi; galat
+/// lain → pesan + tombol Coba Lagi. Mencegah "Sesi berakhir" yang menyesatkan
+/// untuk galat non-auth.
+///
+/// `err` di sini SUDAH disaring `api::err()`: hanya pesan `UserError` (aturan
+/// bisnis) dan penanda sesi yang lolos apa adanya, sedangkan galat server
+/// datang sebagai kalimat generik. Jadi merender isinya ke layar aman — rantai
+/// galat Postgres tak pernah sampai ke sini.
 #[component]
 pub fn FetchError(err: String) -> impl IntoView {
     // "session_expired" = umur token habis (wajar); "unauth" = token cacat/tak
@@ -512,34 +531,11 @@ pub fn EmptyState(
 }
 
 /// Nav peran: admin. Beranda → /staf.
-pub const NAV_STAF: &[NavDef] = &[
-    NavDef { icon: "dashboard", label: "Beranda", href: "/staf" },
-    NavDef { icon: "calendar_month", label: "Kalender", href: "/kalender" },
-    NavDef { icon: "groups", label: "Students", href: "/students" },
-    NavDef { icon: "school", label: "Kelas", href: "/kelas" },
-    NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
-    NavDef { icon: "group_add", label: "User Control", href: "/kontrol-pengguna" },
-];
+pub const NAV_STAF: &[NavDef] = nav_staf!("/staf");
 
-/// Nav peran: guru (teacher). Beranda → /guru.
-pub const NAV_GURU: &[NavDef] = &[
-    NavDef { icon: "dashboard", label: "Beranda", href: "/guru" },
-    NavDef { icon: "calendar_month", label: "Kalender", href: "/kalender" },
-    NavDef { icon: "groups", label: "Students", href: "/students" },
-    NavDef { icon: "school", label: "Kelas", href: "/kelas" },
-    NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
-    NavDef { icon: "group_add", label: "User Control", href: "/kontrol-pengguna" },
-];
-
-/// Nav peran: dewan guru. Beranda → /dewan-guru.
-pub const NAV_DEWAN: &[NavDef] = &[
-    NavDef { icon: "dashboard", label: "Beranda", href: "/dewan-guru" },
-    NavDef { icon: "calendar_month", label: "Kalender", href: "/kalender" },
-    NavDef { icon: "groups", label: "Students", href: "/students" },
-    NavDef { icon: "school", label: "Kelas", href: "/kelas" },
-    NavDef { icon: "bar_chart", label: "Laporan", href: "/laporan" },
-    NavDef { icon: "group_add", label: "User Control", href: "/kontrol-pengguna" },
-];
+/// Nav peran: dewan guru (termasuk 'teacher' lama, digabung di migrasi 36).
+/// Beranda → /dewan-guru.
+pub const NAV_DEWAN: &[NavDef] = nav_staf!("/dewan-guru");
 
 /// Nav peran: orang tua.
 pub const NAV_ORTU: &[NavDef] = &[
@@ -649,35 +645,131 @@ pub fn Sheet(
     #[prop(optional)] center_title: bool,
     children: Children,
 ) -> impl IntoView {
+    let panel: NodeRef<leptos::html::Div> = NodeRef::new();
+
     // Esc menutup — bawaan yang diharapkan dari sebuah dialog, dan satu-satunya
     // jalan keluar lewat papan ketik. Listener dipasang di `document` (bukan
     // panel) supaya tetap bekerja sebelum ada elemen yang terfokus.
+    //
+    // Tab DIKURUNG di dalam panel. Tanpa itu, `aria-modal="true"` berbohong:
+    // pembaca layar diberi tahu ini modal, tapi Tab tetap berjalan ke tautan
+    // dan tombol di halaman DI BALIK scrim — yang tak terlihat, tak bisa
+    // diklik, dan tak jelas di mana fokusnya berada.
+    //
+    // Listener juga DILEPAS saat sheet ditutup. Versi lama memakai
+    // `cb.forget()`, jadi tiap kali sheet dibuka satu listener menumpuk lagi di
+    // `document` dan yang lama tetap memanggil `on_close` milik sheet yang
+    // sudah tak ada.
     #[cfg(target_arch = "wasm32")]
     {
         use wasm_bindgen::closure::Closure;
         use wasm_bindgen::JsCast;
+
+        /// Elemen yang bisa menerima fokus papan ketik, urut sesuai dokumen.
+        const FOKUSABEL: &str = "a[href], button:not([disabled]), \
+             input:not([disabled]), select:not([disabled]), \
+             textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+
         Effect::new(move |_| {
             let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
                 return;
             };
+            let Some(panel_el) = panel.get() else {
+                return;
+            };
+
+            // Elemen yang terfokus SEBELUM sheet muncul — dikembalikan saat
+            // ditutup supaya pengguna papan ketik kembali ke tempat semula,
+            // bukan terlempar ke awal halaman.
+            let pemicu = doc
+                .active_element()
+                .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok());
+
+            // Fokus dipindah ke elemen pertama di dalam panel; kalau tak ada,
+            // ke panelnya sendiri (tabindex=-1) agar Esc & pembaca layar
+            // langsung berada di konteks yang benar.
+            let fokus_pertama = panel_el
+                .query_selector(FOKUSABEL)
+                .ok()
+                .flatten()
+                .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok());
+            match fokus_pertama {
+                Some(el) => {
+                    let _ = el.focus();
+                }
+                None => {
+                    let _ = panel_el.focus();
+                }
+            }
+
+            let trap_el = panel_el.clone();
+            let trap_doc = doc.clone();
             let cb = Closure::<dyn FnMut(web_sys::Event)>::new(move |e: web_sys::Event| {
-                if let Some(k) = e.dyn_ref::<web_sys::KeyboardEvent>() {
-                    if k.key() == "Escape" {
-                        on_close();
+                let Some(k) = e.dyn_ref::<web_sys::KeyboardEvent>() else {
+                    return;
+                };
+                match k.key().as_str() {
+                    "Escape" => on_close(),
+                    "Tab" => {
+                        let Ok(list) = trap_el.query_selector_all(FOKUSABEL) else {
+                            return;
+                        };
+                        let n = list.length();
+                        if n == 0 {
+                            return;
+                        }
+                        let el_ke = |i: u32| {
+                            list.item(i)
+                                .and_then(|n| n.dyn_into::<web_sys::HtmlElement>().ok())
+                        };
+                        let (Some(awal), Some(akhir)) = (el_ke(0), el_ke(n - 1)) else {
+                            return;
+                        };
+                        let aktif = trap_doc.active_element();
+                        // Hanya ujung-ujungnya yang dibelokkan; Tab di tengah
+                        // dibiarkan berjalan normal.
+                        let di_awal = aktif.as_ref().map(|a| a == awal.as_ref()) == Some(true);
+                        let di_akhir = aktif.as_ref().map(|a| a == akhir.as_ref()) == Some(true);
+                        if k.shift_key() && di_awal {
+                            e.prevent_default();
+                            let _ = akhir.focus();
+                        } else if !k.shift_key() && di_akhir {
+                            e.prevent_default();
+                            let _ = awal.focus();
+                        }
                     }
+                    _ => {}
                 }
             });
-            let _ = doc
-                .add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
-            // `forget`: sheet hidup selama panel tampil dan halaman ini tak
-            // pernah membuat listener berulang kali dalam satu sesi tampil.
-            cb.forget();
+
+            let _ =
+                doc.add_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
+
+            // SendWrapper: Closure/HtmlElement bukan Send, on_cleanup butuh Send
+            // — aman karena cleanup jalan di thread browser yang sama.
+            let held = send_wrapper::SendWrapper::new((doc, cb, pemicu));
+            on_cleanup(move || {
+                let (doc, cb, pemicu) = held.take();
+                let _ = doc
+                    .remove_event_listener_with_callback("keydown", cb.as_ref().unchecked_ref());
+                if let Some(el) = pemicu {
+                    let _ = el.focus();
+                }
+            });
         });
     }
 
     view! {
         <div class="ppm-scrim" on:click=move |_| on_close()></div>
-        <div class="ppm-sheet p-6" role="dialog" aria-modal="true">
+        <div
+            node_ref=panel
+            class="ppm-sheet p-6"
+            role="dialog"
+            aria-modal="true"
+            // Agar panel bisa menerima fokus saat tak ada elemen fokusabel di
+            // dalamnya — tanpa ini fokus tertinggal di luar modal.
+            tabindex="-1"
+        >
             <div class="ppm-sheet-grip w-10 h-1.5 bg-outline-variant rounded-full mx-auto mb-5"></div>
             {if center_title {
                 view! {
@@ -955,4 +1047,128 @@ fn ProgressUnitCell(label: i32, status: u8) -> impl IntoView {
     view! {
         <div class=cls>{label}</div>
     }
+}
+
+/// Dek "Jadwal Berikutnya" yang bisa DIGESER ke jadwal-jadwal sesudahnya.
+///
+/// Sebelumnya kartu ini hanya menampilkan SATU sesi — hasil `today.iter()
+/// .find(..)` — sehingga pengajar yang ingin tahu "habis ini apa lagi" harus
+/// turun ke daftar "Sesi Hari Ini" di bawah. Padahal isinya sesi yang sama,
+/// hanya disajikan dua kali dengan bentuk berbeda. Sekarang kartu besarnya
+/// sendiri yang bisa digeser, dan daftar di bawah tetap ada sebagai ikhtisar.
+///
+/// Sesi ber-`state == "break"` disaring — sama seperti aturan lama untuk
+/// memilih "jadwal berikutnya" — karena jeda bukan sesuatu yang dibuka.
+///
+/// Dipakai beranda guru/dewan guru (`analisis`) dan pamong
+/// (`verifikasi_pamong`) supaya keduanya tak punya salinan markup sendiri.
+#[component]
+pub fn JadwalDeck(sesi: Vec<crate::models::LiveSesi>) -> impl IntoView {
+    // Yang layak ditawarkan di kartu besar hanyalah sesi yang MASIH relevan:
+    //   • sedang berlangsung → selalu tampil, walau jam mulainya sudah lewat;
+    //   • akan datang → tampil selama jamnya belum lewat;
+    //   • jeda (`break`) & yang jamnya sudah lewat → tidak.
+    //
+    // Sesi yang sudah lewat TIDAK hilang — ia tetap ada di daftar "Sesi Hari
+    // Ini" di bawah, yang memang perannya sebagai catatan hari ini. Tanpa
+    // saringan ini kartu paling atas bisa menawarkan sesi subuh 04:40 pada
+    // pukul 15:50, karena `status` sesi tak pernah bergerak sendiri.
+    let sesi: Vec<_> = sesi
+        .into_iter()
+        .filter(|s| s.state == "live" || (s.state != "break" && !s.past))
+        .collect();
+    let total = sesi.len();
+    let aktif = RwSignal::new(0usize);
+    let track: NodeRef<leptos::html::Div> = NodeRef::new();
+
+    if total == 0 {
+        return ().into_any();
+    }
+
+    // Label kartu mengikuti POSISI, bukan disamakan semua: kartu ke-2 dan
+    // seterusnya bukan "jadwal berikutnya" lagi, dan menyebutnya begitu di lima
+    // kartu sekaligus membuat labelnya kehilangan arti.
+    let kartu = sesi
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(i, s)| {
+            let live = s.state == "live";
+            let label = if live {
+                "SEDANG BERLANGSUNG"
+            } else if i == 0 {
+                "JADWAL BERIKUTNYA"
+            } else {
+                "JADWAL SESUDAHNYA"
+            };
+            view! {
+                <div class="spiritual-gradient rounded-2xl p-5 text-on-primary shadow-lg shadow-primary/20">
+                    <p class="text-[11px] font-bold tracking-[0.2em] opacity-80">{label}</p>
+                    <p class="text-display-md mt-1 truncate">{s.title.clone()}</p>
+                    <p class="text-body-sm opacity-85 mt-1 truncate">
+                        {format!("{} • {} • {} santri", s.time_label, s.teacher, s.santri_count)}
+                    </p>
+                    <a
+                        href=format!("/sesi/{}", s.id)
+                        class="mt-4 w-full py-3 rounded-xl bg-primary-fixed text-primary font-bold text-body-sm flex items-center justify-center gap-2 press"
+                    >
+                        <span class="material-symbols-outlined text-[18px]">"play_circle"</span>
+                        "Lihat Sesi"
+                    </a>
+                </div>
+            }
+        })
+        .collect_view();
+
+    // Satu sesi saja: tak ada yang bisa digeser, jadi jangan pasang dek maupun
+    // titik indikator yang menjanjikan sesuatu yang tak ada.
+    if total == 1 {
+        return view! { <div>{kartu}</div> }.into_any();
+    }
+
+    // Posisi dihitung dari scrollLeft supaya titik indikator tetap jujur
+    // walau pengguna menggeser separuh jalan lalu melepas.
+    let on_scroll = move |_| {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(el) = track.get_untracked() {
+            let lebar = el.client_width();
+            if lebar > 0 {
+                let i = (el.scroll_left() as f64 / lebar as f64 + 0.5).floor() as usize;
+                aktif.set(i.min(total - 1));
+            }
+        }
+    };
+
+    view! {
+        <div>
+            <div
+                node_ref=track
+                on:scroll=on_scroll
+                class="ppm-swipe"
+                role="group"
+                aria-label="Jadwal berikutnya — geser untuk melihat jadwal lain"
+            >
+                {kartu}
+            </div>
+            // Titik indikator: penanda "masih ada lagi di samping", sekaligus
+            // penunjuk posisi. Sengaja TIDAK bisa diklik — ia melaporkan
+            // keadaan, dan menggeser tetap cara utamanya.
+            <div class="flex items-center justify-center gap-1.5 mt-2.5" aria-hidden="true">
+                {(0..total)
+                    .map(|i| {
+                        view! {
+                            <span class=move || {
+                                if aktif.get() == i {
+                                    "w-4 h-1.5 rounded-full bg-primary transition-all"
+                                } else {
+                                    "w-1.5 h-1.5 rounded-full bg-outline-variant transition-all"
+                                }
+                            }></span>
+                        }
+                    })
+                    .collect_view()}
+            </div>
+        </div>
+    }
+    .into_any()
 }

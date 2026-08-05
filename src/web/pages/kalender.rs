@@ -12,6 +12,7 @@ use leptos_meta::Title;
 use crate::models::{CalendarItem, SemesterItem, SessionUser};
 use crate::web::api::{
     academic_calendar_data, create_semester_action, delete_semester_action, semesters_data,
+    update_semester_action,
 };
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 
@@ -283,8 +284,20 @@ fn SemesterManager() -> impl IntoView {
     let end = RwSignal::new(String::new());
     let msg = RwSignal::new(Option::<(bool, String)>::None);
     let busy = RwSignal::new(false);
+    // `Some(id)` = form sedang menyunting semester itu, `None` = membuat baru.
+    // Satu form dipakai untuk keduanya: bidangnya sama persis, dan dua form
+    // terpisah hanya akan jadi dua salinan markup yang harus dijaga seiring.
+    let editing = RwSignal::new(Option::<i64>::None);
 
-    let add = move |ev: leptos::ev::SubmitEvent| {
+    let bersihkan = move || {
+        editing.set(None);
+        year.set(String::new());
+        start.set(String::new());
+        end.set(String::new());
+        kind.set("ganjil".to_string());
+    };
+
+    let simpan = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
         if busy.get_untracked() {
             return;
@@ -293,13 +306,26 @@ fn SemesterManager() -> impl IntoView {
         msg.set(None);
         let (k, y, s, e) =
             (kind.get_untracked(), year.get_untracked(), start.get_untracked(), end.get_untracked());
+        let id = editing.get_untracked();
         leptos::task::spawn_local(async move {
-            match create_semester_action(k, y, s, e).await {
-                Ok(_) => {
-                    msg.set(Some((true, "Semester dibuat. Klik \"Aktifkan\" agar jadi acuan.".into())));
-                    year.set(String::new());
-                    start.set(String::new());
-                    end.set(String::new());
+            // Sunting dan buat-baru memakai aturan yang sama di server
+            // (service::semester::periksa_masukan); yang beda hanya barisnya
+            // sendiri tak dihitung sebagai tabrakan saat menyunting.
+            let hasil = match id {
+                Some(id) => update_semester_action(id, k, y, s, e).await.map(|_| ()),
+                None => create_semester_action(k, y, s, e).await.map(|_| ()),
+            };
+            match hasil {
+                Ok(()) => {
+                    let teks = if id.is_some() {
+                        "Perubahan semester tersimpan."
+                    } else {
+                        // Tak ada langkah "aktifkan": yang sedang berjalan
+                        // ditentukan tanggal hari ini, bukan tombol.
+                        "Semester dibuat."
+                    };
+                    msg.set(Some((true, teks.into())));
+                    bersihkan();
                     data.refetch();
                 }
                 Err(er) => {
@@ -309,6 +335,17 @@ fn SemesterManager() -> impl IntoView {
             }
             busy.set(false);
         });
+    };
+
+    // Isi form dengan nilai baris yang dipilih, lalu tandai sedang menyunting.
+    let mulai_edit = move |s: SemesterItem| {
+        kind.set(s.kind.clone());
+        year.set(s.year.to_string());
+        start.set(s.start_date.clone());
+        end.set(s.end_date.clone());
+        editing.set(Some(s.id));
+        msg.set(None);
+        open.set(true);
     };
     let del = move |id: i64| {
         leptos::task::spawn_local(async move {
@@ -342,7 +379,7 @@ fn SemesterManager() -> impl IntoView {
                         .then(|| {
                             view! {
                                 <div class="space-y-3 pt-1">
-                                    <form class="space-y-2" method="post" on:submit=add>
+                                    <form class="space-y-2" method="post" on:submit=simpan>
                                         <div class="grid grid-cols-2 gap-2">
                                             <select
                                                 class=field
@@ -395,13 +432,44 @@ fn SemesterManager() -> impl IntoView {
                                                     view! { <div class=cls>{t}</div> }
                                                 })
                                         }}
-                                        <button
-                                            type="submit"
-                                            class="w-full py-2.5 rounded-lg bg-primary text-on-primary font-semibold text-body-sm disabled:opacity-60"
-                                            disabled=move || busy.get()
-                                        >
-                                            {move || if busy.get() { "Menyimpan…" } else { "Tambah Semester" }}
-                                        </button>
+                                        <div class="flex gap-2">
+                                            // "Batal" hanya saat menyunting — saat membuat baru tak
+                                            // ada yang perlu dibatalkan, dan tombol yang tak berguna
+                                            // cuma bikin ragu.
+                                            {move || {
+                                                editing
+                                                    .get()
+                                                    .map(|_| {
+                                                        view! {
+                                                            <button
+                                                                type="button"
+                                                                class="px-4 py-2.5 rounded-lg border border-outline-variant text-on-surface-variant font-semibold text-body-sm press"
+                                                                on:click=move |_| {
+                                                                    bersihkan();
+                                                                    msg.set(None);
+                                                                }
+                                                            >
+                                                                "Batal"
+                                                            </button>
+                                                        }
+                                                    })
+                                            }}
+                                            <button
+                                                type="submit"
+                                                class="flex-1 py-2.5 rounded-lg bg-primary text-on-primary font-semibold text-body-sm disabled:opacity-60"
+                                                disabled=move || busy.get()
+                                            >
+                                                {move || {
+                                                    if busy.get() {
+                                                        "Menyimpan…"
+                                                    } else if editing.get().is_some() {
+                                                        "Simpan Perubahan"
+                                                    } else {
+                                                        "Tambah Semester"
+                                                    }
+                                                }}
+                                            </button>
+                                        </div>
                                     </form>
                                     <Suspense fallback=|| ()>
                                         {move || {
@@ -420,7 +488,17 @@ fn SemesterManager() -> impl IntoView {
                                                             <div class="space-y-1.5">
                                                                 {list
                                                                     .into_iter()
-                                                                    .map(|s| view! { <SemesterRow s=s del=del /> })
+                                                                    .map(|s| {
+                                                                        let sedang = editing.get() == Some(s.id);
+                                                                        view! {
+                                                                            <SemesterRow
+                                                                                s=s
+                                                                                del=del
+                                                                                edit=mulai_edit
+                                                                                sedang_disunting=sedang
+                                                                            />
+                                                                        }
+                                                                    })
                                                                     .collect_view()}
                                                             </div>
                                                         }
@@ -441,17 +519,30 @@ fn SemesterManager() -> impl IntoView {
 }
 
 #[component]
-fn SemesterRow(s: SemesterItem, del: impl Fn(i64) + Copy + Send + 'static) -> impl IntoView {
+fn SemesterRow(
+    s: SemesterItem,
+    del: impl Fn(i64) + Copy + Send + 'static,
+    edit: impl Fn(SemesterItem) + Copy + Send + 'static,
+    /// Baris inilah yang sedang dimuat di form — ditandai agar jelas nilai di
+    /// form itu milik siapa, terutama saat daftarnya panjang.
+    sedang_disunting: bool,
+) -> impl IntoView {
     let id = s.id;
     // is_active = SEDANG BERJALAN (dihitung dari tanggal hari ini di server).
     let running = s.is_active;
+    let label = s.label.clone();
+    let rentang = format!("{} → {}", s.start_date, s.end_date);
+    let untuk_edit = s.clone();
+    let cls = if sedang_disunting {
+        "flex items-center gap-2 bg-surface-container rounded-lg px-3 py-2 ring-2 ring-primary"
+    } else {
+        "flex items-center gap-2 bg-surface-container rounded-lg px-3 py-2"
+    };
     view! {
-        <div class="flex items-center gap-2 bg-surface-container rounded-lg px-3 py-2">
+        <div class=cls>
             <div class="flex-1 min-w-0">
-                <p class="text-body-sm font-semibold text-on-background truncate">{s.label}</p>
-                <p class="text-[10px] text-on-surface-variant">
-                    {format!("{} → {}", s.start_date, s.end_date)}
-                </p>
+                <p class="text-body-sm font-semibold text-on-background truncate">{label}</p>
+                <p class="text-[10px] text-on-surface-variant">{rentang}</p>
             </div>
             {running
                 .then(|| {
@@ -461,6 +552,13 @@ fn SemesterRow(s: SemesterItem, del: impl Fn(i64) + Copy + Send + 'static) -> im
                         </span>
                     }
                 })}
+            <button
+                class="w-8 h-8 rounded-lg text-primary hover:bg-secondary-container flex items-center justify-center press"
+                on:click=move |_| edit(untuk_edit.clone())
+                aria-label="Sunting semester"
+            >
+                <span class="material-symbols-outlined text-[18px]">"edit"</span>
+            </button>
             <button
                 class="w-8 h-8 rounded-lg text-error hover:bg-error-container flex items-center justify-center press"
                 on:click=move |_| del(id)

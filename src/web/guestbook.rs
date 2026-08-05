@@ -82,16 +82,28 @@ pub async fn checkin(
     // Simpan wajah ke RustFS (kalau storage aktif & ada foto).
     let mut face_url: Option<String> = None;
     if let (Some(storage), Some(bytes)) = (state.storage.clone(), file_bytes) {
+        // Tipe dibaca dari isi berkas, bukan diasumsikan `image/jpeg` seperti
+        // dulu. Bukan gambar → fotonya saja yang dilewati; check-in tamu TIDAK
+        // digagalkan, sama seperti kegagalan unggah di bawah. Tamu yang sudah
+        // berdiri di depan mesin lebih penting daripada satu foto wajah.
+        let mime = crate::web::filetype::sniff_image(&bytes);
         if !bytes.is_empty() && bytes.len() <= crate::web::limits::IMAGE_MAX {
-            let key = format!(
-                "guests/{}-{}.jpg",
-                chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
-                code
-            );
-            match storage.upload_bytes(bytes, &key, "image/jpeg").await {
-                Ok(u) => face_url = Some(u),
-                Err(e) => {
-                    crate::service::telegram::report_error(502, "Guest face upload", e.to_string());
+            if let Some(content_type) = mime {
+                let key = format!(
+                    "guests/{}-{}.{}",
+                    chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                    code,
+                    crate::web::filetype::ext_for(content_type)
+                );
+                match storage.upload_bytes(bytes, &key, content_type).await {
+                    Ok(u) => face_url = Some(u),
+                    Err(e) => {
+                        crate::service::telegram::report_error(
+                            502,
+                            "Guest face upload",
+                            e.to_string(),
+                        );
+                    }
                 }
             }
         }

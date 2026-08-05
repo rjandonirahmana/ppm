@@ -110,6 +110,8 @@ web-sys = { version = "0.3", features = [
     "PointerEvent",
     "DomRect",
     "HtmlImageElement",
+    # Focus trap Sheet (web/components.rs): query_selector_all → NodeList.
+    "NodeList",
 ] }
 
 # ── Server-only deps (bukan wasm32) ────────────────────────────────────────────

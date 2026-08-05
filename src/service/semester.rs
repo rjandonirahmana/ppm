@@ -57,15 +57,23 @@ pub async fn active_label(pool: &Pool) -> String {
     }
 }
 
-/// Buat semester baru (admin). `year`/tanggal dari teks form. Menolak rentang
-/// terbalik (mundur) & yang tumpang tindih dgn semester lain (ujung sama = tabrakan).
-pub async fn create_semester(
+/// Periksa masukan form semester dan ubah jadi nilai yang siap disimpan.
+///
+/// SATU tempat untuk aturan yang berlaku sama bagi pembuatan maupun penyuntingan
+/// — kalau tidak, "tanggal tak boleh mundur" dan batas tahun harus ditulis dua
+/// kali dan cepat atau lambat yang satu ikut berubah sementara yang lain tidak.
+///
+/// `exclude_id` = baris yang TIDAK dihitung sebagai tabrakan: 0 saat membuat
+/// baru, dan id-nya sendiri saat menyunting — tanpa itu setiap semester selalu
+/// bertabrakan dengan dirinya sendiri dan tak pernah bisa disimpan.
+async fn periksa_masukan(
     pool: &Pool,
     kind: &str,
     year: &str,
     start: &str,
     end: &str,
-) -> Result<i64> {
+    exclude_id: i64,
+) -> Result<(i16, NaiveDate, NaiveDate)> {
     if !matches!(kind, "ganjil" | "genap") {
         bail_user!("Jenis semester harus ganjil atau genap.");
     }
@@ -85,7 +93,7 @@ pub async fn create_semester(
     }
     // Tak boleh tumpang tindih dengan semester lain (ujung yang sama pun ditolak —
     // mis. ganjil s/d 1 Agu → genap harus mulai ≥ 2 Agu).
-    if let Some(bentrok) = repo::overlapping_semester(pool, sd, ed, 0).await? {
+    if let Some(bentrok) = repo::overlapping_semester(pool, sd, ed, exclude_id).await? {
         bail_user!(
             "Rentang tanggal bertabrakan dengan {} ({} → {}). Mulai minimal sehari setelahnya.",
             semester_label(&bentrok.kind, bentrok.year),
@@ -93,7 +101,40 @@ pub async fn create_semester(
             bentrok.end_date
         );
     }
+    Ok((year, sd, ed))
+}
+
+/// Buat semester baru (admin). `year`/tanggal dari teks form. Menolak rentang
+/// terbalik (mundur) & yang tumpang tindih dgn semester lain (ujung sama = tabrakan).
+pub async fn create_semester(
+    pool: &Pool,
+    kind: &str,
+    year: &str,
+    start: &str,
+    end: &str,
+) -> Result<i64> {
+    let (year, sd, ed) = periksa_masukan(pool, kind, year, start, end, 0).await?;
     repo::create_semester(pool, kind, year, sd, ed).await
+}
+
+/// Sunting semester yang sudah ada. Aturannya sama persis dengan pembuatan —
+/// bedanya hanya baris ini sendiri tidak dihitung sebagai tabrakan.
+///
+/// Status "SEDANG BERJALAN" tak ikut disunting: ia dihitung dari tanggal hari
+/// ini (`to_item`), jadi mengubah rentangnya sudah otomatis memindahkannya.
+pub async fn update_semester(
+    pool: &Pool,
+    id: i64,
+    kind: &str,
+    year: &str,
+    start: &str,
+    end: &str,
+) -> Result<()> {
+    let (year, sd, ed) = periksa_masukan(pool, kind, year, start, end, id).await?;
+    if !repo::update_semester(pool, id, kind, year, sd, ed).await? {
+        bail_user!("Semester tidak ditemukan.");
+    }
+    Ok(())
 }
 
 pub async fn delete_semester(pool: &Pool, id: i64) -> Result<()> {

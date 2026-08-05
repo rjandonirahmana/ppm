@@ -11,7 +11,7 @@ use leptos_meta::Title;
 use crate::models::{AnalisisData, ClassRank, PermitQueueData, TeacherInsight, TrendPoint};
 use crate::web::api::{analisis_data, permit_queue_data};
 use crate::web::components::{
-    DeviceFrame, FetchError, MobileHeader,
+    DeviceFrame, FetchError, JadwalDeck, MobileHeader,
 };
 use crate::web::pages::MaterialsWidget;
 
@@ -95,8 +95,6 @@ fn AnalisisBody(
         today,
     } = d;
     let scope_note = if is_dewan { "Seluruh pesantren" } else { "Kelas yang Anda ampu" };
-    // Jadwal berikutnya = sesi hari ini pertama yang live/terjadwal (hero).
-    let next = today.iter().find(|s| s.state != "break").cloned();
 
     view! {
         <div>
@@ -125,29 +123,8 @@ fn AnalisisBody(
         <div class="space-y-6 md:space-y-0 md:grid md:grid-cols-3 md:gap-6 md:items-start">
         <div class="md:col-span-2 space-y-5">
 
-        // ── Hero: jadwal berikutnya (mockup dewan guru) ─────────────────────
-        {next
-            .map(|s| {
-                let live = s.state == "live";
-                view! {
-                    <div class="spiritual-gradient rounded-2xl p-5 text-on-primary shadow-lg shadow-primary/20">
-                        <p class="text-[11px] font-bold tracking-[0.2em] opacity-80">
-                            {if live { "SEDANG BERLANGSUNG" } else { "JADWAL BERIKUTNYA" }}
-                        </p>
-                        <p class="text-display-md mt-1">{s.title.clone()}</p>
-                        <p class="text-body-sm opacity-85 mt-1">
-                            {format!("{} • {} • {} santri", s.time_label, s.teacher, s.santri_count)}
-                        </p>
-                        <a
-                            href=format!("/sesi/{}", s.id)
-                            class="mt-4 w-full py-3 rounded-xl bg-primary-fixed text-primary font-bold text-body-sm flex items-center justify-center gap-2 press"
-                        >
-                            <span class="material-symbols-outlined text-[18px]">"play_circle"</span>
-                            "Lihat Sesi"
-                        </a>
-                    </div>
-                }
-            })}
+        // ── Hero: jadwal berikutnya, bisa digeser ke jadwal sesudahnya ──────
+        <JadwalDeck sesi=today.clone() />
 
         // ── Progres + statistik ─────────────────────────────────────────────
         <div class="ppm-card p-4 flex items-center justify-between">

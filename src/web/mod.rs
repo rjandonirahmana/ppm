@@ -12,6 +12,9 @@ pub mod bills;
 pub mod api;
 pub mod app;
 pub mod components;
+// Deteksi tipe berkas dari isinya — dipakai SEMUA jalur unggah.
+#[cfg(feature = "ssr")]
+pub mod filetype;
 // Unduh laporan PDF/Excel (server, axum — di luar server-fn).
 #[cfg(feature = "ssr")]
 pub mod export;

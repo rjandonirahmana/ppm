@@ -59,6 +59,50 @@ pub struct ChunkQ {
     pub seq: u64,
 }
 
+/// Jendela & jatah potongan siaran per (pengguna, sesi).
+///
+/// Sengaja LONGGAR. AudioDock mengirim ±1 potongan per 4 detik (≈15/menit),
+/// tapi lihat catatan modul di atas: saat internet putus potongan MENGANTRE di
+/// klien lalu dikirim beruntun begitu sambungan pulih. Batas yang pas-pasan
+/// akan menolak justru kiriman susulan yang SAH, dan lubang di rekaman tak bisa
+/// diperbaiki belakangan — sementara kiriman yang membanjir paling banter
+/// memboroskan I/O disk. Asimetri itu yang menentukan angkanya: 60/menit
+/// memberi ruang mengejar ketertinggalan ±3 menit, sekaligus tetap memberi
+/// atap alih-alih membiarkannya tanpa batas sama sekali.
+const CHUNK_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+const CHUNK_QUOTA: u32 = 60;
+
+/// Apakah potongan ini masih di dalam jatah? Jendela tetap (fixed window) per
+/// (pengguna, sesi), disimpan di memori proses.
+///
+/// Tidak memakai Redis meski tersedia: modul ini sengaja dirancang agar
+/// potongan susulan TIDAK bergantung pada layanan lain (lihat filosofi di
+/// `post_chunk`), jadi pembatas lajunya pun tak boleh jadi titik gagal baru.
+/// Konsekuensinya batas ini per-proses — memadai karena ppm berjalan sebagai
+/// satu proses.
+fn chunk_rate_ok(user_id: i64, session_id: i64) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Instant;
+
+    static SLOT: OnceLock<Mutex<HashMap<(i64, i64), (Instant, u32)>>> = OnceLock::new();
+    let slot = SLOT.get_or_init(|| Mutex::new(HashMap::new()));
+    // Mutex teracuni → jangan matikan siaran hanya karena pembatas lajunya
+    // rusak; ini lapis tambahan, bukan gerbang utama.
+    let Ok(mut m) = slot.lock() else { return true };
+
+    let now = Instant::now();
+    // Tanpa pembersihan ini peta tumbuh selamanya seiring sesi baru berdatangan.
+    m.retain(|_, (mulai, _)| now.duration_since(*mulai) < CHUNK_WINDOW);
+
+    let e = m.entry((user_id, session_id)).or_insert((now, 0));
+    if now.duration_since(e.0) >= CHUNK_WINDOW {
+        *e = (now, 0);
+    }
+    e.1 += 1;
+    e.1 <= CHUNK_QUOTA
+}
+
 /// POST /api/live-audio/{id}/chunk?seq=N — terima potongan audio dari GURU.
 /// seq=0 = mulai siaran BARU → file dibuat ulang (header WebM harus di awal).
 pub async fn post_chunk(
@@ -77,6 +121,15 @@ pub async fn post_chunk(
     }
     if body.is_empty() || body.len() > crate::web::limits::AUDIO_CHUNK_MAX {
         return StatusCode::BAD_REQUEST.into_response();
+    }
+    // Ukuran tiap potongan sudah dibatasi DefaultBodyLimit di router, tapi
+    // LAJUNYA belum: tanpa ini satu akun staf bisa mengirim potongan
+    // sebanyak-banyaknya dan menghabiskan I/O disk. Dicek setelah auth supaya
+    // jatahnya melekat pada pengguna, bukan pada alamat IP yang bisa dibagi
+    // banyak orang di jaringan pesantren.
+    if !chunk_rate_ok(claims.user_id, session_id) {
+        tracing::warn!(session_id, user_id = claims.user_id, "potongan siaran melebihi jatah laju");
+        return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
     // Pertahanan berlapis: klien (AudioDock) sudah sembunyikan tombol siaran
     // untuk kategori selain "Pengajian", tapi endpoint tetap tolak di server —

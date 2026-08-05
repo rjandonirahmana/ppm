@@ -115,8 +115,18 @@ pub async fn upload(
         )
             .into_response();
     };
+    // Ekstensi cuma nama yang dipilih pengunggah; isinya yang menentukan. Tanpa
+    // cek ini, berkas apa pun bisa dinamai `.png` lalu tersimpan berlabel
+    // `image/png` dan disajikan kembali dengan label itu.
+    if !crate::web::filetype::matches(&bytes, content_type) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Isi file tidak cocok dengan ekstensinya — pastikan ini benar-benar gambar.",
+        )
+            .into_response();
+    }
 
-    let ext = filename.rsplit('.').next().unwrap_or("bin");
+    let ext = crate::web::filetype::ext_for(content_type);
     // Prefix `ppm/` dibuang: bucket sudah "ppm" (dulu jadi `/ppm/ppm/activity/...`).
     // Tanpa dep uuid di ppm: nanos + id pengunggah cukup unik untuk galeri.
     let key = format!(

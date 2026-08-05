@@ -642,6 +642,37 @@ pub async fn verified_today(pool: &Pool) -> Result<i64> {
     Ok(row.get(0))
 }
 
+/// Delta poin satu baris absensi — SATU sumber kebenaran aritmetika poin.
+///
+/// Pemanggil wajib menyediakan dua alias: `att` (baris `attendances`, dipakai
+/// kolom `status`) dan `sch` (hasil LEFT JOIN ke `class_schedules`, boleh NULL
+/// bila absensi tak terikat jadwal). Nilai override di `class_schedules`
+/// disimpan sebagai MAGNITUDO POSITIF (CHECK migrasi 21 & 44); tanda minus
+/// ditentukan di sini, bukan di data.
+///
+/// Kenapa satu string SQL, bukan fungsi Rust: aturan ini dibutuhkan di dua
+/// jalur yang keduanya berjalan utuh di dalam SATU pernyataan SQL —
+/// [`decide_verify`] (verifikasi manual) dan [`run_auto_verify_final`]
+/// (verifikasi otomatis) — plus fungsi `cat_default_points()` migrasi 28 yang
+/// juga dipakai trigger saldo migrasi 32. Sebelumnya jalur manual menghitung
+/// delta di Rust (`models::attendance_delta`) sedangkan jalur otomatis
+/// menghitungnya di SQL: aturan bisnis yang sama hidup di dua bahasa, dan
+/// keduanya harus diingat saat PRD berubah.
+///
+/// Kedua salinan itu sempat berbeda tanpa ketahuan, dan yang menutupinya cuma
+/// CHECK constraint: cabang terakhir versi SQL dulu `ELSE -absent` (status tak
+/// dikenal → penalti penuh) sedangkan Rust `_ => 0` (netral). Aman hanya karena
+/// migrasi 7 mengunci `status` ke enam nilai. Di bawah ini `absent` ditulis
+/// eksplisit dan `ELSE` dikembalikan ke 0 — status yang belum dikenal tak
+/// seharusnya diam-diam kena potongan terbesar.
+const DELTA_SQL: &str = "CASE \
+     WHEN att.status = 'present' THEN COALESCE(sch.present_points, cat_default_points(COALESCE(sch.activity_type,'other'),'present'))::int \
+     WHEN att.status = 'late' THEN -COALESCE(sch.late_points, cat_default_points(COALESCE(sch.activity_type,'other'),'late'))::int \
+     WHEN att.status = 'permit' THEN -COALESCE(sch.izin_points, cat_default_points(COALESCE(sch.activity_type,'other'),'izin'))::int \
+     WHEN att.status = 'absent' THEN -COALESCE(sch.absent_points, cat_default_points(COALESCE(sch.activity_type,'other'),'absent'))::int \
+     ELSE 0 \
+   END";
+
 /// Verifikasi FINAL oleh ustad bertugas (migrasi 33). Guard: ustad sesi =
 /// approver (teacher_id Some; None = dewan/admin). Prereq: 2 langkah → pamong
 /// approved; 1 langkah → langsung. POIN diberikan DI SINI (sekali, saat final)
@@ -683,44 +714,39 @@ pub async fn decide_verify(
     };
 
     if approve {
-        let user_id: i64 = row.get(0);
         let att_status: String = row.get(1);
-        let schedule_id: Option<i64> = row.get(2);
-        let (mut present_p, mut late_p, mut absent_p, mut izin_p) = (None, None, None, None);
-        let mut activity_type = String::new();
-        if let Some(sid) = schedule_id {
-            if let Some(r) = tx
-                .query_opt(
-                    "SELECT present_points, late_points, absent_points, izin_points, \
-                            COALESCE(activity_type, '') FROM class_schedules WHERE id = $1",
-                    &[&sid],
-                )
-                .await
-                .context("decide_verify schedule points")?
-            {
-                present_p = r.get(0);
-                late_p = r.get(1);
-                absent_p = r.get(2);
-                izin_p = r.get(3);
-                activity_type = r.get(4);
-            }
-        }
-        let (delta, note, category) = crate::models::attendance_delta(
-            &att_status, &activity_type, present_p, late_p, absent_p, izin_p,
+        // Rust hanya menyumbang KATA-nya; angkanya dihitung SQL lewat DELTA_SQL
+        // supaya identik dengan jalur verifikasi otomatis.
+        let reason = format!(
+            "Kehadiran ({att_status}) — {}",
+            crate::models::attendance_note(&att_status)
         );
-        if delta != 0 {
-            let reason = format!("Kehadiran ({att_status}) — {note}");
-            // users.points diperbarui otomatis oleh trigger (migrasi 32).
-            tx.execute(
-                // attendance_id: tautan agar koreksi bisa MENARIK BALIK poin ini
-                // (hapus log → trigger mengembalikan saldo). Migrasi 51.
-                "INSERT INTO point_logs (user_id, delta, reason, category, given_by, attendance_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6)",
-                &[&user_id, &delta, &reason, &category, &approver, &att_id],
-            )
+        // Baris absensinya dibaca ulang di dalam transaksi yang sama (UPDATE di
+        // atas sudah terlihat), lalu di-join ke jadwalnya supaya override poin
+        // per-jadwal ikut terpakai.
+        //
+        // `category` diturunkan dari TANDA delta, sama seperti jalur otomatis.
+        // Ini setara dengan pemetaan per-status yang dulu dipakai di sini:
+        // present selalu ≥ 0 → attendance; late/absent/permit selalu ≤ 0 →
+        // discipline; sick & outside_schedule berdelta 0 dan sudah disaring
+        // `delta <> 0`, jadi tak pernah sampai menghasilkan baris log.
+        //
+        // attendance_id: tautan agar koreksi bisa MENARIK BALIK poin ini
+        // (hapus log → trigger mengembalikan saldo). Migrasi 51.
+        // users.points sendiri diperbarui otomatis oleh trigger (migrasi 32).
+        let sql = format!(
+            "INSERT INTO point_logs (user_id, delta, reason, category, given_by, attendance_id) \
+             SELECT att.user_id, d.delta, $2, \
+                    CASE WHEN d.delta < 0 THEN 'discipline' ELSE 'attendance' END, \
+                    $3, att.id \
+             FROM attendances att \
+             LEFT JOIN class_schedules sch ON sch.id = att.class_schedule_id \
+             CROSS JOIN LATERAL (SELECT {DELTA_SQL} AS delta) d \
+             WHERE att.id = $1 AND d.delta <> 0"
+        );
+        tx.execute(&sql, &[&att_id, &reason, &approver])
             .await
             .context("decide_verify point_logs")?;
-        }
     }
 
     tx.commit().await.context("decide_verify commit")?;
@@ -844,46 +870,41 @@ pub async fn run_auto_verify_pamong(pool: &Pool) -> Result<i64> {
 /// DI SINI (sekali, sama seperti decide_verify) — migrasi 33. Return jumlah baris.
 pub async fn run_auto_verify_final(pool: &Pool) -> Result<i64> {
     let c = pool.get().await?;
+    // Ekspresi delta-nya SATU dengan jalur manual (lihat DELTA_SQL) — alias
+    // `att`/`sch` di bawah dipilih agar cocok dengan yang diharapkannya.
+    let sql = format!(
+        "WITH upd AS ( \
+            UPDATE attendances a SET verify_status = 'approved', verified_at = NOW() \
+            WHERE a.verify_status = 'pending' \
+              AND a.pamong_status <> 'rejected' \
+              AND CASE WHEN COALESCE( \
+                      (SELECT cl.require_pamong FROM class_sessions cs \
+                          JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = a.class_session_id), TRUE) \
+                        AND (SELECT COALESCE(cs.pamong_id, cl.pamong_id) FROM class_sessions cs \
+                              JOIN classes cl ON cl.id = cs.class_id \
+                              WHERE cs.id = a.class_session_id) IS NOT NULL \
+                   THEN a.pamong_status = 'approved' AND a.pamong_at < NOW() - INTERVAL '1 day' \
+                   ELSE a.scanned_at < NOW() - INTERVAL '1 day' END \
+            RETURNING a.id, a.user_id, a.status, a.class_schedule_id \
+         ), \
+         pts AS ( \
+            SELECT att.id AS att_id, att.user_id, att.status, {DELTA_SQL} AS delta \
+            FROM upd att \
+            LEFT JOIN class_schedules sch ON sch.id = att.class_schedule_id \
+         ), \
+         lg AS ( \
+            INSERT INTO point_logs (user_id, delta, reason, category, attendance_id) \
+            SELECT user_id, delta, \
+                   'Kehadiran (' || status || ') — verifikasi final otomatis', \
+                   CASE WHEN delta < 0 THEN 'discipline' ELSE 'attendance' END, \
+                   att_id \
+            FROM pts WHERE delta <> 0 \
+            RETURNING user_id \
+         ) \
+         SELECT COUNT(*)::bigint FROM upd"
+    );
     let row = c
-        .query_one(
-            "WITH upd AS ( \
-                UPDATE attendances a SET verify_status = 'approved', verified_at = NOW() \
-                WHERE a.verify_status = 'pending' \
-                  AND a.pamong_status <> 'rejected' \
-                  AND CASE WHEN COALESCE( \
-                          (SELECT cl.require_pamong FROM class_sessions cs \
-                              JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = a.class_session_id), TRUE) \
-                            AND (SELECT COALESCE(cs.pamong_id, cl.pamong_id) FROM class_sessions cs \
-                                  JOIN classes cl ON cl.id = cs.class_id \
-                                  WHERE cs.id = a.class_session_id) IS NOT NULL \
-                       THEN a.pamong_status = 'approved' AND a.pamong_at < NOW() - INTERVAL '1 day' \
-                       ELSE a.scanned_at < NOW() - INTERVAL '1 day' END \
-                RETURNING a.id, a.user_id, a.status, a.class_schedule_id \
-             ), \
-             pts AS ( \
-                SELECT upd.id AS att_id, upd.user_id, upd.status, \
-                       CASE \
-                         WHEN upd.status = 'present' THEN COALESCE(sch.present_points, cat_default_points(COALESCE(sch.activity_type,'other'),'present'))::int \
-                         WHEN upd.status = 'late' THEN -COALESCE(sch.late_points, cat_default_points(COALESCE(sch.activity_type,'other'),'late'))::int \
-                         WHEN upd.status IN ('sick','outside_schedule') THEN 0 \
-                         WHEN upd.status = 'permit' THEN -COALESCE(sch.izin_points, cat_default_points(COALESCE(sch.activity_type,'other'),'izin'))::int \
-                         ELSE -COALESCE(sch.absent_points, cat_default_points(COALESCE(sch.activity_type,'other'),'absent'))::int \
-                       END AS delta \
-                FROM upd \
-                LEFT JOIN class_schedules sch ON sch.id = upd.class_schedule_id \
-             ), \
-             lg AS ( \
-                INSERT INTO point_logs (user_id, delta, reason, category, attendance_id) \
-                SELECT user_id, delta, \
-                       'Kehadiran (' || status || ') — verifikasi final otomatis', \
-                       CASE WHEN delta < 0 THEN 'discipline' ELSE 'attendance' END, \
-                       att_id \
-                FROM pts WHERE delta <> 0 \
-                RETURNING user_id \
-             ) \
-             SELECT COUNT(*)::bigint FROM upd",
-            &[],
-        )
+        .query_one(&sql, &[])
         .await
         .context("run_auto_verify_final")?;
     Ok(row.get(0))

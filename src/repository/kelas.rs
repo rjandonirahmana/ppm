@@ -38,6 +38,24 @@ pub struct LiveSesiRow {
     pub santri_count: i64,
     pub state: String,
     pub time_label: Option<chrono::NaiveTime>,
+    /// Jam mulainya SUDAH LEWAT (menurut jam WIB sekarang).
+    ///
+    /// Dihitung di SQL, bukan di Rust atau di browser: perbandingannya harus
+    /// memakai jam WIB, dan query ini sudah memakai `AT TIME ZONE
+    /// 'Asia/Jakarta'` untuk memilih sesi hari ini — memakai jam browser akan
+    /// salah bagi pengguna di zona waktu lain.
+    ///
+    /// Perlu karena `status` sesi TIDAK bergerak sendiri: sesi subuh tetap
+    /// `scheduled` sampai malam, jadi "sudah lewat atau belum" tak bisa
+    /// disimpulkan dari status saja.
+    pub past: bool,
+    /// Jam WIB sekarang berada DI ANTARA jam mulai dan jam selesai.
+    ///
+    /// Alasannya sama dengan `past`: karena `status` tak pernah berubah jadi
+    /// `ongoing` dengan sendirinya, sesi yang betul-betul sedang berlangsung
+    /// tetap terbaca `scheduled` dan tampil sebagai "jadwal berikutnya" —
+    /// padahal jamnya sedang berjalan.
+    pub ongoing: bool,
 }
 
 /// Sesi kelas hari ini (berlangsung + akan datang), untuk kartu "Sesi Live".
@@ -47,7 +65,12 @@ pub async fn today_sessions(pool: &Pool, limit: i64) -> Result<Vec<LiveSesiRow>>
         .query(
             "SELECT s.id, COALESCE(s.title, cs.title, c.name), COALESCE(t.full_name, 'Belum ditentukan'), \
                     (SELECT COUNT(*) FROM class_participants cp WHERE cp.class_id = c.id), \
-                    s.status, cs.start_time \
+                    s.status, cs.start_time, \
+                    COALESCE(cs.end_time, cs.start_time) < (NOW() AT TIME ZONE 'Asia/Jakarta')::time \
+                        AS past, \
+                    (cs.start_time IS NOT NULL AND cs.end_time IS NOT NULL \
+                     AND (NOW() AT TIME ZONE 'Asia/Jakarta')::time \
+                            BETWEEN cs.start_time AND cs.end_time) AS ongoing \
              FROM class_sessions s \
              JOIN classes c ON c.id = s.class_id \
              LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
@@ -69,6 +92,10 @@ pub async fn today_sessions(pool: &Pool, limit: i64) -> Result<Vec<LiveSesiRow>>
             santri_count: r.get(3),
             state: r.get(4),
             time_label: r.get(5),
+            // NULL (jadwal tanpa jam) → anggap belum lewat: lebih baik kartunya
+            // tetap tampil daripada jadwal tanpa jam hilang diam-diam.
+            past: r.get::<_, Option<bool>>(6).unwrap_or(false),
+            ongoing: r.get::<_, Option<bool>>(7).unwrap_or(false),
         })
         .collect())
 }
@@ -299,6 +326,17 @@ pub struct PointRowDb {
 }
 
 /// Papan poin santri, terurut (desc = tertinggi dulu).
+///
+/// Dua hal di query bawah sengaja dibuat DETERMINISTIK, dan keduanya dulu
+/// tidak:
+///   • Subquery nama kelas memakai `LIMIT 1` tanpa `ORDER BY` — santri yang
+///     ikut lebih dari satu kelas bisa tampil dengan nama kelas berbeda-beda
+///     tiap kali halaman dimuat, tergantung rencana query yang dipilih
+///     Postgres. Sekarang diikat ke `class_id` terkecil.
+///   • `ORDER BY u.points` tanpa pemecah seri — poin yang sama membuat urutan
+///     antar-santri bebas, jadi papan bisa berganti susunan sendiri (dan dengan
+///     `LIMIT`, santri di ambang batas bisa muncul-hilang). `u.id` dipakai
+///     sebagai pemecah seri yang stabil.
 pub async fn points_board(
     pool: &Pool,
     teacher_id: Option<i64>,
@@ -312,10 +350,10 @@ pub async fn points_board(
             let sql = format!(
                 "SELECT u.id, u.full_name, u.nis, \
                     (SELECT c.name FROM class_participants cp JOIN classes c ON c.id = cp.class_id \
-                        WHERE cp.user_id = u.id LIMIT 1), \
+                        WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1), \
                     u.points \
                  FROM users u WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
-                 ORDER BY u.points {order} LIMIT $1"
+                 ORDER BY u.points {order}, u.id LIMIT $1"
             );
             c.query(&sql, &[&limit]).await
         }
@@ -326,7 +364,7 @@ pub async fn points_board(
                          JOIN classes c2 ON c2.id = cp2.class_id \
                          WHERE cp2.user_id = u.id \
                            AND cp2.class_id IN (SELECT DISTINCT class_id FROM class_sessions WHERE teacher_id = $1) \
-                         LIMIT 1), \
+                         ORDER BY cp2.class_id LIMIT 1), \
                      u.points \
                  FROM users u \
                  WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
@@ -334,7 +372,7 @@ pub async fn points_board(
                        SELECT 1 FROM class_participants cp WHERE cp.user_id = u.id \
                        AND cp.class_id IN (SELECT DISTINCT class_id FROM class_sessions WHERE teacher_id = $1) \
                    ) \
-                 ORDER BY u.points {order} LIMIT $2"
+                 ORDER BY u.points {order}, u.id LIMIT $2"
             );
             c.query(&sql, &[&tid, &limit]).await
         }

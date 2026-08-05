@@ -86,8 +86,15 @@ pub(crate) fn map_live(rows: Vec<crate::repository::LiveSesiRow>) -> Vec<LiveSes
             title: s.title,
             teacher: s.teacher,
             santri_count: s.santri_count,
+            // `status` di DB tak pernah bergerak sendiri ke 'ongoing' — sesi
+            // yang jamnya sedang berjalan tetap tertulis 'scheduled'. Maka jam
+            // WIB ikut menentukan: sesi terjadwal yang sekarang berada di
+            // antara jam mulai & selesai ditampilkan sebagai SEDANG
+            // BERLANGSUNG. Tanpa ini kartu beranda menyebut sesi yang sedang
+            // berjalan sebagai "jadwal berikutnya".
             state: match s.state.as_str() {
                 "ongoing" => "live".into(),
+                "scheduled" if s.ongoing => "live".into(),
                 "scheduled" => "upcoming".into(),
                 _ => "break".into(),
             },
@@ -95,6 +102,7 @@ pub(crate) fn map_live(rows: Vec<crate::repository::LiveSesiRow>) -> Vec<LiveSes
                 .time_label
                 .map(|t| format!("{} WIB", t.format("%H:%M")))
                 .unwrap_or_else(|| "-".into()),
+            past: s.past,
         })
         .collect()
 }

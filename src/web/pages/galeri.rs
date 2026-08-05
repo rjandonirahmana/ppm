@@ -468,7 +468,7 @@ pub fn GaleriPage() -> impl IntoView {
                             let total = pending_total.get();
                             let nth = pending_idx.get() + 1;
                             view! {
-                                <Sheet title="Atur Bidikan Sebelum Unggah" on_close=finish_batch>
+                                <Sheet title="Sesuaikan Foto Sebelum Diunggah" on_close=finish_batch>
                                     <PhotoFocusEditor
                                         src=pending_src.get()
                                         focus_x=fx
@@ -493,7 +493,7 @@ pub fn GaleriPage() -> impl IntoView {
                             let id = p.id;
                             view! {
                                 <Sheet
-                                    title="Atur Bidikan Foto"
+                                    title="Sesuaikan Tampilan Foto"
                                     on_close=move || editing.set(None)
                                 >
                                     <PhotoFocusEditor
@@ -693,15 +693,15 @@ fn PhotoFocusEditor(
             <FitBtn
                 fit=fit
                 value=PhotoFit::Cover
-                label="Isi bingkai"
-                hint="penuh, tepi terpotong"
+                label="Isi Penuh"
+                hint="bingkai penuh, tepi terpotong"
                 on_pick=set_fit
             />
             <FitBtn
                 fit=fit
                 value=PhotoFit::Contain
-                label="Muat seluruhnya"
-                hint="foto utuh, tak terpotong"
+                label="Foto Utuh"
+                hint="seluruh foto terlihat"
                 on_pick=set_fit
             />
         </div>
@@ -709,10 +709,11 @@ fn PhotoFocusEditor(
         <p class="text-body-sm text-on-surface-variant mb-3">
             {move || {
                 if fit.get() == PhotoFit::Contain {
-                    "Seluruh foto tampil, tak ada yang terpotong. Ruang sisa diisi \
-                     versi buram foto ini. Perbesar bila ingin memangkas tepinya."
+                    "Foto ditampilkan utuh tanpa terpotong. Ruang kosong di \
+                     sekelilingnya diisi versi buram foto ini. Perbesar jika \
+                     ingin memotong tepinya."
                 } else {
-                    "Seret foto untuk memilih bagian yang tampil, lalu atur perbesaran."
+                    "Geser foto untuk memilih bagian yang ditampilkan, lalu atur perbesarannya."
                 }
             }}
         </p>
@@ -746,7 +747,7 @@ fn PhotoFocusEditor(
                 node_ref=img
                 src=src
                 style=preview_style
-                alt="Pratinjau bidikan"
+                alt="Pratinjau foto"
                 draggable="false"
                 class="relative"
             />
@@ -791,7 +792,7 @@ fn PhotoFocusEditor(
                 class="flex-1 py-3 rounded-xl border-2 border-outline-variant text-on-surface-variant font-semibold press"
                 on:click=reset
             >
-                "Tengahkan"
+                "Atur Ulang"
             </button>
             <button
                 class="flex-1 py-3 rounded-xl bg-primary text-on-primary font-semibold press disabled:opacity-60"
