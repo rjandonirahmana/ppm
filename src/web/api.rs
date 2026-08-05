@@ -1227,15 +1227,24 @@ pub async fn update_curriculum_action(
     .map_err(err)
 }
 
-/// Kelas-kelas yang diikuti santri yang sedang masuk: kurikulum, materi yang
-/// sedang dibahas, teman sekelas, wali kelas & pamong.
-#[server(SantriKelas, "/api-fn")]
-pub async fn santri_kelas_data() -> Result<crate::models::SantriKelasData, ServerFnError> {
-    // Santri hanya boleh melihat kelasnya SENDIRI — id diambil dari sesi,
-    // bukan dari parameter, supaya tak bisa mengintip kelas orang lain.
-    let sess = require_roles(&["santri", "santri_finance"]).await?;
+/// Kelas milik pengguna yang sedang masuk: santri → kelas yang ia IKUTI; wali
+/// kelas/pamong → kelas yang ia PEGANG. Berisi kurikulum, materi yang sedang
+/// dibahas, daftar santri, serta wali kelas & pamongnya.
+#[server(KelasSaya, "/api-fn")]
+pub async fn kelas_saya_data() -> Result<crate::models::KelasSayaData, ServerFnError> {
+    // id SELALU dari sesi, tak pernah dari parameter — tak ada cara mengintip
+    // kelas orang lain dengan menukar angka.
+    let sess = require_roles(&[
+        "santri",
+        "santri_finance",
+        "dewan_guru",
+        "teacher",
+        "supervisor",
+    ])
+    .await?;
+    let sebagai_staf = !matches!(sess.role.as_str(), "santri" | "santri_finance");
     let state = app_state().await?;
-    crate::service::kelas::santri_kelas(&state.pool, sess.id).await.map_err(err)
+    crate::service::kelas::kelas_saya(&state.pool, sess.id, sebagai_staf).await.map_err(err)
 }
 
 /// Setel materi & posisi yang SEDANG BERJALAN pada satu jadwal (migrasi 57).

@@ -135,6 +135,25 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                 </div>
                                             </div>
 
+                                            // Kelas yang DIDAMPINGI sendiri sebagai pamong.
+                                            <a
+                                                href="/kelas-saya"
+                                                class="ppm-card p-4 flex items-center justify-between card-hover press md:max-w-lg"
+                                            >
+                                                <div class="flex items-center gap-3">
+                                                    <span class="w-10 h-10 ppm-tile">
+                                                        <span class="material-symbols-outlined">"school"</span>
+                                                    </span>
+                                                    <div>
+                                                        <p class="text-body-md font-semibold text-on-background">"Kelas Saya"</p>
+                                                        <p class="text-body-sm text-on-surface-variant">
+                                                            "Kurikulum, materi berjalan & santri kelas dampinganmu"
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <span class="material-symbols-outlined text-on-surface-variant">"chevron_right"</span>
+                                            </a>
+
                                             // ── Jadwal berikutnya, bisa digeser ──
                                             <JadwalDeck sesi=d.today.clone() />
 

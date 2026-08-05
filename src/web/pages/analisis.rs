@@ -115,6 +115,12 @@ fn AnalisisBody(
                         <span class="text-body-sm font-semibold text-on-background">"Galeri Foto"</span>
                     </a>
                 })}
+            // Kelas yang DIPEGANG sendiri (wali kelas) — beda dari /kelas yang
+            // memuat seluruh kelas pesantren.
+            <a href="/kelas-saya" class="ppm-card p-3 flex items-center gap-2 press">
+                <span class="material-symbols-outlined text-primary">"school"</span>
+                <span class="text-body-sm font-semibold text-on-background">"Kelas Saya"</span>
+            </a>
         </div>
 
         // Desktop: ringkasan harian (hero+progres+sesi hari ini) kolom utama

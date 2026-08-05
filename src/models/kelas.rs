@@ -406,7 +406,7 @@ pub struct PermitQueueData {
 /// Satu jadwal kelas dilihat dari sisi santri — ringkas, tanpa pengaturan poin
 /// atau tombol kelola yang bukan urusannya.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SantriJadwalItem {
+pub struct KelasSayaJadwal {
     pub title: String,
     /// "05:00 – 06:30 WIB"
     pub time_label: String,
@@ -416,24 +416,31 @@ pub struct SantriJadwalItem {
     pub current_label: String,
 }
 
-/// Satu kelas yang diikuti santri: siapa petugasnya, apa kurikulumnya, sedang
-/// di materi mana, dan siapa saja teman sekelasnya.
+/// Satu kelas dilihat dari sisi ORANG DI DALAMNYA — santri yang mengikutinya,
+/// atau staf yang bertugas di sana. Isinya sama (petugas, kurikulum, materi
+/// berjalan, daftar santri); yang berbeda hanya cara kelasnya dipilih.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SantriKelasItem {
+pub struct KelasSayaItem {
     pub id: i64,
     pub name: String,
+    /// Peran PEMIRSA di kelas ini: "Wali Kelas" / "Pamong" / "Wali Kelas &
+    /// Pamong". Kosong untuk santri — ia peserta, bukan petugas.
+    pub peran_saya: String,
     pub category: String,
     pub golongan: String,
     /// Kosong = belum ditunjuk.
     pub wali_kelas: String,
     pub pamong: String,
     pub curriculum: Vec<CurriculumItem>,
-    pub schedules: Vec<SantriJadwalItem>,
+    pub schedules: Vec<KelasSayaJadwal>,
     pub members: Vec<MemberItem>,
 }
 
-/// Payload halaman "Kelas Saya" (santri).
+/// Payload halaman "Kelas Saya".
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SantriKelasData {
-    pub items: Vec<SantriKelasItem>,
+pub struct KelasSayaData {
+    /// true = pemirsa adalah STAF (wali kelas / pamong), bukan santri —
+    /// dipakai halaman untuk menyesuaikan kalimatnya.
+    pub sebagai_staf: bool,
+    pub items: Vec<KelasSayaItem>,
 }

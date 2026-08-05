@@ -1,20 +1,26 @@
-//! Halaman "Kelas Saya" (santri) — kelas yang diikuti, kurikulumnya, materi
-//! yang sedang dibahas, teman sekelas, serta wali kelas & pamong yang bertugas.
+//! Halaman "Kelas Saya" — dipakai TIGA peran dengan isi yang sama:
+//!   • santri            → kelas yang ia IKUTI
+//!   • wali kelas (guru) → kelas yang ia PEGANG
+//!   • pamong            → kelas yang ia DAMPINGI
 //!
-//! Sudut pandangnya SANTRI, bukan pengelola: tak ada tombol ubah/hapus, dan
-//! angka progres hanya dibaca. Data kelas yang ditampilkan pun hanya kelas yang
-//! memang diikutinya — id-nya diambil dari sesi di server, bukan dari URL.
+//! Yang berbeda hanya kelas mana yang diambil (ditentukan server dari peran di
+//! sesi) dan beberapa kalimatnya. Isi kartunya identik — kurikulum, materi yang
+//! sedang dibahas, daftar santri, wali kelas & pamong — karena pertanyaan yang
+//! ingin dijawab ketiganya memang sama: "kelas ini sedang di mana?".
+//!
+//! Semuanya BACA SAJA: tak ada tombol ubah/hapus. Pengelolaan tetap di
+//! /kelas/:id. id pemirsa diambil dari sesi di server, tak pernah dari URL.
 
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{SantriKelasItem, SessionUser};
-use crate::web::api::santri_kelas_data;
+use crate::models::{KelasSayaItem, SessionUser};
+use crate::web::api::kelas_saya_data;
 use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
 
 #[component]
 pub fn KelasSayaPage() -> impl IntoView {
-    let data = Resource::new(|| (), |_| async move { santri_kelas_data().await });
+    let data = Resource::new(|| (), |_| async move { kelas_saya_data().await });
 
     // Galat auth → /login, sama seperti halaman santri lain.
     Effect::new(move |_| {
@@ -32,7 +38,7 @@ pub fn KelasSayaPage() -> impl IntoView {
         <Title text="Kelas Saya — PPM AFM" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
-                <MobileHeader title="Kelas Saya" subtitle="Kurikulum & teman sekelas" />
+                <MobileHeader title="Kelas Saya" subtitle="Kurikulum & materi berjalan" />
                 <div class="px-5 pt-5 space-y-4 stagger">
                     <Suspense fallback=|| {
                         view! {
@@ -49,13 +55,18 @@ pub fn KelasSayaPage() -> impl IntoView {
                                         view! { <FetchError err=e.to_string() /> }.into_any()
                                     }
                                     Ok(d) if d.items.is_empty() => {
-                                        view! {
-                                            <EmptyState
-                                                icon="school"
-                                                title="Belum terdaftar di kelas mana pun"
-                                                subtitle="Hubungi pengelola bila menurutmu ini keliru."
-                                            />
-                                        }
+                                        let (judul, sub) = if d.sebagai_staf {
+                                            (
+                                                "Belum ditugaskan di kelas mana pun",
+                                                "Kelas akan muncul di sini setelah kamu ditunjuk sebagai wali kelas atau pamong.",
+                                            )
+                                        } else {
+                                            (
+                                                "Belum terdaftar di kelas mana pun",
+                                                "Hubungi pengelola bila menurutmu ini keliru.",
+                                            )
+                                        };
+                                        view! { <EmptyState icon="school" title=judul subtitle=sub /> }
                                             .into_any()
                                     }
                                     Ok(d) => {
@@ -80,16 +91,17 @@ pub fn KelasSayaPage() -> impl IntoView {
 
 /// Satu kelas: identitas + petugas + materi berjalan + kurikulum + teman.
 #[component]
-fn KelasCard(k: SantriKelasItem) -> impl IntoView {
+fn KelasCard(k: KelasSayaItem) -> impl IntoView {
     let session = use_context::<Resource<Option<SessionUser>>>();
-    // Daftar teman sekelas bisa panjang; disembunyikan dulu agar kartu tetap
-    // terbaca, dan yang dicari santri lebih sering "materi sekarang".
+    // Daftar santri bisa panjang; dilipat agar kartu tetap terbaca — yang
+    // dicari lebih sering "materi sekarang", bukan daftar nama.
     let buka_teman = RwSignal::new(false);
 
     let jumlah_teman = k.members.len();
     let members = StoredValue::new(k.members);
     let golongan = k.golongan.clone();
     let category = k.category.clone();
+    let peran = k.peran_saya.clone();
     let wali = k.wali_kelas.clone();
     let pamong = k.pamong.clone();
 
@@ -98,6 +110,10 @@ fn KelasCard(k: SantriKelasItem) -> impl IntoView {
             // ── Identitas kelas ────────────────────────────────────────────
             <div>
                 <div class="flex items-center gap-1.5 flex-wrap">
+                    // Peran pemirsa di kelas ini — hanya untuk staf; santri
+                    // adalah peserta, bukan petugas, jadi tak berlencana.
+                    {(!peran.is_empty())
+                        .then(|| view! { <span class="ppm-chip bg-primary text-on-primary">{peran.clone()}</span> })}
                     {(!golongan.is_empty())
                         .then(|| view! { <span class="ppm-chip bg-secondary-container text-primary">{golongan.clone()}</span> })}
                     {(!category.is_empty())
@@ -228,7 +244,7 @@ fn KelasCard(k: SantriKelasItem) -> impl IntoView {
                     on:click=move |_| buka_teman.update(|b| *b = !*b)
                 >
                     <span class="text-[10px] font-bold tracking-wide text-on-surface-variant">
-                        {format!("TEMAN SEKELAS ({jumlah_teman})")}
+                        {format!("SANTRI DI KELAS INI ({jumlah_teman})")}
                     </span>
                     <span
                         class="material-symbols-outlined text-on-surface-variant transition-transform text-[20px]"

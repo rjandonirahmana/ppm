@@ -1481,15 +1481,28 @@ mod tests {
 
 // ── Sisi SANTRI: "Kelas Saya" ────────────────────────────────────────────────
 
-/// Kelas-kelas yang diikuti santri, lengkap dengan kurikulum, materi yang
-/// sedang berjalan, petugas, dan teman sekelas.
+/// Kelas dilihat dari sisi orang di dalamnya, lengkap dengan kurikulum, materi
+/// yang sedang berjalan, petugas, dan daftar santri.
+///
+/// `sebagai_staf` menentukan kelas MANA yang diambil: santri → kelas yang ia
+/// ikuti; wali kelas/pamong → kelas yang ia pegang. Isi kartunya identik, jadi
+/// pemetaannya dipakai bersama alih-alih ditulis dua kali.
 ///
 /// Query per-kelas (kurikulum/jadwal/anggota) sengaja dibiarkan berurutan:
 /// seorang santri lazimnya ikut 2–3 kelas (satu per golongan), jadi jumlah
 /// query tetap kecil dan menukarnya dengan satu query raksasa ber-JOIN ganda
 /// justru lebih sulit dibaca tanpa keuntungan nyata.
-pub async fn santri_kelas(pool: &Pool, user_id: i64) -> Result<crate::models::SantriKelasData> {
-    let kelas = repo::classes_of_student(pool, user_id).await?;
+pub async fn kelas_saya(
+    pool: &Pool,
+    user_id: i64,
+    sebagai_staf: bool,
+) -> Result<crate::models::KelasSayaData> {
+    // Sumber kelasnya yang berbeda; isi kartunya sama persis.
+    let kelas = if sebagai_staf {
+        repo::classes_of_staff(pool, user_id).await?
+    } else {
+        repo::classes_of_student(pool, user_id).await?
+    };
     let mut items = Vec::with_capacity(kelas.len());
 
     for k in kelas {
@@ -1555,7 +1568,7 @@ pub async fn santri_kelas(pool: &Pool, user_id: i64) -> Result<crate::models::Sa
             .map(|s| {
                 let cat = s.current_book_category.clone().unwrap_or_default();
                 let surahs = surahs_of(s.current_book_surahs.as_ref());
-                crate::models::SantriJadwalItem {
+                crate::models::KelasSayaJadwal {
                     title: if s.title.trim().is_empty() {
                         "Jadwal Kelas".into()
                     } else {
@@ -1586,9 +1599,17 @@ pub async fn santri_kelas(pool: &Pool, user_id: i64) -> Result<crate::models::Sa
             })
             .collect();
 
-        items.push(crate::models::SantriKelasItem {
+        let peran_saya = match (k.saya_wali, k.saya_pamong) {
+            (true, true) => "Wali Kelas & Pamong",
+            (true, false) => "Wali Kelas",
+            (false, true) => "Pamong",
+            _ => "",
+        };
+
+        items.push(crate::models::KelasSayaItem {
             id: k.id,
             name: k.name,
+            peran_saya: peran_saya.to_string(),
             category: k.category.unwrap_or_default(),
             golongan: k.golongan.unwrap_or_default(),
             wali_kelas: k.wali_kelas.unwrap_or_default(),
@@ -1599,5 +1620,5 @@ pub async fn santri_kelas(pool: &Pool, user_id: i64) -> Result<crate::models::Sa
         });
     }
 
-    Ok(crate::models::SantriKelasData { items })
+    Ok(crate::models::KelasSayaData { sebagai_staf, items })
 }

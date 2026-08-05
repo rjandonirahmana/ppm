@@ -1691,6 +1691,9 @@ pub struct SantriKelasRow {
     pub golongan: Option<String>,
     pub wali_kelas: Option<String>,
     pub pamong: Option<String>,
+    /// Peran PEMIRSA di kelas ini (selalu false untuk santri).
+    pub saya_wali: bool,
+    pub saya_pamong: bool,
 }
 
 /// Kelas-kelas yang diikuti `user_id` (lewat `class_participants`).
@@ -1723,6 +1726,8 @@ pub async fn classes_of_student(pool: &Pool, user_id: i64) -> Result<Vec<SantriK
             golongan: r.get(3),
             wali_kelas: r.get(4),
             pamong: r.get(5),
+            saya_wali: false,
+            saya_pamong: false,
         })
         .collect())
 }
@@ -1777,4 +1782,41 @@ pub async fn session_book_in_curriculum(
         .await
         .context("session_book_in_curriculum")?;
     Ok(row.is_some())
+}
+
+/// Kelas tempat `user_id` BERTUGAS — sebagai wali kelas, pamong, atau keduanya.
+///
+/// Pasangan [`classes_of_student`] untuk sisi staf. Satu query, bukan dua yang
+/// digabung di Rust, supaya kelas yang ia pegang DUA peran sekaligus muncul
+/// sekali saja dengan kedua penandanya.
+pub async fn classes_of_staff(pool: &Pool, user_id: i64) -> Result<Vec<SantriKelasRow>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT cl.id, cl.name, cl.category, cl.golongan, \
+                    w.full_name, pm.full_name, \
+                    (cl.wali_kelas_id = $1) AS saya_wali, \
+                    (cl.pamong_id = $1) AS saya_pamong \
+             FROM classes cl \
+             LEFT JOIN users w  ON w.id  = cl.wali_kelas_id \
+             LEFT JOIN users pm ON pm.id = cl.pamong_id \
+             WHERE cl.wali_kelas_id = $1 OR cl.pamong_id = $1 \
+             ORDER BY cl.name",
+            &[&user_id],
+        )
+        .await
+        .context("classes_of_staff")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| SantriKelasRow {
+            id: r.get(0),
+            name: r.get(1),
+            category: r.get(2),
+            golongan: r.get(3),
+            wali_kelas: r.get(4),
+            pamong: r.get(5),
+            saya_wali: r.get::<_, Option<bool>>(6).unwrap_or(false),
+            saya_pamong: r.get::<_, Option<bool>>(7).unwrap_or(false),
+        })
+        .collect())
 }
