@@ -796,9 +796,7 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
                        'approved', NOW(), 'approved', NOW(), 'Auto: tidak hadir', 'system', NOW(), s.session_date \
                 FROM class_sessions s \
                 LEFT JOIN class_schedules sch ON sch.id = s.class_schedule_id \
-                JOIN class_participants cp \
-                    ON (s.class_schedule_id IS NOT NULL AND cp.class_schedule_id = s.class_schedule_id) \
-                    OR (s.class_schedule_id IS NULL AND cp.class_id = s.class_id) \
+                JOIN class_participants cp ON cp.class_id = s.class_id \
                 CROSS JOIN tz \
                 WHERE s.status <> 'cancelled' \
                   AND s.session_date >= (tz.n)::date - INTERVAL '3 days' \

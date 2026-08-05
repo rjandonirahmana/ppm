@@ -99,9 +99,7 @@ pub async fn affected_classes(
              FROM class_schedules cs \
              JOIN classes cl ON cl.id = cs.class_id \
              LEFT JOIN users w ON w.id = cl.wali_kelas_id \
-             JOIN class_participants cp \
-                 ON (cp.class_schedule_id = cs.id OR cp.class_id = cl.id) \
-                AND cp.user_id = $1 \
+             JOIN class_participants cp ON cp.class_id = cl.id AND cp.user_id = $1 \
              WHERE cs.status = 'active' \
                AND COALESCE(cs.start_date, $2) <= $3 \
                AND COALESCE(cs.end_date, $3) >= $2 \

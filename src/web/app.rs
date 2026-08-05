@@ -185,6 +185,7 @@ pub fn App() -> impl IntoView {
 
                 // Santri (dinamis — data DB)
                 <Route path=path!("/santri") view=SantriDashboardPage />
+                <Route path=path!("/kelas-saya") view=KelasSayaPage />
                 <Route path=path!("/izin") view=IzinPage />
                 <Route path=path!("/riwayat") view=RiwayatPage />
                 <Route path=path!("/sesi") view=SesiPage />

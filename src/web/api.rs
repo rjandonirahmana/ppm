@@ -1045,33 +1045,23 @@ pub async fn set_session_actual_detail_action(
         .map_err(err)
 }
 
-/// Tambah santri ke kelas (pada jadwal terpilih).
+/// Tambah santri ke KELAS — berlaku untuk semua jadwal kelas itu (migrasi 61).
 #[server(AddMember, "/api-fn")]
-pub async fn add_member_action(
-    class_id: i64,
-    schedule_id: i64,
-    student_id: i64,
-) -> Result<(), ServerFnError> {
+pub async fn add_member_action(class_id: i64, student_id: i64) -> Result<(), ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
-    crate::service::kelas::add_member(&state.pool, class_id, schedule_id, student_id)
-        .await
-        .map_err(err)
+    crate::service::kelas::add_member(&state.pool, class_id, student_id).await.map_err(err)
 }
 
-/// Tambah BANYAK santri ke kelas (pada jadwal terpilih) sekali request. Return
-/// jumlah baru ditambahkan.
+/// Tambah BANYAK santri ke KELAS sekali request. Return jumlah baru ditambahkan.
 #[server(AddMembers, "/api-fn")]
 pub async fn add_members_action(
     class_id: i64,
-    schedule_id: i64,
     student_ids: Vec<i64>,
 ) -> Result<i64, ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
-    crate::service::kelas::add_members(&state.pool, class_id, schedule_id, student_ids)
-        .await
-        .map_err(err)
+    crate::service::kelas::add_members(&state.pool, class_id, student_ids).await.map_err(err)
 }
 
 /// Ubah jadwal.
@@ -1235,6 +1225,17 @@ pub async fn update_curriculum_action(
     )
     .await
     .map_err(err)
+}
+
+/// Kelas-kelas yang diikuti santri yang sedang masuk: kurikulum, materi yang
+/// sedang dibahas, teman sekelas, wali kelas & pamong.
+#[server(SantriKelas, "/api-fn")]
+pub async fn santri_kelas_data() -> Result<crate::models::SantriKelasData, ServerFnError> {
+    // Santri hanya boleh melihat kelasnya SENDIRI — id diambil dari sesi,
+    // bukan dari parameter, supaya tak bisa mengintip kelas orang lain.
+    let sess = require_roles(&["santri", "santri_finance"]).await?;
+    let state = app_state().await?;
+    crate::service::kelas::santri_kelas(&state.pool, sess.id).await.map_err(err)
 }
 
 /// Setel materi & posisi yang SEDANG BERJALAN pada satu jadwal (migrasi 57).

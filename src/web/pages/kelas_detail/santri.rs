@@ -3,7 +3,7 @@
 use leptos::prelude::*;
 
 use crate::models::{
-    BookProgressItem, KelasDetail, ScheduleOption, StudentSearchItem,
+    BookProgressItem, KelasDetail, StudentSearchItem,
 };
 use crate::web::api::{
     add_members_action, remove_member_action, staff_search_students, student_book_progress_for_viewer,
@@ -18,8 +18,6 @@ pub(super) fn SantriTab(
     d: KelasDetail,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
-    let sched_opts = StoredValue::new(d.schedule_options.clone());
-    let has_sched = !d.schedule_options.is_empty();
     let members = StoredValue::new(d.members.clone());
     let total = d.members.len();
     let query = RwSignal::new(String::new());
@@ -59,18 +57,9 @@ pub(super) fn SantriTab(
             // Tambah santri + cari (md:max-w-md — form/input tunggal, bukan
             // grid; daftar anggota di bawah TETAP full-width via grid).
             <div class="space-y-3 md:max-w-md">
-            {if has_sched {
-                view! { <AddMemberForm class_id=class_id schedule_options=sched_opts refetch=refetch /> }
-                    .into_any()
-            } else {
-                view! {
-                    <div class="bg-warning/10 border border-warning/30 rounded-2xl p-4 text-body-sm text-on-surface-variant">
-                        <b class="text-on-background">"Buat jadwal dulu."</b>
-                        " Santri ditempatkan pada sebuah jadwal, jadi tambahkan minimal satu jadwal di tab Jadwal sebelum menambah santri."
-                    </div>
-                }
-                    .into_any()
-            }}
+            // Santri masuk KELAS (migrasi 61), bukan jadwal — jadi tak perlu
+            // lagi menunggu ada jadwal sebelum anggota bisa ditambahkan.
+            <AddMemberForm class_id=class_id refetch=refetch />
 
             // Cari peserta (filter klien)
             {(total > 0)
@@ -218,11 +207,8 @@ pub(super) fn SantriTab(
 #[component]
 fn AddMemberForm(
     class_id: i64,
-    schedule_options: StoredValue<Vec<ScheduleOption>>,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
-    let first_sched = schedule_options.with_value(|v| v.first().map(|s| s.id).unwrap_or(0));
-    let sched = RwSignal::new(first_sched);
     let q = RwSignal::new(String::new());
     let results = RwSignal::new(Vec::<StudentSearchItem>::new());
     let selected = RwSignal::new(Vec::<i64>::new());
@@ -267,9 +253,8 @@ fn AddMemberForm(
         }
         busy.set(true);
         msg.set(None);
-        let sid = sched.get_untracked();
         leptos::task::spawn_local(async move {
-            match add_members_action(class_id, sid, ids).await {
+            match add_members_action(class_id, ids).await {
                 Ok(n) => {
                     msg.set(Some((true, format!("{n} santri ditambahkan ke kelas."))));
                     selected.set(Vec::new());
@@ -291,26 +276,6 @@ fn AddMemberForm(
             <div class="flex items-center gap-2">
                 <span class="material-symbols-outlined text-primary">"person_add"</span>
                 <h3 class="text-body-md font-bold text-on-background">"Tambah Santri"</h3>
-            </div>
-
-            // Pilih jadwal penempatan
-            <div class="space-y-1">
-                <label class="text-label-md text-on-surface-variant">"Tempatkan pada jadwal"</label>
-                <select
-                    class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface"
-                    on:change=move |ev| {
-                        sched.set(event_target_value(&ev).parse().unwrap_or(0))
-                    }
-                >
-                    {schedule_options
-                        .get_value()
-                        .into_iter()
-                        .map(|o| {
-                            let val = o.id.to_string();
-                            view! { <option value=val>{o.label}</option> }
-                        })
-                        .collect_view()}
-                </select>
             </div>
 
             // Cari santri

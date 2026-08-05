@@ -151,6 +151,7 @@ pub struct NavDef {
 fn nav_visible(path: &str) -> bool {
     const PREFIXES: &[&str] = &[
         "/santri", "/izin", "/riwayat", "/sesi", "/profil", "/ganti-sandi", "/laporan", "/staf", "/guru",
+        "/kelas-saya",
         "/dewan-guru", "/poin", "/poin-dewan", "/verifikasi-pamong",
         "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua", "/kontrol-pengguna",
         "/akademik", "/kalender", "/izin-staf", "/materi", "/rekap-mingguan", "/setelan",

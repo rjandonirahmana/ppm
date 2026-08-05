@@ -357,6 +357,28 @@ fn FinanceTools() -> impl IntoView {
     view! {
         // Sama seperti SemesterManager: baca resource sesi di dalam Suspense.
         <Suspense fallback=|| ()>
+        // Pintu ke "Kelas Saya" — kelas yang diikuti, kurikulumnya, materi
+        // yang sedang dibahas, dan teman sekelas. Lewat kartu, bukan navbar:
+        // navbar santri sudah enam item dan menambah satu lagi membuatnya
+        // sesak di layar ponsel.
+        <a
+            href="/kelas-saya"
+            class="ppm-card p-4 flex items-center gap-3 press hover:border-primary transition-colors"
+        >
+            <span class="w-11 h-11 ppm-tile shrink-0">
+                <span class="material-symbols-outlined">"school"</span>
+            </span>
+            <div class="flex-1 min-w-0">
+                <p class="text-body-md font-semibold text-on-background">"Kelas Saya"</p>
+                <p class="text-[11px] text-on-surface-variant">
+                    "Kurikulum, materi sekarang, wali kelas & teman sekelas"
+                </p>
+            </div>
+            <span class="material-symbols-outlined text-on-surface-variant shrink-0">
+                "chevron_right"
+            </span>
+        </a>
+
         <Show when=is_finance fallback=|| ()>
             <section>
                 <h2 class="text-headline-sm text-on-background mb-3">"Alat Keuangan"</h2>

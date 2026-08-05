@@ -1142,6 +1142,15 @@ pub async fn set_session_book(
     book_pages_text: &str,
 ) -> Result<()> {
     let book = Some(book_id).filter(|v| *v > 0);
+    // Materi sesi wajib berasal dari kurikulum kelasnya. Dropdown sudah
+    // disaring, tapi request bisa dikirim langsung.
+    if let Some(b) = book {
+        if !repo::session_book_in_curriculum(pool, session_id, b).await? {
+            bail_user!(
+                "Materi itu belum ada di kurikulum kelas ini. Tambahkan dulu lewat detail kelas."
+            );
+        }
+    }
     let pages = book_pages_value(pool, book, book_pages_text).await?;
     if !repo::set_session_book(pool, session_id, book, &pages).await? {
         bail_user!("Sesi tidak ditemukan.");
@@ -1157,6 +1166,15 @@ pub async fn set_session_target(
     pages_text: &str,
 ) -> Result<()> {
     let book = Some(book_id).filter(|v| *v > 0);
+    // Materi sesi wajib berasal dari kurikulum kelasnya. Dropdown sudah
+    // disaring, tapi request bisa dikirim langsung.
+    if let Some(b) = book {
+        if !repo::session_book_in_curriculum(pool, session_id, b).await? {
+            bail_user!(
+                "Materi itu belum ada di kurikulum kelas ini. Tambahkan dulu lewat detail kelas."
+            );
+        }
+    }
     let pages = book_pages_value(pool, book, pages_text).await?;
     if !repo::set_session_target(pool, session_id, book, &pages).await? {
         bail_user!("Sesi tidak ditemukan.");
@@ -1176,12 +1194,11 @@ pub async fn set_session_actual_detail(pool: &Pool, session_id: i64, detail: &st
     Ok(())
 }
 
-pub async fn add_member(pool: &Pool, class_id: i64, schedule_id: i64, student_id: i64) -> Result<()> {
-    if schedule_id <= 0 {
-        bail_user!("Pilih jadwal untuk menempatkan santri.");
-    }
-    if !repo::add_member(pool, class_id, schedule_id, student_id).await? {
-        bail_user!("Santri sudah terdaftar pada jadwal ini.");
+/// Tambah santri ke KELAS. Keanggotaan berlaku untuk SEMUA jadwal kelas itu
+/// (migrasi 61) — tak ada lagi penempatan per-jadwal.
+pub async fn add_member(pool: &Pool, class_id: i64, student_id: i64) -> Result<()> {
+    if !repo::add_member(pool, class_id, student_id).await? {
+        bail_user!("Santri sudah terdaftar di kelas ini.");
     }
     Ok(())
 }
@@ -1190,17 +1207,13 @@ pub async fn add_member(pool: &Pool, class_id: i64, schedule_id: i64, student_id
 pub async fn add_members(
     pool: &Pool,
     class_id: i64,
-    schedule_id: i64,
     student_ids: Vec<i64>,
 ) -> Result<i64> {
-    if schedule_id <= 0 {
-        bail_user!("Pilih jadwal untuk menempatkan santri.");
-    }
     let ids: Vec<i64> = student_ids.into_iter().filter(|&x| x > 0).collect();
     if ids.is_empty() {
         bail_user!("Pilih minimal satu santri.");
     }
-    repo::add_members(pool, class_id, schedule_id, &ids).await
+    repo::add_members(pool, class_id, &ids).await
 }
 
 pub async fn remove_member(pool: &Pool, class_id: i64, student_id: i64) -> Result<()> {
@@ -1464,4 +1477,127 @@ mod tests {
         assert!(parse_point_magnitude("-5", "x").is_err());
         assert!(parse_point_magnitude("abc", "x").is_err());
     }
+}
+
+// ── Sisi SANTRI: "Kelas Saya" ────────────────────────────────────────────────
+
+/// Kelas-kelas yang diikuti santri, lengkap dengan kurikulum, materi yang
+/// sedang berjalan, petugas, dan teman sekelas.
+///
+/// Query per-kelas (kurikulum/jadwal/anggota) sengaja dibiarkan berurutan:
+/// seorang santri lazimnya ikut 2–3 kelas (satu per golongan), jadi jumlah
+/// query tetap kecil dan menukarnya dengan satu query raksasa ber-JOIN ganda
+/// justru lebih sulit dibaca tanpa keuntungan nyata.
+pub async fn santri_kelas(pool: &Pool, user_id: i64) -> Result<crate::models::SantriKelasData> {
+    let kelas = repo::classes_of_student(pool, user_id).await?;
+    let mut items = Vec::with_capacity(kelas.len());
+
+    for k in kelas {
+        let (cur_rows, sched_rows, members) = tokio::join!(
+            repo::class_curriculum(pool, k.id),
+            repo::class_schedules(pool, k.id),
+            repo::class_members(pool, k.id),
+        );
+
+        let curriculum = cur_rows?
+            .into_iter()
+            .map(|c| {
+                let category = c.book_category.clone().unwrap_or_default();
+                let surahs = surahs_of(c.book_surahs.as_ref());
+                let range = repo::CurriculumRange {
+                    start_surah: c.start_surah,
+                    start_unit: c.start_unit,
+                    end_surah: c.end_surah,
+                    end_unit: c.end_unit,
+                    current_surah: c.current_surah,
+                    current_unit: c.current_unit,
+                };
+                let posisi = c.current_unit.map(|u| {
+                    unit_absolut(&category, &surahs, c.current_surah.unwrap_or(1) as i32, u)
+                });
+                let progress_pct = progres_dari_posisi(
+                    &category,
+                    &surahs,
+                    c.book_total_pages.unwrap_or(0),
+                    &range,
+                    posisi,
+                );
+                let status_kode = status_dari_progres(progress_pct, posisi.is_some());
+                CurriculumItem {
+                    id: c.id,
+                    title: c.book_title.clone().unwrap_or(c.title),
+                    progress_pct,
+                    order_index: c.order_index,
+                    status_label: curriculum_status_label(status_kode).into(),
+                    status: status_kode.to_string(),
+                    book_id: c.book_id.unwrap_or(0),
+                    book_title: c.book_title.unwrap_or_default(),
+                    book_category: category.clone(),
+                    start_surah: range.start_surah.unwrap_or(0) as i32,
+                    start_unit: range.start_unit.unwrap_or(0),
+                    end_surah: range.end_surah.unwrap_or(0) as i32,
+                    end_unit: range.end_unit.unwrap_or(0),
+                    range_label: range_label(&category, &surahs, &range),
+                    current_surah: range.current_surah.unwrap_or(0) as i32,
+                    current_unit: range.current_unit.unwrap_or(0),
+                    current_label: titik_label(
+                        &category,
+                        &surahs,
+                        range.current_surah,
+                        range.current_unit,
+                    ),
+                }
+            })
+            .collect();
+
+        let schedules = sched_rows?
+            .into_iter()
+            .map(|s| {
+                let cat = s.current_book_category.clone().unwrap_or_default();
+                let surahs = surahs_of(s.current_book_surahs.as_ref());
+                crate::models::SantriJadwalItem {
+                    title: if s.title.trim().is_empty() {
+                        "Jadwal Kelas".into()
+                    } else {
+                        s.title.clone()
+                    },
+                    time_label: format!(
+                        "{} – {} WIB",
+                        s.start_time.format("%H:%M"),
+                        s.end_time.format("%H:%M")
+                    ),
+                    recurrence_label: recurrence_label(&s.recurrence_type).into(),
+                    current_book_title: s.current_book_title.clone().unwrap_or_default(),
+                    current_label: titik_label(&cat, &surahs, s.current_surah, s.current_unit),
+                }
+            })
+            .collect();
+
+        let members = members?
+            .into_iter()
+            .map(|(id, name, nis)| {
+                let nis = nis.unwrap_or_default();
+                MemberItem {
+                    angkatan: nis.chars().take(4).collect::<String>(),
+                    id,
+                    name,
+                    nis,
+                }
+            })
+            .collect();
+
+        items.push(crate::models::SantriKelasItem {
+            id: k.id,
+            name: k.name,
+            category: k.category.unwrap_or_default(),
+            golongan: k.golongan.unwrap_or_default(),
+            wali_kelas: k.wali_kelas.unwrap_or_default(),
+            pamong: k.pamong.unwrap_or_default(),
+            curriculum,
+            schedules,
+            members,
+        });
+    }
+
+    Ok(crate::models::SantriKelasData { items })
 }

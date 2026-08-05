@@ -400,3 +400,40 @@ pub struct PermitQueueData {
     #[serde(default)]
     pub stage_label: String,
 }
+
+// ── Sisi SANTRI: "Kelas Saya" ────────────────────────────────────────────────
+
+/// Satu jadwal kelas dilihat dari sisi santri — ringkas, tanpa pengaturan poin
+/// atau tombol kelola yang bukan urusannya.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SantriJadwalItem {
+    pub title: String,
+    /// "05:00 – 06:30 WIB"
+    pub time_label: String,
+    pub recurrence_label: String,
+    /// Materi yang sedang dibahas jadwal ini + posisinya. Kosong = belum diatur.
+    pub current_book_title: String,
+    pub current_label: String,
+}
+
+/// Satu kelas yang diikuti santri: siapa petugasnya, apa kurikulumnya, sedang
+/// di materi mana, dan siapa saja teman sekelasnya.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SantriKelasItem {
+    pub id: i64,
+    pub name: String,
+    pub category: String,
+    pub golongan: String,
+    /// Kosong = belum ditunjuk.
+    pub wali_kelas: String,
+    pub pamong: String,
+    pub curriculum: Vec<CurriculumItem>,
+    pub schedules: Vec<SantriJadwalItem>,
+    pub members: Vec<MemberItem>,
+}
+
+/// Payload halaman "Kelas Saya" (santri).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SantriKelasData {
+    pub items: Vec<SantriKelasItem>,
+}

@@ -1043,32 +1043,31 @@ pub async fn create_session(
     Ok(row.get(0))
 }
 
-/// Tambah santri ke kelas (menempel ke sebuah jadwal — class_schedule_id NOT NULL).
-/// Return true bila baru (bukan duplikat).
+/// Tambah santri ke KELAS. Satu baris per (kelas, santri) sejak migrasi 61 —
+/// keanggotaan berlaku untuk SEMUA jadwal kelas itu, termasuk jadwal yang baru
+/// dibuat kemudian. Return true bila baru (bukan duplikat).
 pub async fn add_member(
     pool: &Pool,
     class_id: i64,
-    schedule_id: i64,
     user_id: i64,
 ) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
         .execute(
-            "INSERT INTO class_participants (class_id, class_schedule_id, user_id) \
-             VALUES ($1, $2, $3) ON CONFLICT (class_id, user_id, class_schedule_id) DO NOTHING",
-            &[&class_id, &schedule_id, &user_id],
+            "INSERT INTO class_participants (class_id, user_id) \
+             VALUES ($1, $2) ON CONFLICT (class_id, user_id) DO NOTHING",
+            &[&class_id, &user_id],
         )
         .await
         .context("add_member")?;
     Ok(n > 0)
 }
 
-/// Tambah BANYAK santri ke kelas (pada jadwal terpilih) sekali jalan. Set-based
-/// via unnest; ON CONFLICT skip yang sudah terdaftar. Return jumlah BARU.
+/// Tambah BANYAK santri ke KELAS sekali jalan. Set-based via unnest;
+/// ON CONFLICT skip yang sudah terdaftar. Return jumlah BARU.
 pub async fn add_members(
     pool: &Pool,
     class_id: i64,
-    schedule_id: i64,
     user_ids: &[i64],
 ) -> Result<i64> {
     if user_ids.is_empty() {
@@ -1077,10 +1076,10 @@ pub async fn add_members(
     let c = pool.get().await?;
     let n = c
         .execute(
-            "INSERT INTO class_participants (class_id, class_schedule_id, user_id) \
-             SELECT $1, $2, uid FROM unnest($3::bigint[]) AS uid \
-             ON CONFLICT (class_id, user_id, class_schedule_id) DO NOTHING",
-            &[&class_id, &schedule_id, &user_ids],
+            "INSERT INTO class_participants (class_id, user_id) \
+             SELECT $1, uid FROM unnest($2::bigint[]) AS uid \
+             ON CONFLICT (class_id, user_id) DO NOTHING",
+            &[&class_id, &user_ids],
         )
         .await
         .context("add_members")?;
@@ -1680,4 +1679,102 @@ pub async fn update_recording(
     .await
     .context("update_recording")?;
     Ok(())
+}
+
+// ── Sisi SANTRI: kelas yang diikuti ──────────────────────────────────────────
+
+/// Satu kelas yang diikuti seorang santri, lengkap dengan petugasnya.
+pub struct SantriKelasRow {
+    pub id: i64,
+    pub name: String,
+    pub category: Option<String>,
+    pub golongan: Option<String>,
+    pub wali_kelas: Option<String>,
+    pub pamong: Option<String>,
+}
+
+/// Kelas-kelas yang diikuti `user_id` (lewat `class_participants`).
+///
+/// DISTINCT: satu santri bisa terdaftar di kelas yang sama lewat lebih dari
+/// satu jadwal (`class_participants.class_schedule_id`), dan tanpa ini kelasnya
+/// muncul berulang di daftar santri.
+pub async fn classes_of_student(pool: &Pool, user_id: i64) -> Result<Vec<SantriKelasRow>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT DISTINCT cl.id, cl.name, cl.category, cl.golongan, \
+                    w.full_name, pm.full_name \
+             FROM class_participants cp \
+             JOIN classes cl ON cl.id = cp.class_id \
+             LEFT JOIN users w  ON w.id  = cl.wali_kelas_id \
+             LEFT JOIN users pm ON pm.id = cl.pamong_id \
+             WHERE cp.user_id = $1 \
+             ORDER BY cl.name",
+            &[&user_id],
+        )
+        .await
+        .context("classes_of_student")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| SantriKelasRow {
+            id: r.get(0),
+            name: r.get(1),
+            category: r.get(2),
+            golongan: r.get(3),
+            wali_kelas: r.get(4),
+            pamong: r.get(5),
+        })
+        .collect())
+}
+
+/// Materi yang terdaftar di kurikulum sebuah KELAS.
+///
+/// Dipakai untuk membatasi pilihan materi jadwal & sesi: keduanya mengajarkan
+/// apa yang direncanakan kelasnya, jadi menawarkan seluruh isi tabel `books`
+/// membuka jalan mencatat kitab yang tak pernah masuk kurikulum — dan progres
+/// kurikulumnya tak akan pernah bergerak.
+pub async fn books_in_curriculum(
+    pool: &Pool,
+    class_id: i64,
+) -> Result<Vec<super::books::BookRow>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT DISTINCT b.id, b.title, b.category, b.total_pages, b.surahs \
+             FROM curriculum cu JOIN books b ON b.id = cu.book_id \
+             WHERE cu.class_id = $1 ORDER BY b.title",
+            &[&class_id],
+        )
+        .await
+        .context("books_in_curriculum")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| super::books::BookRow {
+            id: r.get(0),
+            title: r.get(1),
+            category: r.get(2),
+            total_pages: r.get(3),
+            surahs: r.get(4),
+        })
+        .collect())
+}
+
+/// Apakah materi `book_id` ada di kurikulum kelas pemilik SESI ini?
+/// Pasangan [`schedule_book_in_curriculum`] untuk jalur sesi.
+pub async fn session_book_in_curriculum(
+    pool: &Pool,
+    session_id: i64,
+    book_id: i64,
+) -> Result<bool> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(
+            "SELECT 1 FROM class_sessions s \
+               JOIN curriculum cu ON cu.class_id = s.class_id AND cu.book_id = $2 \
+              WHERE s.id = $1 LIMIT 1",
+            &[&session_id, &book_id],
+        )
+        .await
+        .context("session_book_in_curriculum")?;
+    Ok(row.is_some())
 }

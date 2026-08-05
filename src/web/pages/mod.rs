@@ -12,6 +12,7 @@ mod izin_staf;
 mod kalender;
 mod kelas;
 mod kelas_detail;
+mod kelas_saya;
 mod kontrol_pengguna;
 mod laporan;
 mod login;
@@ -39,6 +40,7 @@ mod verifikasi_tahap2;
 
 pub use akademik::AkademikSantriPage;
 pub use analisis::{DewanGuruDashboardPage, GuruDashboardPage};
+pub use kelas_saya::KelasSayaPage;
 pub use beranda::BerandaPage;
 pub use dashboard_santri::SantriDashboardPage;
 pub use design_pages::*;

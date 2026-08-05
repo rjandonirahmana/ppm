@@ -188,7 +188,7 @@ pub async fn detail_for(
         repo::session_chats(pool, session_id, 200),
         repo::teacher_options(pool),
         repo::pamong_options(pool),
-        repo::list_books(pool),
+        repo::books_in_curriculum(pool, d.class_id),
     );
 
     let wib_tz = crate::service::fmt::wib();
@@ -273,6 +273,8 @@ pub async fn detail_for(
         book_id: d.book_id,
         book_title: d.book_title,
         book_pages_label: crate::service::books::format_page_ranges(&d.book_pages),
+        // HANYA materi yang ada di kurikulum kelas sesi ini — sesi mengajarkan
+        // apa yang direncanakan kelasnya, bukan kitab sembarangan.
         book_options: books?
             .into_iter()
             .map(|b| crate::models::BookItem { id: b.id, title: b.title, category: b.category, total_pages: b.total_pages, surahs: Vec::new() })

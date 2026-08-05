@@ -67,7 +67,7 @@ pub async fn next_schedule(pool: &Pool, user_id: i64) -> Result<Option<ScheduleR
         .query_opt(
             "SELECT cs.title, c.name, cs.start_time \
              FROM class_participants cp \
-             JOIN class_schedules cs ON cs.id = cp.class_schedule_id AND cs.status = 'active' \
+             JOIN class_schedules cs ON cs.class_id = cp.class_id AND cs.status = 'active' \
              JOIN classes c ON c.id = cs.class_id \
              WHERE cp.user_id = $1 \
                AND cs.start_date <= CURRENT_DATE \
@@ -114,7 +114,7 @@ pub async fn active_schedule_now(
         .query_opt(
             "SELECT cs.id, cs.limit_entery_time \
              FROM class_participants cp \
-             JOIN class_schedules cs ON cs.id = cp.class_schedule_id AND cs.status = 'active' \
+             JOIN class_schedules cs ON cs.class_id = cp.class_id AND cs.status = 'active' \
              WHERE cp.user_id = $1 \
                AND cs.start_date <= $2 AND (cs.end_date IS NULL OR cs.end_date >= $2) \
                AND $3::time >= cs.start_time - INTERVAL '45 minutes' \
@@ -149,7 +149,7 @@ pub async fn active_schedule_room_elsewhere(
         .query_opt(
             "SELECT COALESCE(dev.location, dev.device_name) \
              FROM class_participants cp \
-             JOIN class_schedules cs ON cs.id = cp.class_schedule_id AND cs.status = 'active' \
+             JOIN class_schedules cs ON cs.class_id = cp.class_id AND cs.status = 'active' \
              JOIN rfid_devices dev ON dev.id = cs.room_id \
              WHERE cp.user_id = $1 \
                AND cs.start_date <= $2 AND (cs.end_date IS NULL OR cs.end_date >= $2) \
