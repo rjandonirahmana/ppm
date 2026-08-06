@@ -8,7 +8,7 @@ use leptos_meta::Title;
 
 use crate::models::PendingAtt;
 use crate::web::api::{decide_pamong, pamong_data, permit_queue_data};
-use crate::web::components::{DeviceFrame, FetchError, JadwalDeck};
+use crate::web::components::{kartu_grid, DeviceFrame, FetchError, JadwalDeck};
 
 #[component]
 pub fn VerifikasiPamongPage() -> impl IntoView {
@@ -192,16 +192,15 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                     .into_any()
                                             } else {
                                                 // Desktop: antrean 2 kolom (mockup dashboard pamong).
-                                                view! {
-                                                    <div class="ppm-card-grid">
-                                                        {d.pending
+                                                kartu_grid(
+                                                        d.pending
                                                             .into_iter()
                                                             .map(|p| {
                                                                 view! { <PendingCard p=p busy_id=busy_id decide=decide /> }
+                                                                    .into_any()
                                                             })
-                                                            .collect_view()}
-                                                    </div>
-                                                }
+                                                            .collect(),
+                                                    )
                                                     .into_any()
                                             }}
 

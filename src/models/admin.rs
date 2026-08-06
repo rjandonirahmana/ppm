@@ -56,6 +56,10 @@ pub struct UserRow {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserControlData {
+    /// Boleh MENGUBAH pengguna (peran, aktif/nonaktif, kartu, perangkat)?
+    /// Hanya admin/ketua. Guru & pamong tetap boleh MEMBUKA halaman ini —
+    /// mereka perlu membaca jejak aktivitas — tapi seluruh kendalinya terkunci.
+    pub can_manage: bool,
     pub total: i64,
     pub santri_count: i64,
     /// Guru + dewan guru + pamong.

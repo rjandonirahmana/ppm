@@ -37,6 +37,14 @@ pub fn TamuPage() -> impl IntoView {
     // tak terpakai (lihat catatan serupa di pages/tagihan.rs).
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
     let interval_id = StoredValue::new(None::<i32>);
+    // Pemegang closure interval. Tanpa ini closure harus di-`forget()` (bocor
+    // permanen); SendWrapper dipakai karena Closure bukan Send sementara
+    // StoredValue menuntutnya — aman, semuanya di thread browser yang sama.
+    // Hanya ada di build WASM: `send_wrapper` memang dependensi khusus wasm.
+    #[cfg(target_arch = "wasm32")]
+    let held = StoredValue::new(
+        None::<send_wrapper::SendWrapper<wasm_bindgen::closure::Closure<dyn FnMut()>>>,
+    );
     #[cfg(target_arch = "wasm32")]
     Effect::new(move |_| {
         use wasm_bindgen::closure::Closure;
@@ -53,13 +61,19 @@ pub fn TamuPage() -> impl IntoView {
                 ) {
                     interval_id.set_value(Some(id));
                 }
-                cb.forget();
+                // Closure DI-HOLD, bukan di-forget: `forget()` melepasnya ke
+                // heap selamanya, dan Effect ini bisa jalan berkali-kali
+                // (tick berubah tiap 2,5 detik) sehingga satu closure bocor
+                // tiap kali. Disimpan lalu dibuang bersama interval-nya.
+                held.set_value(Some(send_wrapper::SendWrapper::new(cb)));
             }
         }
         if done {
             if let (Some(id), Some(w)) = (interval_id.get_value(), win) {
                 w.clear_interval_with_handle(id);
                 interval_id.set_value(None);
+                // Interval dihentikan → closure-nya ikut dibuang.
+                held.set_value(None);
             }
         }
     });

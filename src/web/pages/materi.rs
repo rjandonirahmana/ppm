@@ -119,8 +119,7 @@ fn AddLinkForm(refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
                     refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy.set(false);
@@ -337,8 +336,7 @@ fn UploadForm(refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
                     refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy.set(false);

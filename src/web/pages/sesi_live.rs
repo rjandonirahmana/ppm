@@ -149,8 +149,7 @@ fn LiveBody(d: SessionLiveData, refetch: impl Fn() + Copy + Send + 'static) -> i
                     refetch();
                 }
                 Err(e) => {
-                    let s = e.to_string();
-                    err.set(Some(s.rsplit(": ").next().unwrap_or(&s).to_string()));
+                                        err.set(Some(crate::web::components::pesan_galat(e)));
                 }
             }
             busy.set(false);
@@ -164,8 +163,7 @@ fn LiveBody(d: SessionLiveData, refetch: impl Fn() + Copy + Send + 'static) -> i
         ctl_err.set(None);
         leptos::task::spawn_local(async move {
             if let Err(e) = set_session_live(session_id, !is_live).await {
-                let s = e.to_string();
-                ctl_err.set(Some(s.rsplit(": ").next().unwrap_or(&s).to_string()));
+                                ctl_err.set(Some(crate::web::components::pesan_galat(e)));
             }
             busy.set(false);
             refetch();

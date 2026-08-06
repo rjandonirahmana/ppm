@@ -101,6 +101,20 @@ fn validate_end_date(ed: Option<NaiveDate>, today: NaiveDate) -> Result<()> {
 /// POSITIF & konsisten (migrasi 21): present ditambah, late/absent dikurangi —
 /// arah operasi ditentukan di models::attendance_delta, bukan tandanya. Nilai
 /// minus ditolak (menghilangkan kebingungan lama saat late_points bertanda).
+/// Sama seperti [`parse_point_magnitude`] tapi MENOLAK kosong.
+///
+/// Dipakai saat MEMBUAT jadwal: membiarkannya kosong berarti diam-diam memakai
+/// preset, dan pengelola tak pernah tahu angka apa yang sebenarnya berlaku di
+/// kelasnya sampai ada santri yang poinnya terasa aneh. Saat MENYUNTING tetap
+/// boleh kosong — jadwal lama sudah terlanjur ada dan memaksanya diisi hanya
+/// akan menghalangi perubahan kecil yang tak berhubungan.
+fn wajib_point_magnitude(s: &str, field: &str) -> Result<Option<i16>> {
+    if s.trim().is_empty() {
+        bail_user!("Poin {field} wajib diisi saat membuat jadwal.");
+    }
+    parse_point_magnitude(s, field)
+}
+
 fn parse_point_magnitude(s: &str, field: &str) -> Result<Option<i16>> {
     let s = s.trim();
     if s.is_empty() {
@@ -465,7 +479,12 @@ fn session_status(status: &str) -> (&'static str, &'static str) {
 }
 
 /// Angkatan santri = 4 digit awal NIS bila berupa tahun (mis. 2023001 → "2023").
-fn angkatan_from_nis(nis: &str) -> String {
+///
+/// Syarat "berupa tahun" itu bukan hiasan: banyak NIS lama tak berawalan tahun,
+/// dan mengambil empat aksara pertamanya begitu saja menghasilkan label seperti
+/// "1290" yang dipajang di samping nama santri seolah-olah itu angkatannya.
+/// Satu-satunya definisi angkatan di seluruh kode ada di sini.
+pub(crate) fn angkatan_from_nis(nis: &str) -> String {
     let head: String = nis.chars().take(4).collect();
     match head.parse::<i32>() {
         Ok(y) if (1900..=2100).contains(&y) => head,
@@ -507,7 +526,13 @@ pub async fn kelas_list(pool: &Pool, role: &str) -> Result<KelasData> {
             schedule_count: c.schedule_count,
         })
         .collect();
-    Ok(KelasData { role: role.to_string(), total_kelas, total_santri, items })
+    Ok(KelasData {
+        can_manage: crate::models::role_satisfies(role, &["admin"]),
+        role: role.to_string(),
+        total_kelas,
+        total_santri,
+        items,
+    })
 }
 
 /// Detail satu kelas (anggota, jadwal, sesi, kategori, opsi form, statistik).
@@ -743,6 +768,8 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
         wali_kelas_id: ci.wali_kelas_id.unwrap_or(0),
         wali_kelas_name: ci.wali_kelas_name.unwrap_or_default(),
         require_pamong: ci.require_pamong,
+        verify_mode: ci.verify_mode.clone(),
+        can_manage: crate::models::role_satisfies(role, &["admin"]),
         pamong_id: ci.pamong_id.unwrap_or(0),
         pamong_name: ci.pamong_name.unwrap_or_default(),
         pamong_options,
@@ -820,16 +847,30 @@ pub async fn categories(pool: &Pool) -> Result<Vec<String>> {
 
 /// Tetapkan wali kelas + pamong + rute persetujuan izin (require_pamong) satu
 /// kelas (migrasi 29/30). id 0 = kosongkan.
+/// Setel wali kelas, pamong, dan MODE VERIFIKASI kelas (migrasi 62).
+///
+/// Mode menggantikan boolean `require_pamong` yang lama: ada kelas yang cukup
+/// diverifikasi pamong saja, dan itu tak bisa diungkapkan sebuah boolean.
+/// `require_pamong` di DB dijaga tetap sepadan oleh trigger migrasi 62 — jadi
+/// yang ditulis dari sini HANYA `verify_mode`, sekali jalan.
 pub async fn set_class_staff(
     pool: &Pool,
     class_id: i64,
     wali_kelas_id: i64,
     pamong_id: i64,
-    require_pamong: bool,
+    verify_mode: &str,
 ) -> Result<()> {
+    if !matches!(verify_mode, "dua_tahap" | "guru" | "pamong") {
+        bail_user!("Mode verifikasi tidak dikenal.");
+    }
+    // Mode yang MELIBATKAN pamong mustahil berjalan tanpa pamong ditunjuk —
+    // absensinya akan menggantung di antrean yang tak punya petugas.
+    if matches!(verify_mode, "dua_tahap" | "pamong") && pamong_id <= 0 {
+        bail_user!("Mode ini membutuhkan pamong kelas. Pilih pamongnya dulu.");
+    }
     let wali = (wali_kelas_id > 0).then_some(wali_kelas_id);
     let pamong = (pamong_id > 0).then_some(pamong_id);
-    if !repo::set_class_staff(pool, class_id, wali, pamong, require_pamong).await? {
+    if !repo::set_class_staff(pool, class_id, wali, pamong, verify_mode).await? {
         bail_user!("Kelas tidak ditemukan.");
     }
     Ok(())
@@ -920,13 +961,21 @@ pub async fn create_schedule(
     if rec != "custom" {
         validate_end_date(ed, today)?;
     }
+    if title.trim().is_empty() {
+        bail_user!("Nama jadwal wajib diisi.");
+    }
     let cat = category.trim();
     let cat = (!cat.is_empty()).then_some(cat);
-    let pp = parse_point_magnitude(present_points, "tepat waktu")?;
-    let lp = parse_point_magnitude(late_points, "telat")?;
-    let ap = parse_point_magnitude(absent_points, "alpa")?;
-    let ip = parse_point_magnitude(izin_points, "izin")?;
+    let pp = wajib_point_magnitude(present_points, "tepat waktu")?;
+    let lp = wajib_point_magnitude(late_points, "telat")?;
+    let ap = wajib_point_magnitude(absent_points, "alpa")?;
+    let ip = wajib_point_magnitude(izin_points, "izin")?;
+    // Jenis kegiatan menentukan preset poin & apakah sesi boleh direkam —
+    // dibiarkan kosong berarti jatuh ke preset "legacy" tanpa ada yang memilih.
     let atype = normalize_activity_type(activity_type);
+    if atype.is_none() {
+        bail_user!("Pilih jenis kegiatan (KBM/Non-KBM/Piket/Apel) untuk jadwal ini.");
+    }
     let room = (room_id > 0).then_some(room_id);
     // Dropdown sudah tak menawarkannya, tapi server fn bisa dipanggil langsung
     // dengan id apa pun — tolak di sini juga. Jadwal beruang gerbang utama
@@ -1563,8 +1612,24 @@ pub async fn kelas_saya(
             })
             .collect();
 
+        // Judulnya "JADWAL & MATERI SEKARANG", jadi jadwal yang MASANYA SUDAH
+        // HABIS tak boleh ikut: `class_schedules` menyimpan seluruh riwayat
+        // jadwal kelas, termasuk yang `end_date`-nya sudah lewat dan yang
+        // tanggal-tanggal khususnya sudah terlampaui semua. Tanpa saringan ini
+        // santri melihat materi lama seolah masih berjalan.
+        let hari_ini = crate::service::fmt::today_wib();
         let schedules = sched_rows?
             .into_iter()
+            .filter(|s| match s.end_date {
+                Some(akhir) => akhir >= hari_ini,
+                None if s.recurrence_type == "custom" => s
+                    .custom_dates
+                    .iter()
+                    .filter_map(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+                    .max()
+                    .is_none_or(|terakhir| terakhir >= hari_ini),
+                None => true,
+            })
             .map(|s| {
                 let cat = s.current_book_category.clone().unwrap_or_default();
                 let surahs = surahs_of(s.current_book_surahs.as_ref());
@@ -1591,7 +1656,7 @@ pub async fn kelas_saya(
             .map(|(id, name, nis)| {
                 let nis = nis.unwrap_or_default();
                 MemberItem {
-                    angkatan: nis.chars().take(4).collect::<String>(),
+                    angkatan: angkatan_from_nis(&nis),
                     id,
                     name,
                     nis,

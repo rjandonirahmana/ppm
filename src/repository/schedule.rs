@@ -320,6 +320,8 @@ pub struct SessionDetailRow {
     /// mencerminkan COALESCE di repository::correct_attendance.
     pub class_wali_id: Option<i64>,
     pub class_pamong_id: Option<i64>,
+    /// Nama wali kelas — CADANGAN tampilan bila sesi tak punya guru pengisi.
+    pub wali_name: Option<String>,
     pub class_id: i64,
     pub title: Option<String>,
     pub class_name: String,
@@ -394,11 +396,12 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
                     s.recording_size, s.teacher_id, COALESCE(cs.category, c.category), \
                     s.book_id, b.title, s.book_pages, s.pamong_id, \
                     s.target_book_id, tb.title, s.target_pages, s.actual_detail, \
-                    c.wali_kelas_id, c.pamong_id \
+                    c.wali_kelas_id, c.pamong_id, w.full_name \
              FROM class_sessions s \
              JOIN classes c ON c.id = s.class_id \
              LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
              LEFT JOIN users t ON t.id = s.teacher_id \
+             LEFT JOIN users w ON w.id = c.wali_kelas_id \
              LEFT JOIN books b ON b.id = s.book_id \
              LEFT JOIN books tb ON tb.id = s.target_book_id \
              WHERE s.id = $1",
@@ -430,6 +433,7 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
         actual_detail: r.get(20),
         class_wali_id: r.get(21),
         class_pamong_id: r.get(22),
+        wali_name: r.get(23),
     }))
 }
 

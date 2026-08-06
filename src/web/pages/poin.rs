@@ -8,7 +8,7 @@ use leptos_meta::Title;
 
 use crate::models::PointRow;
 use crate::web::api::{adjust_points_action, poin_data_action};
-use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
+use crate::web::components::{kartu_grid, DeviceFrame, FetchError, MobileHeader};
 
 #[component]
 pub fn PoinPage() -> impl IntoView {
@@ -109,35 +109,36 @@ fn PoinPageInner() -> impl IntoView {
                                                     </p>
                                                 </div>
                                             </div>
-                                            <div class="ppm-card-grid">
-                                                {if d.top.is_empty() {
-                                                    view! {
-                                                        <p class="text-body-sm text-on-surface-variant text-center py-6 md:col-span-2">
-                                                            "Belum ada santri di cakupan Anda."
-                                                        </p>
-                                                    }
-                                                        .into_any()
-                                                } else {
-                                                    let can_adjust = d.can_adjust;
-                                                    d.top
-                                                        .into_iter()
-                                                        .enumerate()
-                                                        .map(|(i, row)| {
-                                                            view! {
-                                                                <PointCard
-                                                                    rank=i + 1
-                                                                    row=row
-                                                                    can_adjust=can_adjust
-                                                                    editing=editing
-                                                                    busy=busy
-                                                                    apply_delta=apply_delta
-                                                                />
-                                                            }
-                                                        })
-                                                        .collect_view()
-                                                        .into_any()
-                                                }}
-                                            </div>
+                                            {if d.top.is_empty() {
+                                                view! {
+                                                    <p class="text-body-sm text-on-surface-variant text-center py-6">
+                                                        "Belum ada santri di cakupan Anda."
+                                                    </p>
+                                                }
+                                                    .into_any()
+                                            } else {
+                                                let can_adjust = d.can_adjust;
+                                                kartu_grid(
+                                                        d.top
+                                                            .into_iter()
+                                                            .enumerate()
+                                                            .map(|(i, row)| {
+                                                                view! {
+                                                                    <PointCard
+                                                                        rank=i + 1
+                                                                        row=row
+                                                                        can_adjust=can_adjust
+                                                                        editing=editing
+                                                                        busy=busy
+                                                                        apply_delta=apply_delta
+                                                                    />
+                                                                }
+                                                                    .into_any()
+                                                            })
+                                                            .collect(),
+                                                    )
+                                                    .into_any()
+                                            }}
                                         }
                                             .into_any()
                                     }

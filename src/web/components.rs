@@ -468,6 +468,22 @@ pub fn FetchError(err: String) -> impl IntoView {
     // "session_expired" = umur token habis (wajar); "unauth" = token cacat/tak
     // ada. Keduanya berujung sama bagi pengguna: harus masuk lagi.
     let expired = err.contains("session_expired");
+    // "forbidden" BUKAN sesi habis — pengguna sudah masuk, hanya perannya tak
+    // berwenang. Menyuruhnya login ulang menyesatkan: ia akan masuk lagi
+    // dengan akun yang sama dan menemui layar yang sama.
+    let forbidden = err.contains("forbidden") && !expired && !err.contains("unauth");
+    if forbidden {
+        return view! {
+            <div class="pt-10 text-center space-y-3 anim-in">
+                <span class="material-symbols-outlined text-5xl text-on-surface-variant">"lock"</span>
+                <p class="text-body-md font-semibold text-on-background">"Tidak berwenang"</p>
+                <p class="text-body-sm text-on-surface-variant px-6">
+                    "Peran akun Anda tak punya akses ke halaman ini. Hubungi admin bila menurut Anda ini keliru."
+                </p>
+            </div>
+        }
+            .into_any();
+    }
     let is_auth = is_auth_error(&err);
     if is_auth {
         // Bedakan sebabnya: sesi 30 hari yang habis itu WAJAR dan bukan salah
@@ -764,7 +780,7 @@ pub fn Sheet(
         <div class="ppm-scrim" on:click=move |_| on_close()></div>
         <div
             node_ref=panel
-            class="ppm-sheet p-6"
+            class="ppm-sheet"
             role="dialog"
             aria-modal="true"
             // Agar panel bisa menerima fokus saat tak ada elemen fokusabel di
@@ -1172,4 +1188,173 @@ pub fn JadwalDeck(sesi: Vec<crate::models::LiveSesi>) -> impl IntoView {
         </div>
     }
     .into_any()
+}
+
+/// Panel yang HANYA boleh diubah admin/ketua.
+///
+/// Menampilkan `children` bila boleh; bila tidak, menggantinya dengan
+/// keterangan bahwa bagian ini terkunci — BUKAN membiarkan tombolnya tampil
+/// lalu gagal dengan "forbidden" saat ditekan. Pengguna berhak tahu batas
+/// wewenangnya sebelum mencoba, bukan sesudah.
+#[component]
+pub fn AdminOnly(
+    can_manage: bool,
+    /// Apa yang tak bisa dikerjakan, mis. "menambah santri ke kelas".
+    #[prop(into)]
+    apa: String,
+    // `Children` (FnOnce), bukan `ChildrenFn`: isinya dirender paling banyak
+    // sekali, dan ChildrenFn menuntut Sync — yang tak dipenuhi closure
+    // `refetch` milik halaman kelas.
+    children: Children,
+) -> impl IntoView {
+    if can_manage {
+        return view! { {children()} }.into_any();
+    }
+    view! {
+        <div class="ppm-card p-4 flex items-start gap-3 border-dashed">
+            <span class="w-9 h-9 rounded-xl bg-surface-container-highest text-on-surface-variant flex items-center justify-center shrink-0">
+                <span class="material-symbols-outlined text-[18px]">"lock"</span>
+            </span>
+            <div class="min-w-0">
+                <p class="text-body-sm font-semibold text-on-background">"Hanya admin"</p>
+                <p class="text-[11px] text-on-surface-variant">
+                    {format!("Hanya admin/ketua yang boleh {apa}. Hubungi admin bila perlu diubah.")}
+                </p>
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+/// Lencana kecil "Hanya admin" — untuk disematkan di judul panel yang isinya
+/// tetap ditampilkan (baca-saja), bukan disembunyikan.
+#[component]
+pub fn LencanaAdmin() -> impl IntoView {
+    view! {
+        <span class="ppm-chip bg-surface-container-highest text-on-surface-variant inline-flex items-center gap-1">
+            <span class="material-symbols-outlined text-[14px]">"lock"</span>
+            "Hanya admin"
+        </span>
+    }
+}
+
+// ── Utilitas bersama halaman ─────────────────────────────────────────────────
+
+/// Ambil bagian pesan galat yang layak dibaca pengguna.
+///
+/// `ServerFnError` merangkai konteksnya dengan ": " (mis.
+/// "error running server function: Poin telat wajib diisi"). Yang berguna cuma
+/// potongan terakhir. Pola `e.to_string().rsplit(": ").next()...` ini dulu
+/// disalin di 37 tempat — satu salinan yang lupa diperbaiki cukup untuk
+/// menampilkan jargon internal ke layar santri.
+pub fn pesan_galat(e: impl ToString) -> String {
+    let s = e.to_string();
+    s.rsplit(": ").next().unwrap_or(&s).to_string()
+}
+
+/// Alihkan ke /login bila galat sebuah Resource menandakan sesi tak berlaku.
+///
+/// Menggantikan blok `Effect::new` + `is_auth_error` + `window().location()`
+/// yang disalin di 24 halaman. Sengaja HANYA untuk galat sesi: `forbidden`
+/// ditangani `FetchError` dengan tampilan sendiri, karena login ulang tak
+/// menolong orang yang perannya memang tak berwenang.
+pub fn guard_sesi<T>(data: Resource<Result<T, ServerFnError>>)
+where
+    T: Send + Sync + Clone + 'static,
+{
+    Effect::new(move |_| {
+        if let Some(Err(e)) = data.get() {
+            let msg = e.to_string();
+            // `forbidden` sengaja dikecualikan — lihat FetchError.
+            if msg.contains("unauth") || msg.contains("session_expired") {
+                #[cfg(target_arch = "wasm32")]
+                if let Some(w) = web_sys::window() {
+                    let _ = w.location().replace("/login");
+                }
+            }
+        }
+    });
+}
+
+/// Kotak pencarian dengan ikon — dipakai daftar kelas, santri, pengguna, tagihan.
+#[component]
+pub fn KotakCari(
+    #[prop(into)] placeholder: String,
+    nilai: RwSignal<String>,
+) -> impl IntoView {
+    view! {
+        <div class="relative">
+            <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">
+                "search"
+            </span>
+            <input
+                type="text"
+                class="w-full pl-10 pr-3 py-2.5 bg-surface-container border-0 rounded-xl text-body-sm text-on-surface"
+                placeholder=placeholder
+                prop:value=move || nilai.get()
+                on:input=move |ev| nilai.set(event_target_value(&ev))
+            />
+        </div>
+    }
+}
+
+/// Kategori kelas yang layak dipajang DI SAMPING golongannya.
+///
+/// Kelas non-akademik kerap memakai kata yang sama untuk keduanya ("piket" /
+/// "piket"), dan dua lencana kembar berdampingan tak menerangkan apa pun —
+/// hanya bising. Kosong berarti "jangan tampilkan lencana kedua".
+pub fn kategori_tampil(golongan: &str, category: &str) -> String {
+    if category.trim().eq_ignore_ascii_case(golongan.trim()) {
+        String::new()
+    } else {
+        category.to_string()
+    }
+}
+
+/// Daftar kartu dua kolom yang tingginya berdiri sendiri (masonry).
+///
+/// `<div class="ppm-card-grid">` polos memakai CSS Grid, dan grid selalu
+/// menyusun per BARIS: kartu pendek di sebelah kartu panjang meninggalkan
+/// lubang kosong sampai baris berikutnya boleh mulai. Fungsi ini membagi kartu
+/// selang-seling ke dua kolom terpisah — genap ke kiri, ganjil ke kanan —
+/// sehingga tiap kolom mengalir sendiri dan tak ada lubang, sementara urutan
+/// bacanya tetap kiri→kanan.
+///
+/// `order` ditempel per kartu karena di ponsel kedua kolom dilebur kembali
+/// (`display:contents`); tanpa itu urutannya jadi 1,3,5,2,4. Lihat
+/// `.ppm-card-col` di style/tailwind.css.
+///
+/// Dipakai untuk daftar kartu seragam. Kalau isinya campur (mis. satu pesan
+/// "kosong" yang harus melebar penuh), pakai `.ppm-card-grid` langsung.
+pub fn kartu_grid(kartu: Vec<AnyView>) -> impl IntoView {
+    let (mut kiri, mut kanan) = (Vec::new(), Vec::new());
+    for (i, k) in kartu.into_iter().enumerate() {
+        let item = view! { <div style=format!("order:{i}")>{k}</div> };
+        if i % 2 == 0 { kiri.push(item) } else { kanan.push(item) }
+    }
+    view! {
+        <div class="ppm-card-grid">
+            <div class="ppm-card-col">{kiri}</div>
+            <div class="ppm-card-col">{kanan}</div>
+        </div>
+    }
+}
+
+/// Placeholder memuat berbentuk balok — menggantikan blok `animate-pulse`
+/// yang ditulis ulang di puluhan halaman dengan tinggi berbeda-beda.
+#[component]
+pub fn Skeleton(
+    /// Jumlah balok.
+    #[prop(default = 3)]
+    baris: usize,
+    /// Kelas tinggi Tailwind, mis. "h-24".
+    #[prop(default = "h-24")]
+    tinggi: &'static str,
+) -> impl IntoView {
+    let cls = format!("{tinggi} bg-surface-container rounded-2xl");
+    view! {
+        <div class="animate-pulse space-y-3">
+            {(0..baris).map(|_| view! { <div class=cls.clone()></div> }).collect_view()}
+        </div>
+    }
 }

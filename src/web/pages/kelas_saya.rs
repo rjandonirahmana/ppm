@@ -16,23 +16,18 @@ use leptos_meta::Title;
 
 use crate::models::{KelasSayaItem, SessionUser};
 use crate::web::api::kelas_saya_data;
-use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
+use crate::web::components::{
+    guard_sesi, kartu_grid, kategori_tampil, DeviceFrame, EmptyState, FetchError, MobileHeader,
+    Skeleton,
+};
 
 #[component]
 pub fn KelasSayaPage() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { kelas_saya_data().await });
 
-    // Galat auth → /login, sama seperti halaman santri lain.
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            if crate::web::components::is_auth_error(&e.to_string()) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    // Galat sesi → /login, sama seperti halaman santri lain. `forbidden`
+    // sengaja tidak ikut: itu ditampilkan FetchError, bukan diusir ke login.
+    guard_sesi(data);
 
     view! {
         <Title text="Kelas Saya — PPM AFM" />
@@ -40,14 +35,7 @@ pub fn KelasSayaPage() -> impl IntoView {
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Kelas Saya" subtitle="Kurikulum & materi berjalan" />
                 <div class="px-5 pt-5 space-y-4 stagger">
-                    <Suspense fallback=|| {
-                        view! {
-                            <div class="animate-pulse space-y-3">
-                                <div class="h-40 bg-surface-container rounded-2xl"></div>
-                                <div class="h-40 bg-surface-container rounded-2xl"></div>
-                            </div>
-                        }
-                    }>
+                    <Suspense fallback=|| view! { <Skeleton baris=2 tinggi="h-40" /> }>
                         {move || {
                             data.get()
                                 .map(|res| match res {
@@ -70,14 +58,12 @@ pub fn KelasSayaPage() -> impl IntoView {
                                             .into_any()
                                     }
                                     Ok(d) => {
-                                        view! {
-                                            <div class="ppm-card-grid">
-                                                {d.items
+                                        kartu_grid(
+                                                d.items
                                                     .into_iter()
-                                                    .map(|k| view! { <KelasCard k=k /> })
-                                                    .collect_view()}
-                                            </div>
-                                        }
+                                                    .map(|k| view! { <KelasCard k=k /> }.into_any())
+                                                    .collect(),
+                                            )
                                             .into_any()
                                     }
                                 })
@@ -100,13 +86,13 @@ fn KelasCard(k: KelasSayaItem) -> impl IntoView {
     let jumlah_teman = k.members.len();
     let members = StoredValue::new(k.members);
     let golongan = k.golongan.clone();
-    let category = k.category.clone();
+    let category = kategori_tampil(&k.golongan, &k.category);
     let peran = k.peran_saya.clone();
     let wali = k.wali_kelas.clone();
     let pamong = k.pamong.clone();
 
     view! {
-        <div class="ppm-card p-4 anim-in space-y-3" style="border-left:4px solid #064e3b">
+        <div class="ppm-card p-4 anim-in space-y-3 ppm-accent">
             // ── Identitas kelas ────────────────────────────────────────────
             <div>
                 <div class="flex items-center gap-1.5 flex-wrap">
@@ -261,7 +247,11 @@ fn KelasCard(k: KelasSayaItem) -> impl IntoView {
                             // menemukan dirinya di daftar yang panjang.
                             let saya = session.and_then(|s| s.get()).flatten().map(|u| u.id);
                             view! {
-                                <div class="space-y-1 anim-in">
+                                // Dibatasi tinggi + digulir sendiri: kelas berisi
+                                // puluhan santri kalau tidak akan membuat kartunya
+                                // memanjang jauh melewati tetangganya, dan grid dua
+                                // kolom menyisakan lubang sebesar itu di sebelahnya.
+                                <div class="space-y-1 anim-in max-h-64 overflow-y-auto pr-1">
                                     {members
                                         .get_value()
                                         .into_iter()

@@ -146,6 +146,8 @@ pub struct KelasItem {
 pub struct KelasData {
     /// Peran pengguna (untuk memilih nav bawah).
     pub role: String,
+    /// Boleh membuat/menata kelas? Hanya admin/ketua.
+    pub can_manage: bool,
     pub total_kelas: i64,
     pub total_santri: i64,
     pub items: Vec<KelasItem>,
@@ -273,6 +275,13 @@ pub struct KelasDetail {
     pub wali_kelas_name: String,
     /// TRUE = izin santri kelas ini lewat Pamong dulu; FALSE = langsung wali kelas.
     pub require_pamong: bool,
+    /// Mode verifikasi absensi kelas (migrasi 62):
+    /// "dua_tahap" | "guru" | "pamong".
+    pub verify_mode: String,
+    /// Pemirsa boleh MENATA kelas ini (buat/ubah, wali & pamong, anggota,
+    /// jadwal)? Hanya admin/ketua. Dihitung server supaya UI mengunci sendiri
+    /// alih-alih menawarkan tombol yang pasti ditolak.
+    pub can_manage: bool,
     /// Pamong kelas (migrasi 30): verifikasi kehadiran + tahap-1 izin + terima WA
     /// pengingat sesi. 0 = belum diset.
     pub pamong_id: i64,

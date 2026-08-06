@@ -7,17 +7,24 @@ use tokio_postgres::Row;
 
 use crate::models::BillItem;
 
-/// Kolom + join standar → BillItem. `s` = santri, `v` = verifikator, `cl` = kelas utama.
-const BILL_SELECT: &str = "SELECT b.id, b.user_id, s.full_name, COALESCE(s.nis,'-'), \
+/// Kolom + join standar → BillItem. `s` = santri, `v` = verifikator,
+/// `cl` = kelas AKADEMIK santri (lihat `kelas_utama_lateral`).
+///
+/// Fungsi, bukan const: join kelasnya kini LATERAL yang disusun saat runtime.
+fn bill_select() -> String {
+    let kelas = super::kelas_utama_lateral("s.id");
+    format!(
+        "SELECT b.id, b.user_id, s.full_name, COALESCE(s.nis,'-'), \
         COALESCE(cl.name,'-'), b.title, b.price, b.started_date, b.expired_date, \
         b.status, b.paid_at, b.paid_amount, COALESCE(b.method,''), COALESCE(b.proof_url,''), \
         COALESCE(v.full_name,''), b.note, \
         (b.status = 'belum' AND b.expired_date < CURRENT_DATE) AS overdue \
      FROM bills b \
      JOIN users s ON s.id = b.user_id \
-     LEFT JOIN class_participants cp ON cp.user_id = s.id AND cp.is_primary \
-     LEFT JOIN classes cl ON cl.id = cp.class_id \
-     LEFT JOIN users v ON v.id = b.verified_by";
+     {kelas} \
+     LEFT JOIN users v ON v.id = b.verified_by"
+    )
+}
 
 fn row_to_bill(r: &Row) -> BillItem {
     let paid_at: Option<chrono::DateTime<Utc>> = r.get(10);
@@ -51,7 +58,7 @@ fn row_to_bill(r: &Row) -> BillItem {
 /// Semua tagihan BELUM lunas (untuk finance: admin/ketua/santri_finance).
 pub async fn list_unpaid(pool: &Pool, limit: i64) -> Result<Vec<BillItem>> {
     let c = pool.get().await?;
-    let sql = format!("{BILL_SELECT} WHERE b.status = 'belum' ORDER BY b.expired_date, s.full_name LIMIT $1");
+    let sql = format!("{} WHERE b.status = 'belum' ORDER BY b.expired_date, s.full_name LIMIT $1", bill_select());
     let rows = c.query(&sql, &[&limit]).await.context("list_unpaid")?;
     Ok(rows.iter().map(row_to_bill).collect())
 }
@@ -61,8 +68,9 @@ pub async fn list_unpaid(pool: &Pool, limit: i64) -> Result<Vec<BillItem>> {
 pub async fn list_paid(pool: &Pool, limit: i64) -> Result<Vec<BillItem>> {
     let c = pool.get().await?;
     let sql = format!(
-        "{BILL_SELECT} WHERE b.status = 'lunas' \
-         ORDER BY b.paid_at DESC NULLS LAST, s.full_name LIMIT $1"
+        "{} WHERE b.status = 'lunas' \
+         ORDER BY b.paid_at DESC NULLS LAST, s.full_name LIMIT $1",
+        bill_select()
     );
     let rows = c.query(&sql, &[&limit]).await.context("list_paid")?;
     Ok(rows.iter().map(row_to_bill).collect())
@@ -71,7 +79,7 @@ pub async fn list_paid(pool: &Pool, limit: i64) -> Result<Vec<BillItem>> {
 /// Tagihan milik satu santri (dashboard santri).
 pub async fn list_for_user(pool: &Pool, user_id: i64) -> Result<Vec<BillItem>> {
     let c = pool.get().await?;
-    let sql = format!("{BILL_SELECT} WHERE b.user_id = $1 ORDER BY b.expired_date DESC");
+    let sql = format!("{} WHERE b.user_id = $1 ORDER BY b.expired_date DESC", bill_select());
     let rows = c.query(&sql, &[&user_id]).await.context("list_for_user")?;
     Ok(rows.iter().map(row_to_bill).collect())
 }

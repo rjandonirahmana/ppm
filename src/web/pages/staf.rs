@@ -124,18 +124,23 @@ fn StafBody(d: StafHome) -> impl IntoView {
                         <p class="text-2xl font-bold text-on-background mt-3">{live.len()}</p>
                         <p class="text-body-sm text-on-surface-variant">"Sesi Hari Ini"</p>
                     </div>
-                    <a
-                        href="/izin-staf"
-                        class="col-span-2 md:col-span-1 block bg-error-container/40 border border-error/30 rounded-2xl p-4 hover:bg-error-container/60 transition-colors"
-                    >
+                    // Kartu ini dulu TAUTAN ke /izin-staf. Sejak izin santri jadi
+                    // wewenang pamong & wali kelas saja, admin yang mengkliknya
+                    // hanya menemui halaman tanpa isi. Kini sekadar RINGKASAN —
+                    // tak bisa diklik, dan angkanya memakai predikat yang sama
+                    // dengan antrean supaya tak lagi bercerita beda.
+                    <div class="col-span-2 md:col-span-1 bg-surface-container rounded-2xl p-4">
                         <div class="flex items-center justify-between h-full">
                             <div>
                                 <p class="text-body-sm text-on-surface-variant">"Permohonan Izin"</p>
                                 <p class="text-xl font-bold text-on-background">{format!("{izin_pending} Menunggu")}</p>
+                                <p class="text-[10px] text-on-surface-variant mt-0.5">
+                                    "Diputuskan pamong & wali kelas"
+                                </p>
                             </div>
-                            <span class="material-symbols-outlined text-error">"pending_actions"</span>
+                            <span class="material-symbols-outlined text-on-surface-variant">"pending_actions"</span>
                         </div>
-                    </a>
+                    </div>
                 </div>
 
                 // ── Hero: Kehadiran Hari Ini (kartu gradien mockup) ──────

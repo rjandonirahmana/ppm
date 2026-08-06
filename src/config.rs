@@ -64,11 +64,25 @@ impl AppConfig {
             // sini dengan sebab yang jelas.
             database_url: env::var("DATABASE_URL")
                 .context("DATABASE_URL wajib diset (lihat .env.example)")?,
-            // Default 8 (bukan 16): VPS 2 CPU/4GB — hemat memori (audit Jul 2026).
+            // Default 16 untuk VPS 4 CPU / 8 GB (naik dari 8 yang disetel saat
+            // masih 2 CPU / 4 GB).
+            //
+            // Patokannya jumlah CPU, bukan jumlah pengguna: query di sini
+            // pendek-pendek dan seluruh basis data (±11 MB) muat di cache
+            // Postgres, jadi yang membatasi adalah berapa banyak query yang
+            // benar-benar bisa jalan bersamaan — sekitar 2–4× core. Pool
+            // terlalu besar justru memperburuk: koneksi menganggur memakan
+            // slot `max_connections` yang DIPAKAI BERSAMA aplikasi lain di
+            // Postgres yang sama.
+            //
+            // Perhitungan slot: max_connections 100, terpakai ±50 oleh
+            // e-ticketing & lainnya. Dua proses ppm (container + dev) × 16 = 32
+            // → total ±82, masih di bawah batas. Naikkan lewat DB_POOL_MAX_SIZE
+            // hanya bersamaan dengan menaikkan max_connections.
             db_pool_max_size: env::var("DB_POOL_MAX_SIZE")
                 .ok()
                 .and_then(|p| p.parse().ok())
-                .unwrap_or(8),
+                .unwrap_or(16),
             // WAJIB. Dengan default, aplikasi TETAP JALAN dan menerbitkan token
             // yang ditandatangani rahasia yang tertulis di kode sumber — siapa
             // pun bisa memalsukan sesi admin. Gagal-cepat jauh lebih aman

@@ -63,8 +63,7 @@ pub fn ProfilPage() -> impl IntoView {
                     data.refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(m.rsplit(": ").next().unwrap_or(&m).to_string());
+                                        msg.set(crate::web::components::pesan_galat(e));
                 }
             }
         });
@@ -82,8 +81,7 @@ pub fn ProfilPage() -> impl IntoView {
                     data.refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    contact_msg.set(m.rsplit(": ").next().unwrap_or(&m).to_string());
+                                        contact_msg.set(crate::web::components::pesan_galat(e));
                 }
             }
         });

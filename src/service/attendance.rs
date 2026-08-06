@@ -292,13 +292,52 @@ fn stage_for(role: &str, user_id: i64) -> (&'static str, &'static str, Option<i6
     }
 }
 
+/// Tahap yang berlaku bagi `role` pada kelas ber-`mode` (migrasi 62).
+///
+/// `None` = peran itu memang TIDAK ikut memverifikasi kelas ini — bukan galat,
+/// tapi keadaan yang sah dan harus membuat panelnya tak muncul sama sekali
+/// ketimbang menampilkan tombol yang pasti ditolak server.
+///
+/// Perhatikan mode `pamong`: pamong yang MEMFINALKAN, jadi tahapnya "final",
+/// bukan "pamong". Kalau dipaksa lewat tahap pamong, absensinya berhenti di
+/// pamong_status='approved' dan tak pernah dapat poin — persis kelas yang
+/// verifikasinya seolah tak selesai-selesai.
+fn stage_untuk_mode(
+    role: &str,
+    mode: &str,
+    user_id: i64,
+) -> Option<(&'static str, &'static str, Option<i64>)> {
+    let pamong = role == "supervisor";
+    match (mode, pamong) {
+        ("dua_tahap", true) => Some(("pamong", "Verifikasi Pamong", Some(user_id))),
+        ("dua_tahap", false) => Some(("final", "Verifikasi Final", None)),
+        // Cukup guru → pamong tak punya peran di sini.
+        ("guru", true) => None,
+        ("guru", false) => Some(("final", "Verifikasi Final", None)),
+        // Cukup pamong → pamong memfinalkan; admin/dewan tetap boleh (pengawasan).
+        ("pamong", _) => Some(("final", "Verifikasi Final", None)),
+        _ => Some(stage_for(role, user_id)),
+    }
+}
+
 pub async fn session_verify(
     pool: &Pool,
     session_id: i64,
     role: &str,
     user_id: i64,
 ) -> Result<SessionVerifyData> {
-    let (stage, stage_label, actor) = stage_for(role, user_id);
+    let mode = crate::repository::session_verify_mode(pool, session_id)
+        .await?
+        .unwrap_or_else(|| "dua_tahap".to_string());
+    let Some((stage, stage_label, actor)) = stage_untuk_mode(role, &mode, user_id) else {
+        // Peran ini tak ikut memverifikasi kelas tsb → daftar kosong, panel
+        // tak dirender.
+        return Ok(SessionVerifyData {
+            stage: String::new(),
+            stage_label: String::new(),
+            items: Vec::new(),
+        });
+    };
     let rows = repo::session_verify_list(pool, session_id, stage, actor).await?;
     Ok(SessionVerifyData {
         stage: stage.to_string(),
@@ -325,7 +364,12 @@ pub async fn decide_session(
     user_id: i64,
     reject_ids: &[i64],
 ) -> Result<i64> {
-    let (stage, _, actor) = stage_for(role, user_id);
+    let mode = crate::repository::session_verify_mode(pool, session_id)
+        .await?
+        .unwrap_or_else(|| "dua_tahap".to_string());
+    let Some((stage, _, actor)) = stage_untuk_mode(role, &mode, user_id) else {
+        bail_user!("Kelas ini tak memerlukan verifikasi dari peran Anda.");
+    };
     let rows = repo::session_verify_list(pool, session_id, stage, actor).await?;
     let mut n = 0i64;
     for r in rows {
@@ -363,4 +407,86 @@ pub async fn correct_attendance(
         );
     }
     Ok(())
+}
+
+/// Koreksi absensi SATU sesi untuk BANYAK santri sekaligus.
+///
+/// Dua hal yang dikerjakan server, bukan klien:
+///
+/// 1. **Kewenangan diperiksa SEKALI** untuk seluruh permintaan (guru pengisi /
+///    pamong sesi, dengan fallback ke wali & pamong kelas bila sesi belum
+///    menetapkan petugasnya) — bukan sekali per santri.
+///
+/// 2. **Hadir vs terlambat ditentukan dari JAM**, bukan dari tombol yang
+///    ditekan. Tiap jadwal sudah punya `limit_entery_time`; membiarkan petugas
+///    memilih sendiri berarti batas itu bisa dilanggar tanpa sengaja — dan dua
+///    santri dengan jam masuk sama bisa berakhir beda status. Kalau jamnya
+///    dikosongkan, status yang dipilih petugas dipakai apa adanya.
+///
+/// Return jumlah baris yang tersimpan.
+pub async fn correct_attendance_bulk(
+    pool: &Pool,
+    session_id: i64,
+    items: &[crate::models::KoreksiAbsensi],
+    actor_id: i64,
+) -> Result<i64> {
+    if items.is_empty() {
+        bail_user!("Tak ada perubahan untuk disimpan.");
+    }
+    let Some((schedule_id, session_date, limit_time)) =
+        repo::session_for_correction(pool, session_id, actor_id).await?
+    else {
+        bail_user!("Anda bukan guru/pamong yang bertugas di sesi ini.");
+    };
+
+    let mut n = 0i64;
+    for it in items {
+        if !matches!(
+            it.status.as_str(),
+            "present" | "late" | "absent" | "permit" | "sick"
+        ) {
+            bail_user!("Status \"{}\" tidak dikenal.", it.status);
+        }
+        let jam = parse_jam(&it.jam)?;
+
+        // Jam menentukan hadir/telat; batas jadwal yang jadi acuannya.
+        let status = match (jam, limit_time) {
+            (Some(j), Some(batas)) if matches!(it.status.as_str(), "present" | "late") => {
+                if j > batas {
+                    "late"
+                } else {
+                    "present"
+                }
+            }
+            _ => it.status.as_str(),
+        };
+
+        if repo::upsert_session_attendance(
+            pool,
+            session_id,
+            schedule_id,
+            session_date,
+            it.user_id,
+            status,
+            jam,
+            actor_id,
+        )
+        .await?
+        {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+/// "HH:MM" → jam. Kosong = None. Format lain ditolak dengan pesan yang jelas
+/// ketimbang diam-diam dianggap kosong.
+fn parse_jam(s: &str) -> Result<Option<chrono::NaiveTime>> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+    chrono::NaiveTime::parse_from_str(s, "%H:%M")
+        .map(Some)
+        .map_err(|_| anyhow::anyhow!("Jam \"{s}\" tidak valid (format 24 jam, mis. 05:15)."))
 }

@@ -38,19 +38,19 @@ pub async fn weekly_net_points(
     end: NaiveDate,
 ) -> Result<Vec<WeeklyNetRow>> {
     let c = pool.get().await?;
+    let sql = format!(
+        "SELECT u.full_name, u.nis, cl.name, SUM(pl.delta)::int AS net \
+         FROM point_logs pl \
+         JOIN users u ON u.id = pl.user_id AND u.role IN ('santri', 'santri_finance') \
+         {kelas} \
+         WHERE (pl.created_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1 AND $2 \
+         GROUP BY u.id, u.full_name, u.nis, cl.name \
+         HAVING SUM(pl.delta) <= -9 \
+         ORDER BY net ASC",
+        kelas = super::kelas_utama_lateral("u.id"),
+    );
     let rows = c
-        .query(
-            "SELECT u.full_name, u.nis, cl.name, SUM(pl.delta)::int AS net \
-             FROM point_logs pl \
-             JOIN users u ON u.id = pl.user_id AND u.role IN ('santri', 'santri_finance') \
-             LEFT JOIN class_participants cp ON cp.user_id = u.id AND cp.is_primary \
-             LEFT JOIN classes cl ON cl.id = cp.class_id \
-             WHERE (pl.created_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1 AND $2 \
-             GROUP BY u.id, u.full_name, u.nis, cl.name \
-             HAVING SUM(pl.delta) <= -9 \
-             ORDER BY net ASC",
-            &[&start, &end],
-        )
+        .query(&sql, &[&start, &end])
         .await
         .context("weekly_net_points")?;
     Ok(rows
@@ -191,7 +191,9 @@ pub async fn weekly_recap(
         .query(
             "SELECT u.full_name, u.nis, \
                 (SELECT c.name FROM class_participants cp JOIN classes c ON c.id = cp.class_id \
-                    WHERE cp.user_id = u.id ORDER BY cp.is_primary DESC LIMIT 1), \
+                    WHERE cp.user_id = u.id \
+                    ORDER BY (lower(coalesce(c.golongan, '')) IN ('bacaan', 'makna')) DESC, c.id \
+                    LIMIT 1), \
                 COUNT(*) FILTER (WHERE a.status = 'present'), \
                 COUNT(*) FILTER (WHERE a.status IN ('late','outside_schedule')), \
                 COUNT(*) FILTER (WHERE a.status IN ('permit','sick')), \
@@ -996,4 +998,93 @@ pub async fn attendance_session_staff(
         .await
         .context("attendance_session_staff")?;
     Ok(row.map(|r| (r.get(0), r.get(1))))
+}
+
+/// Info sesi yang dibutuhkan koreksi massal + PENJAGAAN petugas dalam satu
+/// query: `None` = sesi tak ada ATAU pemanggil bukan guru/pamong sesi itu.
+///
+/// COALESCE ke wali/pamong KELAS: bila sesi belum menetapkan petugasnya,
+/// yang berlaku adalah wali kelas & pamong kelas — jadi sesi yang terlanjur
+/// lewat tanpa penugasan tetap bisa dikoreksi.
+pub async fn session_for_correction(
+    pool: &Pool,
+    session_id: i64,
+    actor_id: i64,
+) -> Result<Option<(Option<i64>, NaiveDate, Option<chrono::NaiveTime>)>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(
+            "SELECT cs.class_schedule_id, cs.session_date, sch.limit_entery_time \
+             FROM class_sessions cs \
+             JOIN classes cl ON cl.id = cs.class_id \
+             LEFT JOIN class_schedules sch ON sch.id = cs.class_schedule_id \
+             WHERE cs.id = $1 \
+               AND $2 IN (COALESCE(cs.teacher_id, cl.wali_kelas_id), \
+                          COALESCE(cs.pamong_id, cl.pamong_id))",
+            &[&session_id, &actor_id],
+        )
+        .await
+        .context("session_for_correction")?;
+    Ok(row.map(|r| (r.get(0), r.get(1), r.get(2))))
+}
+
+/// Set status (dan opsional JAM masuk) satu santri di sebuah sesi.
+/// INSERT bila belum ada catatan, UPDATE bila sudah.
+///
+/// Selalu mengembalikan baris ke antrean verifikasi (`verify_status='pending'`)
+/// dan MENARIK poin lama yang tertaut — sama seperti koreksi tunggal, supaya
+/// mengubah status lewat jalur massal tak menyisakan poin dari status lama.
+///
+/// Pemanggil WAJIB sudah memverifikasi kewenangan lewat
+/// [`session_for_correction`]; fungsi ini tak memeriksanya lagi agar
+/// penjagaannya tidak berulang untuk tiap santri dalam satu koreksi massal.
+pub async fn upsert_session_attendance(
+    pool: &Pool,
+    session_id: i64,
+    schedule_id: Option<i64>,
+    session_date: NaiveDate,
+    user_id: i64,
+    status: &str,
+    jam: Option<chrono::NaiveTime>,
+    actor_id: i64,
+) -> Result<bool> {
+    let mut c = pool.get().await?;
+    let tx = c.transaction().await.context("upsert_attendance tx")?;
+
+    // Jam diisi → scanned_at disusun dari TANGGAL SESI + jam itu (WIB), bukan
+    // waktu sekarang: petugas lazim mengisi absensi setelah sesi usai.
+    let row = tx
+        .query_one(
+            "INSERT INTO attendances \
+                (user_id, class_session_id, class_schedule_id, gate_label, status, method, \
+                 note, scan_date, scanned_at) \
+             VALUES ($1, $2, $3, 'manual', $4, 'manual', 'diisi petugas', $5, \
+                     COALESCE(($5::date + $6::time) AT TIME ZONE 'Asia/Jakarta', NOW())) \
+             ON CONFLICT (user_id, class_session_id) DO UPDATE \
+                SET status = EXCLUDED.status, \
+                    verify_status = 'pending', \
+                    corrected_by = $7, \
+                    corrected_at = NOW(), \
+                    scanned_at = COALESCE(($5::date + $6::time) AT TIME ZONE 'Asia/Jakarta', \
+                                          attendances.scanned_at) \
+             RETURNING id",
+            &[
+                &user_id, &session_id, &schedule_id, &status, &session_date, &jam, &actor_id,
+            ],
+        )
+        .await
+        .context("upsert_attendance")?;
+
+    let att_id: i64 = row.get(0);
+    // Tarik poin dari status LAMA (log yang tertaut baris ini, migrasi 51).
+    tx.execute(
+        "DELETE FROM point_logs WHERE attendance_id = $1 \
+           AND category IN ('attendance', 'discipline')",
+        &[&att_id],
+    )
+    .await
+    .context("upsert_attendance tarik poin")?;
+
+    tx.commit().await.context("upsert_attendance commit")?;
+    Ok(true)
 }

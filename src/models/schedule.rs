@@ -171,3 +171,20 @@ pub struct SessionLiveData {
     /// None = boleh mulai.
     pub start_blocked_reason: Option<String>,
 }
+
+/// Satu baris koreksi absensi dalam permintaan MASSAL (satu sesi, banyak santri).
+///
+/// Dikirim sekali jalan alih-alih satu request per tombol: petugas lazim
+/// membetulkan beberapa santri sekaligus, dan tiap klik yang menembak API
+/// sendiri membuat layar berkedip berkali-kali serta menyisakan keadaan
+/// setengah tersimpan bila salah satunya gagal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KoreksiAbsensi {
+    pub user_id: i64,
+    /// present|late|absent|permit|sick. Untuk `present`/`late`, isi `jam` akan
+    /// MENENTUKAN sendiri mana yang berlaku (lihat service).
+    pub status: String,
+    /// Jam masuk "HH:MM" WIB. Kosong = tak diubah/tak diketahui.
+    #[serde(default)]
+    pub jam: String,
+}

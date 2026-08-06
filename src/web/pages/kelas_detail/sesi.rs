@@ -10,7 +10,8 @@ use crate::web::api::{
     create_session_action, set_session_libur_action, set_session_pamong_action,
     set_session_teacher_action,
 };
-use crate::web::components::EmptyState;
+use crate::web::components::AdminOnly;
+use crate::web::components::{kartu_grid, EmptyState};
 
 // ── Tab SESI ──────────────────────────────────────────────────────────────────
 
@@ -20,6 +21,7 @@ pub(super) fn SesiTab(
     d: KelasDetail,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
+    let can_manage = d.can_manage;
     let sessions = d.sessions.clone();
     let sched_opts = StoredValue::new(d.schedule_options.clone());
     let teacher_opts = StoredValue::new(d.teacher_options.clone());
@@ -29,13 +31,17 @@ pub(super) fn SesiTab(
     view! {
         <div class="space-y-3 stagger">
             <div class="md:max-w-md">
-                <BuatSesiForm
-                    class_id=class_id
-                    schedule_options=sched_opts
-                    teacher_options=teacher_opts
-                    book_options=book_opts
-                    refetch=refetch
-                />
+                // Membuat sesi ad-hoc = wewenang admin. Sesi rutin lahir
+                // otomatis dari jadwal, jadi peran lain tak kehilangan apa pun.
+                <AdminOnly can_manage=can_manage apa="membuat sesi baru">
+                    <BuatSesiForm
+                        class_id=class_id
+                        schedule_options=sched_opts
+                        teacher_options=teacher_opts
+                        book_options=book_opts
+                        refetch=refetch
+                    />
+                </AdminOnly>
             </div>
 
             <p class="text-body-sm text-on-surface-variant">
@@ -52,14 +58,15 @@ pub(super) fn SesiTab(
                 }
                     .into_any()
             } else {
-                view! {
-                    <div class="ppm-card-grid">
-                        {sessions
+                kartu_grid(
+                        sessions
                             .into_iter()
-                            .map(|s| view! { <SesiCard s=s teacher_options=teacher_opts pamong_options=pamong_opts refetch=refetch /> })
-                            .collect_view()}
-                    </div>
-                }
+                            .map(|s| {
+                                view! { <SesiCard s=s teacher_options=teacher_opts pamong_options=pamong_opts refetch=refetch /> }
+                                    .into_any()
+                            })
+                            .collect(),
+                    )
                     .into_any()
             }}
         </div>
@@ -123,11 +130,7 @@ fn SesiCard(
         });
     };
 
-    let border = if is_libur {
-        "border-left:4px solid #dc2626"
-    } else {
-        "border-left:4px solid #064e3b"
-    };
+    let border = if is_libur { "ppm-accent-error" } else { "ppm-accent" };
     let btn_cls = if is_libur {
         "mt-3 w-full py-2 rounded-lg text-body-sm font-semibold press disabled:opacity-60 flex items-center justify-center gap-1.5 bg-secondary-container text-primary"
     } else {
@@ -135,10 +138,7 @@ fn SesiCard(
     };
 
     view! {
-        <div
-            class="ppm-card p-4 card-hover anim-in"
-            style=border
-        >
+        <div class=format!("ppm-card p-4 card-hover anim-in {border}")>
             <div class="flex items-center justify-between gap-2">
                 <p class="text-body-md font-bold text-on-background truncate flex-1">{s.title}</p>
                 <span class=badge>{status_text}</span>

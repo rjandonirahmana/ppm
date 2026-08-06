@@ -10,7 +10,7 @@ use leptos_meta::Title;
 
 use crate::models::SessionItem;
 use crate::web::api::sessions_list;
-use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
+use crate::web::components::{kartu_grid, DeviceFrame, EmptyState, FetchError, MobileHeader};
 
 fn status_badge(kind: &str) -> &'static str {
     match kind {
@@ -115,8 +115,7 @@ pub fn SesiContent() -> impl IntoView {
                                     </button>
                                 </div>
                                 // Desktop: kartu sesi 2 kolom.
-                                <div class="ppm-card-grid">
-                                    {move || {
+                                {move || {
                                         let (up, past) = lists.get_value();
                                         let (items, empty) = if show_past.get() {
                                             (past, "Tidak ada sesi 7 hari terakhir.")
@@ -129,26 +128,28 @@ pub fn SesiContent() -> impl IntoView {
                                             }
                                                 .into_any()
                                         } else {
-                                            items
-                                                .into_iter()
-                                                .map(|it| {
-                                                    let id = it.id;
-                                                    let href = if is_santri {
-                                                        format!("/sesi/{id}/live")
-                                                    } else {
-                                                        format!("/sesi/{id}")
-                                                    };
-                                                    view! {
-                                                        <a href=href class="block">
-                                                            <SessionCard it=it />
-                                                        </a>
-                                                    }
-                                                })
-                                                .collect_view()
+                                            kartu_grid(
+                                                    items
+                                                        .into_iter()
+                                                        .map(|it| {
+                                                            let id = it.id;
+                                                            let href = if is_santri {
+                                                                format!("/sesi/{id}/live")
+                                                            } else {
+                                                                format!("/sesi/{id}")
+                                                            };
+                                                            view! {
+                                                                <a href=href class="block">
+                                                                    <SessionCard it=it />
+                                                                </a>
+                                                            }
+                                                                .into_any()
+                                                        })
+                                                        .collect(),
+                                                )
                                                 .into_any()
                                         }
                                     }}
-                                </div>
                             }
                                 .into_any()
                         }

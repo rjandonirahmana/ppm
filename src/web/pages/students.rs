@@ -17,7 +17,9 @@ use crate::web::api::{
     decide_pamong, decide_verify, student_book_progress_data,
     student_book_progress_for_viewer, students_data,
 };
-use crate::web::components::{BookProgressDetail, DeviceFrame, FetchError, MobileHeader, Sheet};
+use crate::web::components::{
+    kartu_grid, BookProgressDetail, DeviceFrame, FetchError, MobileHeader, Sheet,
+};
 
 #[component]
 pub fn StudentsPage() -> impl IntoView {
@@ -519,9 +521,8 @@ fn VerifyPanel(
                     .into_any()
             } else {
                 // Desktop: antrean verifikasi 2 kolom (mockup dashboard pamong).
-                view! {
-                    <div class="ppm-card-grid">
-                        {pending
+                kartu_grid(
+                    pending
                     .into_iter()
                     .map(|p| {
                         let id = p.id;
@@ -564,10 +565,10 @@ fn VerifyPanel(
                                 </div>
                             </div>
                         }
+                            .into_any()
                     })
-                    .collect_view()}
-                    </div>
-                }
+                    .collect(),
+                )
                     .into_any()
             }}
         </div>

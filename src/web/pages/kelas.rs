@@ -12,7 +12,7 @@ use crate::web::api::{
     academic_audit_data, books_list, create_book_action, create_class_action, delete_book_action,
     kelas_list, update_book_action,
 };
-use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
+use crate::web::components::{AdminOnly, DeviceFrame, FetchError, MobileHeader};
 use crate::web::pages::{SesiContent, StudentBookPanel};
 
 #[component]
@@ -126,6 +126,7 @@ pub fn KelasPage() -> impl IntoView {
                             data.get()
                                 .map(|res| match res {
                                     Ok(d) => {
+                                        let d_can_manage = d.can_manage;
                                         let items = d.items.clone();
                                         let mut cats: Vec<String> = items
                                             .iter()
@@ -209,7 +210,11 @@ pub fn KelasPage() -> impl IntoView {
                                             // atas). items-start: form Tambah yang terbuka tak
                                             // meregangkan tinggi kartu kelas di baris yang sama. ──
                                             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 items-start">
-                                                <TambahKelas show_form=show_form refetch=move || data.refetch() />
+                                                // Hanya admin yang boleh membuat kelas — dikunci di
+                                                // sini, bukan dibiarkan gagal "forbidden" saat disimpan.
+                                                <AdminOnly can_manage=d_can_manage apa="membuat kelas baru">
+                                                    <TambahKelas show_form=show_form refetch=move || data.refetch() />
+                                                </AdminOnly>
                                                 {move || {
                                                     let q = query.get().to_lowercase();
                                                     let list: Vec<KelasItem> = items
@@ -285,8 +290,7 @@ fn TambahKelas(show_form: RwSignal<bool>, refetch: impl Fn() + Copy + Send + 'st
                     refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    error.set(Some(m.rsplit(": ").next().unwrap_or(&m).to_string()));
+                                        error.set(Some(crate::web::components::pesan_galat(e)));
                 }
             }
             busy.set(false);
@@ -393,10 +397,7 @@ fn TambahKelas(show_form: RwSignal<bool>, refetch: impl Fn() + Copy + Send + 'st
 fn KelasCard(k: KelasItem) -> impl IntoView {
     let href = format!("/kelas/{}", k.id);
     view! {
-        <div
-            class="ppm-card p-4 card-hover anim-in"
-            style="border-left:4px solid #064e3b"
-        >
+        <div class="ppm-card p-4 card-hover anim-in ppm-accent">
             <div class="flex flex-wrap gap-1.5 mb-1.5">
                 {(!k.golongan.is_empty())
                     .then(|| {
@@ -406,14 +407,17 @@ fn KelasCard(k: KelasItem) -> impl IntoView {
                             </span>
                         }
                     })}
-                {(!k.category.is_empty())
-                    .then(|| {
-                        view! {
-                            <span class="inline-block px-2.5 py-1 rounded-full bg-secondary-container text-primary text-[10px] font-bold tracking-wider uppercase">
-                                {k.category.clone()}
-                            </span>
-                        }
-                    })}
+                {{
+                    let kategori = crate::web::components::kategori_tampil(&k.golongan, &k.category);
+                    (!kategori.is_empty())
+                        .then(|| {
+                            view! {
+                                <span class="inline-block px-2.5 py-1 rounded-full bg-secondary-container text-primary text-[10px] font-bold tracking-wider uppercase">
+                                    {kategori}
+                                </span>
+                            }
+                        })
+                }}
             </div>
             <h3 class="text-body-lg font-bold text-on-background">{k.name}</h3>
             <p class="text-body-sm text-on-surface-variant flex items-center gap-1 mt-1">
@@ -683,8 +687,7 @@ fn BookForm(
                     }
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy.set(false);

@@ -1,0 +1,34 @@
+-- =============================================================================
+-- 63_drop_is_primary.sql — Buang `class_participants.is_primary`.
+--
+-- KENAPA
+-- Kolom ini (migrasi 2) mengandaikan tiap santri punya SATU "kelas utama".
+-- Kenyataannya satu santri terdaftar di banyak kelas sekaligus dengan peran
+-- berbeda-beda: KBM, piket harian, apel, dan sholat. Tak ada satu pun yang
+-- lebih "utama" dari yang lain — pertanyaannya sendiri salah.
+--
+-- Akibatnya kolom itu TAK PERNAH DIISI: di produksi nol baris bertanda primary
+-- padahal tiap santri punya 2–4 kelas. Setiap query yang menyaring
+-- `AND cp.is_primary` diam-diam menghasilkan NULL, dan nama kelas hilang dari
+-- rekap mingguan, papan poin, daftar tagihan, serta fallback petugas izin —
+-- tanpa galat, tanpa ada yang sadar.
+--
+-- PENGGANTINYA
+-- `repository::kelas_utama_lateral()`: pilih kelas AKADEMIK santri, yaitu yang
+-- `golongan`-nya 'bacaan'/'makna' (migrasi 16); piket/sholat/apel berada di
+-- luar sistem dua-sumbu itu. Bila tak ada, jatuh ke kelas mana pun dengan
+-- urutan `id` supaya hasilnya tetap sama tiap dibaca. Aturannya diturunkan
+-- dari data yang sudah ada, bukan flag yang harus diingat orang untuk diisi.
+--
+-- Nol pemakaian tersisa di kode saat migrasi ini dibuat (`grep is_primary`
+-- pada src/ → kosong). Index yang menempel padanya ikut terbuang bersama
+-- kolomnya, jadi tak perlu DROP INDEX terpisah.
+--
+-- Idempotent. Jalankan setelah migrasi 1–62.
+-- =============================================================================
+
+ALTER TABLE class_participants DROP COLUMN IF EXISTS is_primary;
+
+-- Verifikasi:
+--   SELECT column_name FROM information_schema.columns
+--    WHERE table_name = 'class_participants' ORDER BY ordinal_position;

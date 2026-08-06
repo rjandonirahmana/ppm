@@ -21,14 +21,15 @@ fn week_range(offset: i32) -> (NaiveDate, NaiveDate) {
     (start, start + Duration::days(6))
 }
 
-/// Angkatan dari 4 digit awal NIS (mis. "2023001" → "2023").
+/// Angkatan dari 4 digit awal NIS (mis. "2023001" → "2023"), "-" bila bukan.
+///
+/// Aturannya dipinjam dari [`super::kelas::angkatan_from_nis`] supaya filter
+/// angkatan di rekap dan label angkatan di daftar santri tak pernah berbeda
+/// pendapat; di sini yang kosong ditulis "-" karena dipakai sebagai nilai
+/// pilihan pada dropdown.
 fn angkatan_of(nis: &str) -> String {
-    let digits: String = nis.chars().take(4).collect();
-    if digits.len() == 4 && digits.chars().all(|c| c.is_ascii_digit()) {
-        digits
-    } else {
-        "-".to_string()
-    }
+    let a = super::kelas::angkatan_from_nis(nis);
+    if a.is_empty() { "-".to_string() } else { a }
 }
 
 fn fmt_range(start: NaiveDate, end: NaiveDate) -> String {
@@ -330,6 +331,8 @@ mod tests {
         assert_eq!(angkatan_of("abc123"), "-");
         assert_eq!(angkatan_of("202"), "-");
         assert_eq!(angkatan_of(""), "-");
+        // Empat digit yang bukan tahun bukan angkatan — NIS lama kerap begini.
+        assert_eq!(angkatan_of("1290123"), "-");
     }
 
     #[test]

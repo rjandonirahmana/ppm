@@ -13,9 +13,9 @@ use leptos_router::hooks::use_params_map;
 
 use crate::models::{is_mengaji_category, HafalanItem, SessionAttRow, SessionChatItem, SessionDetailData};
 use crate::web::api::{
-    correct_attendance_action, decide_session_action, hafalan_of_class_action,
-    log_hafalan_action, mark_session_bulk,
-    mark_session_present, send_schedule_wa_action, session_detail_data, session_verify_data,
+    correct_attendance_bulk_action, decide_session_action, hafalan_of_class_action,
+    log_hafalan_action,
+    send_schedule_wa_action, session_detail_data, session_verify_data,
     set_session_actual_detail_action, set_session_book_action, set_session_live,
     set_session_pamong_action, set_session_target_action, set_session_teacher_action,
 };
@@ -100,8 +100,7 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
         ctl_err.set(None);
         leptos::task::spawn_local(async move {
             if let Err(e) = set_session_live(session_id, !is_live).await {
-                let s = e.to_string();
-                ctl_err.set(Some(s.rsplit(": ").next().unwrap_or(&s).to_string()));
+                                ctl_err.set(Some(crate::web::components::pesan_galat(e)));
             }
             busy_ctl.set(false);
             refetch();
@@ -157,8 +156,7 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                     refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    target_msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    target_msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy_target.set(false);
@@ -192,8 +190,7 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                     refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    book_msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    book_msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy_book.set(false);
@@ -219,8 +216,7 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                     wa_msg.set(Some((true, m)));
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    wa_msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    wa_msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy_wa.set(false);
@@ -657,14 +653,12 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                     _ => {
                         // "absensi" (default) — panel tandai + panel verifikasi sesi.
                         view! {
-                            <AbsensiPanel
+                            <AbsensiVerifikasiPanel
                                 attendance=d.attendance.clone()
                                 session_id=session_id
-                                can_mark=!is_cancelled
-                                can_correct=d.can_correct
+                                can_correct=d.can_correct && !is_cancelled
                                 refetch=refetch
                             />
-                            <VerifikasiSesiPanel session_id=session_id refetch=refetch />
                         }
                             .into_any()
                     }
@@ -708,284 +702,6 @@ fn att_badge(kind: &str) -> &'static str {
 
 /// Panel absensi sesi dgn AKSI MASSAL: centang banyak santri (yang belum
 /// tercatat) → "Tandai Hadir" atau "Alpa-kan" sekaligus. Tetap ada tombol
-/// "Hadir" per baris untuk penandaan cepat satu orang.
-#[component]
-fn AbsensiPanel(
-    attendance: Vec<SessionAttRow>,
-    session_id: i64,
-    can_mark: bool,
-    /// Hanya guru pengisi / pamong bertugas sesi ini. Dihitung server
-    /// (SessionDetailData::can_correct) agar cocok persis dgn penjagaan query.
-    can_correct: bool,
-    refetch: impl Fn() + Copy + Send + 'static,
-) -> impl IntoView {
-    let selected = RwSignal::new(Vec::<i64>::new());
-    let busy = RwSignal::new(false);
-    let msg = RwSignal::new(Option::<(bool, String)>::None);
-    // Baris yang sedang dibuka menu koreksinya (att_id), None = tak ada.
-    let correcting = RwSignal::new(Option::<i64>::None);
-    let correct_to = move |att_id: i64, status: &'static str| {
-        if busy.get_untracked() {
-            return;
-        }
-        busy.set(true);
-        msg.set(None);
-        leptos::task::spawn_local(async move {
-            match correct_attendance_action(att_id, status.to_string()).await {
-                Ok(_) => {
-                    correcting.set(None);
-                    msg.set(Some((true, "Absensi dikoreksi. Poin lama ditarik.".into())));
-                    refetch();
-                }
-                Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
-                }
-            }
-            busy.set(false);
-        });
-    };
-    // id santri yang BELUM tercatat (bisa ditandai/dialpakan massal).
-    let unrecorded_ids: Vec<i64> = attendance
-        .iter()
-        .filter(|r| r.status_kind == "none")
-        .map(|r| r.user_id)
-        .collect();
-    let unrecorded_all = StoredValue::new(unrecorded_ids.clone());
-    let has_unrecorded = !unrecorded_ids.is_empty();
-
-    let toggle = move |id: i64| {
-        selected.update(|v| {
-            if let Some(p) = v.iter().position(|&x| x == id) {
-                v.remove(p);
-            } else {
-                v.push(id);
-            }
-        });
-    };
-    let toggle_all = move |_| {
-        let all = unrecorded_all.get_value();
-        selected.update(|v| {
-            if v.len() == all.len() {
-                v.clear();
-            } else {
-                *v = all;
-            }
-        });
-    };
-    let run = move |status: &'static str| {
-        if busy.get_untracked() {
-            return;
-        }
-        let ids = selected.get_untracked();
-        if ids.is_empty() {
-            return;
-        }
-        busy.set(true);
-        msg.set(None);
-        leptos::task::spawn_local(async move {
-            match mark_session_bulk(session_id, ids, status.to_string()).await {
-                Ok(n) => {
-                    let what = if status == "absent" { "dialpakan" } else { "ditandai hadir" };
-                    msg.set(Some((true, format!("{n} santri {what}."))));
-                    selected.set(Vec::new());
-                    refetch();
-                }
-                Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
-                }
-            }
-            busy.set(false);
-        });
-    };
-    let mark_one = move |sid: i64| {
-        if busy.get_untracked() {
-            return;
-        }
-        busy.set(true);
-        leptos::task::spawn_local(async move {
-            let _ = mark_session_present(session_id, sid).await;
-            busy.set(false);
-            refetch();
-        });
-    };
-
-    view! {
-        <div class="ppm-card p-4 anim-in space-y-3">
-            {if attendance.is_empty() {
-                view! {
-                    <p class="text-body-sm text-on-surface-variant py-3">
-                        "Belum ada anggota di kelas ini."
-                    </p>
-                }
-                    .into_any()
-            } else {
-                view! {
-                    // ── Toolbar aksi massal ─────────────────────────────
-                    {(can_mark && has_unrecorded)
-                        .then(|| {
-                            view! {
-                                <div class="flex flex-wrap items-center gap-2 pb-2 border-b border-outline-variant/40">
-                                    <button
-                                        class="text-[11px] font-semibold text-primary underline cursor-pointer"
-                                        on:click=toggle_all
-                                    >
-                                        {move || {
-                                            let all = unrecorded_all.get_value();
-                                            if selected.get().len() == all.len() {
-                                                "Batal pilih semua"
-                                            } else {
-                                                "Pilih semua belum tercatat"
-                                            }
-                                        }}
-                                    </button>
-                                    <span class="flex-1"></span>
-                                    <button
-                                        class="px-3 py-1.5 rounded-lg bg-success/10 text-success text-[11px] font-bold press disabled:opacity-50 cursor-pointer"
-                                        prop:disabled=move || busy.get() || selected.get().is_empty()
-                                        on:click=move |_| run("present")
-                                    >
-                                        {move || format!("Tandai Hadir ({})", selected.get().len())}
-                                    </button>
-                                    <button
-                                        class="px-3 py-1.5 rounded-lg bg-error-container text-error text-[11px] font-bold press disabled:opacity-50 cursor-pointer"
-                                        prop:disabled=move || busy.get() || selected.get().is_empty()
-                                        on:click=move |_| run("absent")
-                                    >
-                                        {move || format!("Alpa-kan ({})", selected.get().len())}
-                                    </button>
-                                </div>
-                            }
-                        })}
-                    <Show when=move || msg.get().is_some() fallback=|| ().into_any()>
-                        {move || {
-                            msg.get()
-                                .map(|(ok, t)| {
-                                    let c = if ok { "text-success" } else { "text-error" };
-                                    view! { <p class=format!("text-body-sm {c}")>{t}</p> }
-                                })
-                        }}
-                    </Show>
-
-                    {attendance
-                        .into_iter()
-                        .map(|row| {
-                            let badge = att_badge(&row.status_kind);
-                            let unrecorded = row.status_kind == "none";
-                            let sid = row.user_id;
-                            let initial: String = row
-                                .name
-                                .chars()
-                                .next()
-                                .map(|c| c.to_string())
-                                .unwrap_or_default();
-                            let checked = move || selected.get().contains(&sid);
-                            let selectable = unrecorded && can_mark;
-                            view! {
-                                <div class="flex items-center gap-3 py-2.5 border-b border-outline-variant/40 last:border-0">
-                                    {selectable
-                                        .then(|| {
-                                            view! {
-                                                <input
-                                                    type="checkbox"
-                                                    class="w-5 h-5 accent-primary cursor-pointer shrink-0"
-                                                    prop:checked=checked
-                                                    on:change=move |_| toggle(sid)
-                                                />
-                                            }
-                                        })}
-                                    <div class="w-9 h-9 rounded-full bg-secondary-container text-primary flex items-center justify-center text-body-sm font-bold shrink-0">
-                                        {initial}
-                                    </div>
-                                    <div class="flex-1 min-w-0">
-                                        <p class="text-body-sm font-semibold text-on-background truncate">
-                                            {row.name.clone()}
-                                        </p>
-                                        <p class="text-[11px] text-on-surface-variant">
-                                            {row.nis.clone()}
-                                            {(!row.time_label.is_empty())
-                                                .then(|| format!(" • {}", row.time_label))}
-                                        </p>
-                                    </div>
-                                    <span class=badge>{row.status_label.clone()}</span>
-                                    // Koreksi: hanya baris yang SUDAH tercatat
-                                    // (punya att_id) dan hanya oleh guru/pamong
-                                    // bertugas. Baris belum tercatat memakai
-                                    // tombol "Hadir" di sebelah, bukan koreksi.
-                                    {row.att_id
-                                        .filter(|_| can_correct)
-                                        .map(|aid| {
-                                            view! {
-                                                <button
-                                                    class="w-8 h-8 rounded-lg bg-surface-container text-on-surface-variant flex items-center justify-center press shrink-0"
-                                                    on:click=move |_| {
-                                                        correcting
-                                                            .update(|c| {
-                                                                *c = if *c == Some(aid) { None } else { Some(aid) };
-                                                            })
-                                                    }
-                                                    aria-label="Koreksi status"
-                                                >
-                                                    <span class="material-symbols-outlined text-[18px]">"edit"</span>
-                                                </button>
-                                            }
-                                        })}
-                                    {(unrecorded && can_mark)
-                                        .then(|| {
-                                            view! {
-                                                <button
-                                                    class="px-2.5 py-1.5 rounded-lg bg-primary text-on-primary text-[11px] font-bold press disabled:opacity-50 cursor-pointer"
-                                                    prop:disabled=move || busy.get()
-                                                    on:click=move |_| mark_one(sid)
-                                                >
-                                                    "Hadir"
-                                                </button>
-                                            }
-                                        })}
-                                </div>
-                                // Pilihan status koreksi — muncul di bawah baris
-                                // yang tombol editnya ditekan.
-                                {move || {
-                                    let aid = row.att_id;
-                                    (can_correct && aid.is_some() && correcting.get() == aid)
-                                        .then(|| {
-                                            let aid = aid.expect("dicek is_some di atas");
-                                            view! {
-                                                <div class="flex flex-wrap gap-1.5 px-3 pb-3 -mt-1">
-                                                    {[
-                                                        ("present", "Hadir"),
-                                                        ("late", "Terlambat"),
-                                                        ("permit", "Izin"),
-                                                        ("sick", "Sakit"),
-                                                        ("absent", "Alpa"),
-                                                    ]
-                                                        .into_iter()
-                                                        .map(|(v, l)| {
-                                                            view! {
-                                                                <button
-                                                                    class="px-2.5 py-1.5 rounded-lg bg-surface-container-high text-on-surface text-[11px] font-semibold press disabled:opacity-50"
-                                                                    prop:disabled=move || busy.get()
-                                                                    on:click=move |_| correct_to(aid, v)
-                                                                >
-                                                                    {l}
-                                                                </button>
-                                                            }
-                                                        })
-                                                        .collect_view()}
-                                                </div>
-                                            }
-                                        })
-                                }}
-                            }
-                        })
-                        .collect_view()}
-                }
-                    .into_any()
-            }}
-        </div>
-    }
-}
 
 #[component]
 fn ChatRow(c: SessionChatItem) -> impl IntoView {
@@ -1052,8 +768,7 @@ fn HafalanPanel(class_id: i64, students: Vec<(i64, String)>) -> impl IntoView {
                     entries.refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy.set(false);
@@ -1179,63 +894,130 @@ fn HafalanPanel(class_id: i64, students: Vec<(i64, String)>) -> impl IntoView {
     }
 }
 
-fn status_short(s: &str) -> &'static str {
-    match s {
-        "present" => "Hadir",
-        "late" => "Telat",
-        "absent" => "Alpa",
-        "permit" => "Izin",
-        "sick" => "Sakit",
-        _ => "-",
-    }
-}
-
 /// Panel verifikasi kehadiran PER-SESI (pamong tahap-1 / dewan guru final).
 /// Centang = setujui (default); hilangkan centang = tolak. Satu klik memproses
-/// SELURUH sesi (bukan per santri). Non-verifier → server forbidden → panel kosong.
+
+/// Panel GABUNGAN absensi + verifikasi satu sesi.
+///
+/// Dua hal yang sengaja berbeda dari versi sebelumnya:
+///
+/// 1. **Tak ada request per klik.** Dulu menekan "Hadir"/"Terlambat"/… langsung
+///    menembak server untuk SATU santri — layar berkedip tiap klik, dan
+///    membetulkan lima santri berarti lima request yang bisa gagal separuh
+///    jalan. Sekarang semua perubahan ditampung di klien dan dikirim SEKALI
+///    lewat `correct_attendance_bulk_action`.
+///
+/// 2. **Absensi & verifikasi jadi satu kartu.** Keduanya membahas daftar orang
+///    yang sama pada sesi yang sama; memisahkannya memaksa mata bolak-balik
+///    dan membuat "sudah kuubah statusnya, kenapa masih menunggu?" jadi
+///    pertanyaan wajar.
+///
+/// Jam masuk boleh diisi: server yang memutuskan hadir/terlambat dari
+/// `limit_entery_time` jadwal — bukan tombol yang ditekan petugas.
 #[component]
-fn VerifikasiSesiPanel(
+fn AbsensiVerifikasiPanel(
+    attendance: Vec<SessionAttRow>,
     session_id: i64,
+    can_correct: bool,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
-    let data = Resource::new(
+    use std::collections::HashMap;
+
+    let verify = Resource::new(
         move || session_id,
         |id| async move { session_verify_data(id).await },
     );
+
+    // Perubahan yang BELUM dikirim: user_id → (status, jam "HH:MM").
+    let edits = RwSignal::new(HashMap::<i64, (String, String)>::new());
     let reject = RwSignal::new(Vec::<i64>::new());
     let busy = RwSignal::new(false);
-    let msg = RwSignal::new(Option::<String>::None);
+    let msg = RwSignal::new(Option::<(bool, String)>::None);
+    // Konfirmasi sebelum verifikasi — final tak bisa diulang.
+    let konfirmasi = RwSignal::new(false);
 
-    let toggle = move |att_id: i64, will_reject: bool| {
-        reject.update(|v| {
-            if will_reject {
-                if !v.contains(&att_id) {
-                    v.push(att_id);
-                }
-            } else {
-                v.retain(|&x| x != att_id);
-            }
+    let awal = StoredValue::new(
+        attendance
+            .iter()
+            .map(|r| {
+                let jam = r.time_label.split_whitespace().next().unwrap_or("").to_string();
+                (r.user_id, (r.status_kind.clone(), jam))
+            })
+            .collect::<HashMap<i64, (String, String)>>(),
+    );
+
+    let set_status = move |uid: i64, st: String| {
+        edits.update(|m| {
+            let jam = m
+                .get(&uid)
+                .map(|(_, j)| j.clone())
+                .or_else(|| awal.get_value().get(&uid).map(|(_, j)| j.clone()))
+                .unwrap_or_default();
+            m.insert(uid, (st, jam));
+        });
+    };
+    let set_jam = move |uid: i64, jam: String| {
+        edits.update(|m| {
+            let st = m
+                .get(&uid)
+                .map(|(s, _)| s.clone())
+                .or_else(|| awal.get_value().get(&uid).map(|(s, _)| s.clone()))
+                .unwrap_or_else(|| "present".to_string());
+            m.insert(uid, (st, jam));
         });
     };
 
-    let submit = move |_| {
+    let jumlah_ubah = move || edits.get().len();
+
+    let simpan = move |_| {
+        if busy.get_untracked() {
+            return;
+        }
+        let items: Vec<crate::models::KoreksiAbsensi> = edits
+            .get_untracked()
+            .into_iter()
+            .map(|(user_id, (status, jam))| crate::models::KoreksiAbsensi { user_id, status, jam })
+            .collect();
+        if items.is_empty() {
+            msg.set(Some((false, "Belum ada perubahan.".into())));
+            return;
+        }
+        busy.set(true);
+        msg.set(None);
+        leptos::task::spawn_local(async move {
+            match correct_attendance_bulk_action(session_id, items).await {
+                Ok(n) => {
+                    msg.set(Some((true, format!("{n} kehadiran tersimpan. Poin lama ditarik."))));
+                    edits.set(HashMap::new());
+                    verify.refetch();
+                    refetch();
+                }
+                Err(e) => {
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
+                }
+            }
+            busy.set(false);
+        });
+    };
+
+    let verifikasi = move |_| {
         if busy.get_untracked() {
             return;
         }
         busy.set(true);
+        konfirmasi.set(false);
         msg.set(None);
         let rej = reject.get_untracked();
         leptos::task::spawn_local(async move {
             match decide_session_action(session_id, rej).await {
                 Ok(n) => {
-                    msg.set(Some(format!("{n} kehadiran diproses.")));
+                    msg.set(Some((true, format!("{n} kehadiran diverifikasi."))));
                     reject.set(Vec::new());
-                    data.refetch();
+                    verify.refetch();
                     refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some(m.rsplit(": ").next().unwrap_or(&m).to_string()));
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy.set(false);
@@ -1243,55 +1025,227 @@ fn VerifikasiSesiPanel(
     };
 
     view! {
-        <Suspense fallback=|| ()>
+        <div class="ppm-card p-4 space-y-3">
+            <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">"fact_check"</span>
+                    <h3 class="text-body-md font-bold text-on-background">"Absensi & Verifikasi"</h3>
+                </div>
+                {move || {
+                    let n = jumlah_ubah();
+                    (n > 0)
+                        .then(|| {
+                            view! {
+                                <span class="ppm-chip bg-warning/15 text-warning">
+                                    {format!("{n} belum disimpan")}
+                                </span>
+                            }
+                        })
+                }}
+            </div>
+
             {move || {
-                data.get().and_then(|res| res.ok()).and_then(|d| {
-                    (!d.items.is_empty()).then(|| {
-                        let n_total = d.items.len();
+                msg.get()
+                    .map(|(ok, t)| {
+                        let cls = if ok {
+                            "p-2.5 bg-secondary-container text-on-secondary-container rounded-lg text-body-sm"
+                        } else {
+                            "p-2.5 bg-error-container text-on-error-container rounded-lg text-body-sm"
+                        };
+                        view! { <div class=cls>{t}</div> }
+                    })
+            }}
+
+            <div class="divide-y divide-outline-variant/40">
+                {attendance
+                    .into_iter()
+                    .map(|r| {
+                        let uid = r.user_id;
+                        let jam_awal = r.time_label.split_whitespace().next().unwrap_or("").to_string();
+                        let inisial = r.name.chars().next().unwrap_or('S').to_string().to_uppercase();
+                        let nis = if r.nis.is_empty() { "-".to_string() } else { r.nis.clone() };
+                        let status_now = move || {
+                            edits
+                                .get()
+                                .get(&uid)
+                                .map(|(s, _)| s.clone())
+                                .unwrap_or_else(|| {
+                                    awal.get_value().get(&uid).map(|(s, _)| s.clone()).unwrap_or_default()
+                                })
+                        };
                         view! {
-                            <div class="ppm-card p-4 space-y-3 mt-3">
-                                <div class="flex items-center justify-between">
-                                    <h3 class="text-body-md font-bold text-on-background flex items-center gap-2">
-                                        <span class="material-symbols-outlined text-primary">"how_to_reg"</span>
-                                        {d.stage_label.clone()}
-                                    </h3>
-                                    <span class="text-[11px] text-on-surface-variant">{format!("{n_total} menunggu")}</span>
+                            <div class="py-2.5 flex items-center gap-3 flex-wrap">
+                                <span class="w-9 h-9 rounded-full bg-secondary-container text-primary flex items-center justify-center text-body-sm font-bold shrink-0">
+                                    {inisial}
+                                </span>
+                                <div class="min-w-0 flex-1">
+                                    <p class="text-body-sm font-semibold text-on-background truncate">{r.name}</p>
+                                    <p class="text-[11px] text-on-surface-variant">{nis}</p>
                                 </div>
-                                <p class="text-[11px] text-on-surface-variant">
-                                    "Centang = disetujui. Hilangkan centang untuk MENOLAK. Lalu verifikasi seluruh sesi sekali klik."
-                                </p>
-                                {move || msg.get().map(|m| view! {
-                                    <div class="p-2.5 bg-secondary-container text-on-secondary-container rounded-lg text-body-sm">{m}</div>
-                                })}
-                                <div class="space-y-1">
-                                    {d.items.iter().map(|it| {
-                                        let att_id = it.att_id;
-                                        view! {
-                                            <label class="flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-surface-container-low">
-                                                <input type="checkbox" prop:checked=true
-                                                    on:change=move |e| toggle(att_id, !event_target_checked(&e)) />
-                                                <span class="flex-1 text-body-sm text-on-surface">{it.name.clone()}</span>
-                                                <span class="text-[10px] text-on-surface-variant">{it.nis.clone()}</span>
-                                                <span class="text-[10px] font-bold text-primary">{status_short(&it.status)}</span>
-                                            </label>
-                                        }
-                                    }).collect_view()}
-                                </div>
-                                <button
-                                    class="w-full py-2.5 bg-primary text-on-primary rounded-xl font-bold text-body-sm press disabled:opacity-60"
-                                    disabled=move || busy.get() on:click=submit
-                                >
-                                    {move || if busy.get() { "Memproses…".to_string() } else {
-                                        let r = reject.get().len();
-                                        if r > 0 { format!("Verifikasi Sesi ({} setuju, {} tolak)", n_total - r, r) }
-                                        else { format!("Setujui Seluruh Sesi ({})", n_total) }
-                                    }}
-                                </button>
+                                {if can_correct {
+                                    view! {
+                                        <input
+                                            type="time"
+                                            class="bg-surface-container border-0 rounded-lg px-2 py-1.5 text-[12px] text-on-surface w-[92px]"
+                                            prop:value=jam_awal.clone()
+                                            on:input=move |ev| set_jam(uid, event_target_value(&ev))
+                                            aria-label="Jam masuk"
+                                        />
+                                        <select
+                                            class="bg-surface-container border-0 rounded-lg px-2 py-1.5 text-[12px] text-on-surface"
+                                            on:change=move |ev| set_status(uid, event_target_value(&ev))
+                                            aria-label="Status kehadiran"
+                                        >
+                                            {[
+                                                ("present", "Hadir"),
+                                                ("late", "Terlambat"),
+                                                ("permit", "Izin"),
+                                                ("sick", "Sakit"),
+                                                ("absent", "Alpa"),
+                                            ]
+                                                .into_iter()
+                                                .map(|(v, l)| {
+                                                    view! {
+                                                        <option value=v selected=move || status_now() == v>
+                                                            {l}
+                                                        </option>
+                                                    }
+                                                })
+                                                .collect_view()}
+                                        </select>
+                                    }
+                                        .into_any()
+                                } else {
+                                    view! { <span class=att_badge(&r.status_kind)>{r.status_label}</span> }
+                                        .into_any()
+                                }}
                             </div>
                         }
                     })
-                })
-            }}
-        </Suspense>
+                    .collect_view()}
+            </div>
+
+            {(can_correct)
+                .then(|| {
+                    view! {
+                        <button
+                            class="w-full py-3 rounded-xl bg-primary text-on-primary font-bold text-body-sm press disabled:opacity-60"
+                            prop:disabled=move || busy.get()
+                            on:click=simpan
+                        >
+                            {move || {
+                                if busy.get() {
+                                    "Menyimpan…".to_string()
+                                } else {
+                                    format!("Simpan Perubahan ({})", jumlah_ubah())
+                                }
+                            }}
+                        </button>
+                        <p class="text-[10px] text-on-surface-variant text-center">
+                            "Jam masuk menentukan hadir/terlambat otomatis dari batas jadwal."
+                        </p>
+                    }
+                })}
+
+            // ── Verifikasi (hanya untuk yang berwenang; server yang menentukan) ──
+            <Suspense fallback=|| ()>
+                {move || {
+                    verify
+                        .get()
+                        .and_then(|r| r.ok())
+                        .filter(|v| !v.items.is_empty())
+                        .map(|v| {
+                            let total = v.items.len();
+                            view! {
+                                <div class="pt-3 border-t border-outline-variant/50 space-y-2">
+                                    <div class="flex items-center justify-between">
+                                        <p class="text-body-sm font-bold text-on-background">{v.stage_label}</p>
+                                        <span class="text-[11px] text-on-surface-variant">
+                                            {format!("{total} menunggu")}
+                                        </span>
+                                    </div>
+                                    <p class="text-[11px] text-on-surface-variant">
+                                        "Centang = disetujui. Hilangkan centang untuk MENOLAK."
+                                    </p>
+                                    {v.items
+                                        .into_iter()
+                                        .map(|it| {
+                                            let aid = it.att_id;
+                                            view! {
+                                                <label class="flex items-center gap-2 py-1">
+                                                    <input
+                                                        type="checkbox"
+                                                        class="w-4 h-4"
+                                                        prop:checked=move || !reject.get().contains(&aid)
+                                                        on:change=move |ev| {
+                                                            let setuju = event_target_checked(&ev);
+                                                            reject
+                                                                .update(|vv| {
+                                                                    if setuju {
+                                                                        vv.retain(|&x| x != aid);
+                                                                    } else if !vv.contains(&aid) {
+                                                                        vv.push(aid);
+                                                                    }
+                                                                });
+                                                        }
+                                                    />
+                                                    <span class="text-body-sm text-on-background flex-1 truncate">
+                                                        {it.name}
+                                                    </span>
+                                                    <span class="text-[11px] text-on-surface-variant">{it.status}</span>
+                                                </label>
+                                            }
+                                        })
+                                        .collect_view()}
+
+                                    {move || {
+                                        if konfirmasi.get() {
+                                            let n_tolak = reject.get().len();
+                                            view! {
+                                                <div class="bg-warning/10 border border-warning/40 rounded-xl p-3 space-y-2">
+                                                    <p class="text-body-sm text-on-background">
+                                                        <b>"Verifikasi tidak bisa dibatalkan."</b>
+                                                        " Poin akan diberikan dan baris yang sudah final tak bisa diubah lagi."
+                                                    </p>
+                                                    <p class="text-[11px] text-on-surface-variant">
+                                                        {format!("{} disetujui · {n_tolak} ditolak", total - n_tolak)}
+                                                    </p>
+                                                    <div class="grid grid-cols-2 gap-2">
+                                                        <button
+                                                            class="py-2.5 rounded-lg border border-outline-variant text-on-surface font-semibold text-body-sm"
+                                                            on:click=move |_| konfirmasi.set(false)
+                                                        >
+                                                            "Batal"
+                                                        </button>
+                                                        <button
+                                                            class="py-2.5 rounded-lg bg-primary text-on-primary font-bold text-body-sm press disabled:opacity-60"
+                                                            prop:disabled=move || busy.get()
+                                                            on:click=verifikasi
+                                                        >
+                                                            "Ya, Verifikasi"
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            }
+                                                .into_any()
+                                        } else {
+                                            view! {
+                                                <button
+                                                    class="w-full py-3 rounded-xl bg-primary text-on-primary font-bold text-body-sm press disabled:opacity-60"
+                                                    prop:disabled=move || busy.get()
+                                                    on:click=move |_| konfirmasi.set(true)
+                                                >
+                                                    {format!("Verifikasi Seluruh Sesi ({total})")}
+                                                </button>
+                                            }
+                                                .into_any()
+                                        }
+                                    }}
+                                </div>
+                            }
+                        })
+                }}
+            </Suspense>
+        </div>
     }
 }

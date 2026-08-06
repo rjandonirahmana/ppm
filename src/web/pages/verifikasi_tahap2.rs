@@ -10,7 +10,7 @@ use leptos_meta::Title;
 
 use crate::models::PendingAtt;
 use crate::web::api::{decide_verify, verify_data};
-use crate::web::components::{DeviceFrame, FetchError};
+use crate::web::components::{kartu_grid, DeviceFrame, FetchError};
 
 #[component]
 pub fn VerifikasiTahap2Page() -> impl IntoView {
@@ -122,16 +122,15 @@ pub fn VerifikasiTahap2Page() -> impl IntoView {
                                                 }
                                                     .into_any()
                                             } else {
-                                                view! {
-                                                    <div class="ppm-card-grid">
-                                                        {d.pending
+                                                kartu_grid(
+                                                        d.pending
                                                             .into_iter()
                                                             .map(|p| {
                                                                 view! { <VerifyCard p=p busy_id=busy_id decide=decide /> }
+                                                                    .into_any()
                                                             })
-                                                            .collect_view()}
-                                                    </div>
-                                                }
+                                                            .collect(),
+                                                    )
                                                     .into_any()
                                             }}
                                         }

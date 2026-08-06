@@ -329,8 +329,7 @@ fn SemesterManager() -> impl IntoView {
                     data.refetch();
                 }
                 Err(er) => {
-                    let m = er.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(er))));
                 }
             }
             busy.set(false);

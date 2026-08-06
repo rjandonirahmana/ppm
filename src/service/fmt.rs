@@ -6,6 +6,16 @@ pub fn wib() -> FixedOffset {
     FixedOffset::east_opt(7 * 3600).expect("WIB offset")
 }
 
+/// Tanggal hari ini menurut WIB.
+///
+/// Server berjalan pada UTC, dan `Utc::now().date_naive()` sudah berganti hari
+/// sejak pukul 07:00 WIB — cukup untuk membuat "sedang berjalan" salah selama
+/// tujuh jam tiap hari. Semua pertanyaan "apakah ini masih berlaku hari ini?"
+/// memakai fungsi ini.
+pub fn today_wib() -> chrono::NaiveDate {
+    Utc::now().with_timezone(&wib()).date_naive()
+}
+
 /// Awal hari WIB `n` hari yang lalu, dalam UTC — untuk membatasi query "N hari
 /// terakhir".
 ///

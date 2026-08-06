@@ -135,9 +135,13 @@ pub async fn permit_queue(pool: &Pool, role: &str, user_id: i64) -> Result<Permi
         });
     }
 
-    // Wali kelas (teacher) → hanya kelasnya; admin → semua (superuser).
-    // Dewan guru tak lagi diberi akses izin santri (gate di api.rs).
-    let wali_id = (role == "teacher").then_some(user_id);
+    // Guru hanya melihat izin santri di KELAS YANG IA AMPU — bukan semua.
+    //
+    // Dulu `wali_id` hanya diisi untuk role "teacher"; padahal peran itu sudah
+    // digabung ke "dewan_guru" (migrasi 36), jadi praktis SELALU None dan
+    // setiap guru melihat antrean seluruh pesantren. Admin pun sengaja tak
+    // sampai ke sini lagi (gate di api.rs).
+    let wali_id = Some(user_id);
     let (pending, decided_today) = tokio::join!(
         repo::pending_guru_permits(pool, wali_id, default_require, 50),
         repo::guru_permits_decided_today(pool, wali_id),

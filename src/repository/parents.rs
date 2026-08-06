@@ -200,8 +200,13 @@ pub async fn permits_of_children(pool: &Pool, parent_id: i64, limit: i64) -> Res
                   AND pc.parent_id = $1 AND pc.status = 'connected' \
              JOIN users u ON u.id = p.user_id \
              LEFT JOIN classes tc ON tc.id = p.class_id \
-             LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
-             LEFT JOIN classes cl ON cl.id = cp.class_id \
+LEFT JOIN LATERAL ( \
+                 SELECT c.* FROM class_participants cp_ku \
+                   JOIN classes c ON c.id = cp_ku.class_id \
+                  WHERE cp_ku.user_id = p.user_id \
+                  ORDER BY (lower(coalesce(c.golongan, '')) IN ('bacaan', 'makna')) DESC, c.id \
+                  LIMIT 1 \
+             ) cl ON TRUE \
              ORDER BY p.created_at DESC LIMIT $2",
             &[&parent_id, &limit],
         )

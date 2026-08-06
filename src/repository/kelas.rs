@@ -22,8 +22,19 @@ pub async fn staf_stats(pool: &Pool) -> Result<(i64, i64, i64, i64)> {
                 (SELECT COUNT(DISTINCT a.user_id) FROM attendances a JOIN users u ON u.id = a.user_id \
                     WHERE u.role IN ('santri', 'santri_finance') AND a.status IN ('present','late') \
                     AND a.scan_date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date), \
-                (SELECT COUNT(*) FROM permit_requests \
-                    WHERE guru_status = 'pending' AND pamong_status <> 'rejected')",
+                (SELECT COUNT(*) FROM permit_requests p \
+                    LEFT JOIN classes tc ON tc.id = p.class_id \
+LEFT JOIN LATERAL ( \
+                        SELECT c.* FROM class_participants cp_ku \
+                          JOIN classes c ON c.id = cp_ku.class_id \
+                         WHERE cp_ku.user_id = p.user_id \
+                         ORDER BY (lower(coalesce(c.golongan, '')) IN ('bacaan', 'makna')) DESC, c.id \
+                         LIMIT 1 \
+                    ) cl ON TRUE \
+                    WHERE p.guru_status = 'pending' AND p.pamong_status <> 'rejected' \
+                      AND CASE WHEN COALESCE(tc.require_pamong, cl.require_pamong, TRUE) \
+                                    AND COALESCE(tc.pamong_id, cl.pamong_id) IS NOT NULL \
+                               THEN p.pamong_status = 'approved' ELSE TRUE END)",
             &[],
         )
         .await
@@ -717,6 +728,8 @@ pub struct ClassInfo {
     pub wali_kelas_id: Option<i64>,
     pub wali_kelas_name: Option<String>,
     pub require_pamong: bool,
+    /// Mode verifikasi absensi kelas (migrasi 62).
+    pub verify_mode: String,
     pub pamong_id: Option<i64>,
     pub pamong_name: Option<String>,
 }
@@ -726,7 +739,7 @@ pub async fn class_info(pool: &Pool, class_id: i64) -> Result<Option<ClassInfo>>
     let row = c
         .query_opt(
             "SELECT cl.name, COALESCE(cl.description, ''), cl.category, cl.golongan, \
-                    cl.wali_kelas_id, w.full_name, cl.require_pamong, \
+                    cl.wali_kelas_id, w.full_name, cl.require_pamong, cl.verify_mode, \
                     cl.pamong_id, pm.full_name \
              FROM classes cl \
              LEFT JOIN users w ON w.id = cl.wali_kelas_id \
@@ -743,26 +756,34 @@ pub async fn class_info(pool: &Pool, class_id: i64) -> Result<Option<ClassInfo>>
         wali_kelas_id: r.get(4),
         wali_kelas_name: r.get(5),
         require_pamong: r.get(6),
-        pamong_id: r.get(7),
-        pamong_name: r.get(8),
+        verify_mode: r.get(7),
+        pamong_id: r.get(8),
+        pamong_name: r.get(9),
     }))
 }
 
-/// Set wali kelas + pamong + rute persetujuan (require_pamong) satu kelas
-/// (migrasi 29/30).
+/// Set wali kelas + pamong + mode verifikasi satu kelas (migrasi 29/30/62).
+///
+/// SATU pernyataan, dan `require_pamong` sengaja TIDAK ditulis di sini:
+/// trigger `trg_sync_require_pamong` (migrasi 62) menurunkannya dari
+/// `verify_mode`. Sebelumnya fungsi ini menulis `require_pamong` sendiri lalu
+/// pemanggilnya menulis `verify_mode` lewat pernyataan KEDUA — dua sumber
+/// kebenaran pada dua sambungan berbeda, jadi kegagalan di antara keduanya
+/// meninggalkan kelas yang rute verifikasinya bertentangan dengan yang
+/// tertulis di layar.
 pub async fn set_class_staff(
     pool: &Pool,
     class_id: i64,
     wali_kelas_id: Option<i64>,
     pamong_id: Option<i64>,
-    require_pamong: bool,
+    verify_mode: &str,
 ) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
         .execute(
-            "UPDATE classes SET wali_kelas_id = $2, pamong_id = $3, require_pamong = $4 \
+            "UPDATE classes SET wali_kelas_id = $2, pamong_id = $3, verify_mode = $4 \
              WHERE id = $1",
-            &[&class_id, &wali_kelas_id, &pamong_id, &require_pamong],
+            &[&class_id, &wali_kelas_id, &pamong_id, &verify_mode],
         )
         .await
         .context("set_class_staff")?;
@@ -1820,3 +1841,24 @@ pub async fn classes_of_staff(pool: &Pool, user_id: i64) -> Result<Vec<SantriKel
         })
         .collect())
 }
+
+/// Mode verifikasi kelas pemilik sebuah SESI (migrasi 62):
+/// "dua_tahap" | "guru" | "pamong". None = sesi tak ditemukan.
+pub async fn session_verify_mode(pool: &Pool, session_id: i64) -> Result<Option<String>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(
+            "SELECT cl.verify_mode FROM class_sessions cs \
+               JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = $1",
+            &[&session_id],
+        )
+        .await
+        .context("session_verify_mode")?;
+    Ok(row.map(|r| r.get(0)))
+}
+
+// `set_class_verify_mode` dihapus: mode verifikasi kini ditulis bersama wali
+// dan pamong dalam satu pernyataan di `set_class_staff`. Menyisakannya berarti
+// menyediakan jalan kedua untuk mengubah rute verifikasi tanpa memeriksa
+// syaratnya (mode ber-pamong wajib punya pamong) — dan syarat itu hanya ada di
+// service::kelas::set_class_staff.

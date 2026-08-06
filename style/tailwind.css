@@ -148,6 +148,13 @@ button:active{transform:scale(.96)}
 .ppm-sheet{
   position:fixed;left:0;right:0;bottom:0;z-index:50;
   max-width:28rem;margin-inline:auto;
+  /* Padding DIDEFINISIKAN DI SINI, bukan lewat utility `p-6` di markup.
+     Aturan `.ppm-sheet` ini berada di luar @layer, sedangkan utility Tailwind
+     v4 ada di dalam @layer — yang di luar selalu menang. Akibatnya
+     `padding-bottom` di bawah menimpa shorthand `p-6`, dan isi sheet kehilangan
+     jarak ke tepi: tombol di dasar modal menempel mentok ke sisi kiri-kanan.
+     Dengan padding ditulis utuh di sini, tak ada lagi tarik-menarik. */
+  padding:1.5rem;
   background:#f9f9ff;
   border-radius:1.5rem 1.5rem 0 0;
   max-height:85vh;overflow-y:auto;
@@ -198,6 +205,45 @@ button:active{transform:scale(.96)}
     grid-template-columns:repeat(2,minmax(0,1fr));
     gap:.75rem;
     align-items:start;
+  }
+}
+
+/* Garis warna di tepi kiri kartu — penanda status (hadir/telat/izin/alpa) dan
+   penanda kartu utama. Sebelumnya ditulis sebagai `style="border-left:4px solid
+   #..."` di 20 tempat, dan salah satunya (#dc2626) BUKAN merah palet ini:
+   warna galat di seluruh aplikasi #ba1a1a. Sekali warna dituliskan sebagai
+   angka di dalam markup, tak ada yang menjaganya tetap sama. */
+.ppm-accent{border-left:4px solid #064e3b}
+.ppm-accent-success{border-left:4px solid #059669}
+.ppm-accent-warning{border-left:4px solid #f59e0b}
+.ppm-accent-info{border-left:4px solid #2563eb}
+.ppm-accent-error{border-left:4px solid #ba1a1a}
+
+/* MASONRY dua kolom — dipakai lewat `components::kartu_grid()`.
+   `align-items:start` di atas menghapus peregangan, tapi TIDAK menghapus baris:
+   grid tetap menyusun kartu per baris, dan tinggi baris ditentukan kartu
+   tertinggi. Kartu pendek di sebelah kartu panjang menyisakan lubang kosong
+   sampai baris berikutnya boleh mulai — persis yang terlihat saat satu kartu
+   dibuka daftar santrinya.
+
+   Perbaikannya: dua KOLOM yang tingginya berdiri sendiri, bukan satu daftar
+   yang dipatah-patah jadi baris. Kartu dibagi selang-seling (genap ke kiri,
+   ganjil ke kanan) supaya urutan bacanya tetap kiri→kanan seperti yang
+   diminta — bukan `columns` CSS yang mengisi kolom kiri penuh dulu dari atas
+   ke bawah.
+
+   Di ponsel kolomnya `display:contents`: pembungkusnya lenyap, semua kartu
+   kembali jadi satu kolom flex. Karena kartu genap/ganjil terpisah di DOM,
+   urutannya akan jadi 1,3,5,2,4 — maka tiap kartu membawa `order` sesuai
+   posisi aslinya. Flexbox menghormatinya di kedua ukuran layar: di ponsel
+   mengembalikan 1,2,3,4,5; di kolom desktop urutannya sudah menaik sendiri. */
+.ppm-card-grid > .ppm-card-col{display:contents}
+@media (min-width:768px){
+  .ppm-card-grid > .ppm-card-col{
+    display:flex;
+    flex-direction:column;
+    gap:.75rem;
+    min-width:0;
   }
 }
 

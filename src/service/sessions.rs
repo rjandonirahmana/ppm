@@ -100,7 +100,7 @@ pub async fn list_for(pool: &Pool, user: &SessionUser) -> Result<SessionsData> {
     let until = today + Duration::days(7);
     let yesterday = today - Duration::days(1);
     // Guru & dewan guru = SATU entitas: sama-sama lihat & kelola SEMUA sesi.
-    let all_scope = matches!(user.role.as_str(), "admin" | "supervisor" | "dewan_guru" | "teacher");
+    let all_scope = crate::models::role_satisfies(&user.role, &["admin", "supervisor", "dewan_guru", "teacher"]);
     let (upcoming_rows, past_rows) = if all_scope {
         tokio::join!(
             repo::all_sessions(pool, today, until, 100),
@@ -176,7 +176,7 @@ pub async fn detail_for(
     user: &SessionUser,
     session_id: i64,
 ) -> Result<crate::models::SessionDetailData> {
-    if !matches!(user.role.as_str(), "admin" | "supervisor" | "dewan_guru" | "teacher") {
+    if !crate::models::role_satisfies(&user.role, &["admin", "supervisor", "dewan_guru", "teacher"]) {
         bail_user!("forbidden");
     }
     let Some(d) = repo::session_detail(pool, session_id).await? else {
@@ -245,7 +245,15 @@ pub async fn detail_for(
             .unwrap_or_else(|| "-".into()),
         status_label: status_label.into(),
         status_kind: status_kind.into(),
-        teacher: d.teacher.unwrap_or_else(|| "-".into()),
+        // Sesi tanpa guru pengisi → WALI KELAS yang bertugas (aturan sama
+        // dengan penjagaan koreksi/verifikasi, yang sejak awal memakai
+        // COALESCE(teacher_id, wali_kelas_id)). Ditandai agar jelas ini
+        // penugasan turunan, bukan pilihan pamong.
+        teacher: d
+            .teacher
+            .clone()
+            .or_else(|| d.wali_name.clone().map(|w| format!("{w} (wali kelas)")))
+            .unwrap_or_else(|| "-".into()),
         hadir,
         total,
         attendance,
@@ -293,7 +301,7 @@ pub async fn mark_present(
     session_id: i64,
     student_id: i64,
 ) -> Result<()> {
-    if !matches!(user.role.as_str(), "admin" | "supervisor" | "dewan_guru" | "teacher") {
+    if !crate::models::role_satisfies(&user.role, &["admin", "supervisor", "dewan_guru", "teacher"]) {
         bail_user!("forbidden");
     }
     if !repo::mark_manual_present(pool, student_id, session_id).await? {
@@ -312,7 +320,7 @@ pub async fn mark_bulk(
     student_ids: Vec<i64>,
     status: &str,
 ) -> Result<i64> {
-    if !matches!(user.role.as_str(), "admin" | "supervisor" | "dewan_guru" | "teacher") {
+    if !crate::models::role_satisfies(&user.role, &["admin", "supervisor", "dewan_guru", "teacher"]) {
         bail_user!("forbidden");
     }
     if !matches!(status, "present" | "absent") {

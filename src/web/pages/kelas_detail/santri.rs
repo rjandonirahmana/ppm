@@ -8,6 +8,7 @@ use crate::models::{
 use crate::web::api::{
     add_members_action, remove_member_action, staff_search_students, student_book_progress_for_viewer,
 };
+use crate::web::components::AdminOnly;
 use crate::web::components::{BookProgressDetail, EmptyState, Sheet};
 
 // ── Tab SANTRI ────────────────────────────────────────────────────────────────
@@ -18,6 +19,7 @@ pub(super) fn SantriTab(
     d: KelasDetail,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
+    let can_manage = d.can_manage;
     let members = StoredValue::new(d.members.clone());
     let total = d.members.len();
     let query = RwSignal::new(String::new());
@@ -59,7 +61,9 @@ pub(super) fn SantriTab(
             <div class="space-y-3 md:max-w-md">
             // Santri masuk KELAS (migrasi 61), bukan jadwal — jadi tak perlu
             // lagi menunggu ada jadwal sebelum anggota bisa ditambahkan.
-            <AddMemberForm class_id=class_id refetch=refetch />
+            <AdminOnly can_manage=can_manage apa="menambah atau mengeluarkan santri dari kelas">
+                <AddMemberForm class_id=class_id refetch=refetch />
+            </AdminOnly>
 
             // Cari peserta (filter klien)
             {(total > 0)
@@ -114,10 +118,7 @@ pub(super) fn SantriTab(
                         let meta = format!("NIS: {}", m.nis);
                         let ang = m.angkatan.clone();
                         view! {
-                            <div
-                                class="ppm-card p-3 flex items-center gap-3 card-hover anim-in"
-                                style="border-left:4px solid #064e3b"
-                            >
+                            <div class="ppm-card p-3 flex items-center gap-3 card-hover anim-in ppm-accent">
                                 <div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold shrink-0">
                                     {initial}
                                 </div>
@@ -145,14 +146,21 @@ pub(super) fn SantriTab(
                                     >
                                         <span class="material-symbols-outlined text-[18px]">"auto_stories"</span>
                                     </button>
-                                    <button
-                                        class="w-9 h-9 rounded-lg bg-error-container/60 text-error flex items-center justify-center press disabled:opacity-50"
-                                        disabled=move || busy.get() == Some(sid)
-                                        on:click=move |_| remove(sid)
-                                        aria-label="Keluarkan dari kelas"
-                                    >
-                                        <span class="material-symbols-outlined text-[20px]">"person_remove"</span>
-                                    </button>
+                                    // Mengeluarkan santri = wewenang admin; tombolnya
+                                    // tak ditampilkan sama sekali untuk peran lain.
+                                    {can_manage
+                                        .then(|| {
+                                            view! {
+                                                <button
+                                                    class="w-9 h-9 rounded-lg bg-error-container/60 text-error flex items-center justify-center press disabled:opacity-50"
+                                                    disabled=move || busy.get() == Some(sid)
+                                                    on:click=move |_| remove(sid)
+                                                    aria-label="Keluarkan dari kelas"
+                                                >
+                                                    <span class="material-symbols-outlined text-[20px]">"person_remove"</span>
+                                                </button>
+                                            }
+                                        })}
                                 </div>
                             </div>
                         }
@@ -263,8 +271,7 @@ fn AddMemberForm(
                     do_search(); // refresh daftar → yg baru ditambah hilang dari pilihan
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy.set(false);

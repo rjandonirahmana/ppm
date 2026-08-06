@@ -49,8 +49,7 @@ pub fn GantiSandiPage() -> impl IntoView {
                     confirm.set(String::new());
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy.set(false);

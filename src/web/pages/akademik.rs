@@ -164,8 +164,7 @@ fn MateriCard(b: BookProgressItem, refetch: impl Fn() + Copy + Send + 'static) -
                     refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy.set(false);

@@ -106,6 +106,7 @@ fn DetailBody(
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
     let class_id = d.id;
+    let hero_can_manage = d.can_manage;
     let member_count = d.members.len();
     let sched_count = d.schedules.len();
     let sesi_count = d.sessions.len();
@@ -136,8 +137,7 @@ fn DetailBody(
                     refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    err.set(Some(m.rsplit(": ").next().unwrap_or(&m).to_string()));
+                                        err.set(Some(crate::web::components::pesan_galat(e)));
                 }
             }
             busy.set(false);
@@ -254,13 +254,19 @@ fn DetailBody(
                                 </div>
                                 <h2 class="text-headline-sm font-bold">{name_v.get()}</h2>
                             </div>
-                            <button
-                                class="w-9 h-9 rounded-full bg-white/15 flex items-center justify-center shrink-0 press"
-                                on:click=move |_| editing.set(true)
-                                aria-label="Edit detail kelas"
-                            >
-                                <span class="material-symbols-outlined text-[20px]">"edit"</span>
-                            </button>
+                            // Mengubah identitas kelas = wewenang admin.
+                            {hero_can_manage
+                                .then(|| {
+                                    view! {
+                                        <button
+                                            class="w-9 h-9 rounded-full bg-white/15 flex items-center justify-center shrink-0 press"
+                                            on:click=move |_| editing.set(true)
+                                            aria-label="Edit detail kelas"
+                                        >
+                                            <span class="material-symbols-outlined text-[20px]">"edit"</span>
+                                        </button>
+                                    }
+                                })}
                         </div>
                         <div class="flex items-center gap-4 mt-3 text-body-sm">
                             <span class="flex items-center gap-1">
@@ -345,7 +351,8 @@ fn WaliKelasCard(
     let pamong_opts = StoredValue::new(d.pamong_options.clone());
     let wali = RwSignal::new(d.wali_kelas_id);
     let pamong = RwSignal::new(d.pamong_id);
-    let req_pamong = RwSignal::new(d.require_pamong);
+    let mode = RwSignal::new(d.verify_mode.clone());
+    let can_manage = d.can_manage;
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
 
@@ -355,7 +362,7 @@ fn WaliKelasCard(
         }
         busy.set(true);
         msg.set(None);
-        let (w, pm, rp) = (wali.get_untracked(), pamong.get_untracked(), req_pamong.get_untracked());
+        let (w, pm, rp) = (wali.get_untracked(), pamong.get_untracked(), mode.get_untracked());
         leptos::task::spawn_local(async move {
             match set_class_staff_action(class_id, w, pm, rp).await {
                 Ok(_) => {
@@ -363,8 +370,7 @@ fn WaliKelasCard(
                     refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy.set(false);
@@ -375,16 +381,32 @@ fn WaliKelasCard(
         <div class="ppm-card p-4 space-y-3 anim-in">
             <div class="flex items-center gap-2">
                 <span class="material-symbols-outlined text-primary">"badge"</span>
-                <h3 class="text-body-lg font-bold text-on-background">"Wali Kelas & Perizinan"</h3>
+                <h3 class="text-body-lg font-bold text-on-background">"Wali Kelas & Verifikasi"</h3>
+                // Penanda TERKUNCI, bukan tombol yang diam-diam gagal: pemirsa
+                // langsung tahu ini bukan wewenangnya, bukan aplikasi yang rusak.
+                {(!can_manage)
+                    .then(|| {
+                        view! {
+                            <span class="ppm-chip bg-surface-container-highest text-on-surface-variant flex items-center gap-1">
+                                <span class="material-symbols-outlined text-[14px]">"lock"</span>
+                                "Hanya admin"
+                            </span>
+                        }
+                    })}
             </div>
             <p class="text-body-sm text-on-surface-variant">
-                "Wali kelas menyetujui izin/sakit/keluar santri kelas ini. Atur juga apakah izin lewat Pamong dulu atau langsung ke wali kelas."
+                {if can_manage {
+                    "Wali kelas menyetujui izin/sakit/keluar santri kelas ini. Mode verifikasi menentukan siapa yang mengesahkan absensi."
+                } else {
+                    "Hanya admin/ketua yang boleh mengubah bagian ini. Ditampilkan agar Anda tahu siapa petugas kelas dan bagaimana absensinya diverifikasi."
+                }}
             </p>
 
             <label class="space-y-1 block">
                 <span class="text-[11px] font-bold tracking-wider text-on-surface-variant">"WALI KELAS"</span>
                 <select
                     class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface cursor-pointer"
+                    prop:disabled=!can_manage
                     on:change=move |ev| wali.set(event_target_value(&ev).parse().unwrap_or(0))
                 >
                     <option value="0" selected=move || wali.get() == 0>"— Belum ada wali kelas"</option>
@@ -407,6 +429,7 @@ fn WaliKelasCard(
                 <span class="text-[11px] font-bold tracking-wider text-on-surface-variant">"PAMONG KELAS"</span>
                 <select
                     class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface cursor-pointer"
+                    prop:disabled=!can_manage
                     on:change=move |ev| pamong.set(event_target_value(&ev).parse().unwrap_or(0))
                 >
                     <option value="0" selected=move || pamong.get() == 0>"— Belum ada pamong"</option>
@@ -428,22 +451,35 @@ fn WaliKelasCard(
                 "Pamong kelas memverifikasi kehadiran gate santri kelas ini, jadi tahap-1 persetujuan izin, & menerima WA ~1 jam sebelum sesi untuk mengatur dewan guru pengisi."
             </p>
 
-            <label class="flex items-center gap-3 cursor-pointer py-1">
-                <input
-                    type="checkbox"
-                    class="w-5 h-5 accent-primary cursor-pointer"
-                    prop:checked=move || req_pamong.get()
-                    on:change=move |ev| req_pamong.set(event_target_checked(&ev))
-                />
-                <span class="text-body-sm text-on-background">
-                    "Izin harus lewat Pamong dulu (2 tahap). Nonaktifkan = langsung ke wali kelas."
-                </span>
+            // Mode verifikasi absensi kelas (migrasi 62) — tiga pilihan, bukan
+            // lagi centang dua-keadaan: ada kelas yang cukup diverifikasi
+            // pamong saja, dan itu tak bisa diungkapkan sebuah centang.
+            <label class="space-y-1 block">
+                <span class="text-label-md text-on-surface-variant">"Mode verifikasi absensi"</span>
+                <select
+                    class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-60"
+                    prop:disabled=!can_manage
+                    on:change=move |ev| mode.set(event_target_value(&ev))
+                >
+                    <option value="dua_tahap" selected=move || mode.get() == "dua_tahap">
+                        "Dua tahap — pamong dulu, lalu dewan guru"
+                    </option>
+                    <option value="guru" selected=move || mode.get() == "guru">
+                        "Satu tahap — cukup dewan guru"
+                    </option>
+                    <option value="pamong" selected=move || mode.get() == "pamong">
+                        "Satu tahap — cukup pamong"
+                    </option>
+                </select>
             </label>
+            <p class="text-[11px] text-on-surface-variant">
+                "Mode yang melibatkan pamong membutuhkan pamong kelas terisi — kalau tidak, absensi menggantung di antrean tanpa petugas."
+            </p>
 
             <div class="flex items-center gap-3">
                 <button
                     class="px-5 py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-body-sm cursor-pointer press disabled:opacity-60"
-                    prop:disabled=move || busy.get()
+                    prop:disabled=move || busy.get() || !can_manage
                     on:click=save
                 >
                     {move || if busy.get() { "Menyimpan…" } else { "Simpan" }}

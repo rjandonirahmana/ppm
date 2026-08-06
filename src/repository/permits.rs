@@ -31,7 +31,7 @@ pub struct PermitNotifyTargets {
 /// Ambil wali kelas + pamong (nama & HP) penyetuju izin.
 ///
 /// `class_id` Some = kelas TUJUAN izin (migrasi 46) — dipakai saat satu ajuan
-/// terpecah ke beberapa wali; None = fallback ke kelas UTAMA (is_primary)
+/// terpecah ke beberapa wali; None = fallback ke kelas AKADEMIK santri
 /// santri, untuk izin lama atau santri tanpa kelas terjadwal.
 pub async fn permit_notify_targets(
     pool: &Pool,
@@ -46,8 +46,13 @@ pub async fn permit_notify_targets(
                     w.full_name, w.phone_number, \
                     pm.full_name, pm.phone_number \
              FROM users s \
-             LEFT JOIN class_participants cp \
-                 ON cp.user_id = s.id AND cp.is_primary AND $2::bigint IS NULL \
+             LEFT JOIN LATERAL ( \
+                 SELECT cp_ku.class_id FROM class_participants cp_ku \
+                   JOIN classes c ON c.id = cp_ku.class_id \
+                  WHERE cp_ku.user_id = s.id AND $2::bigint IS NULL \
+                  ORDER BY (lower(coalesce(c.golongan, '')) IN ('bacaan', 'makna')) DESC, c.id \
+                  LIMIT 1 \
+             ) cp ON TRUE \
              LEFT JOIN classes cl ON cl.id = COALESCE($2::bigint, cp.class_id) \
              LEFT JOIN users w  ON w.id = cl.wali_kelas_id \
              LEFT JOIN users pm ON pm.id = cl.pamong_id \
@@ -174,13 +179,15 @@ pub async fn list_my_permits(pool: &Pool, user_id: i64, limit: i64) -> Result<Ve
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT p.type, p.start_date, p.end_date, p.pamong_status, p.guru_status, \
+            &format!(
+                "SELECT p.type, p.start_date, p.end_date, p.pamong_status, p.guru_status, \
                     COALESCE(tc.require_pamong, cl.require_pamong, TRUE), tc.name \
              FROM permit_requests p \
              LEFT JOIN classes tc ON tc.id = p.class_id \
-             LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
-             LEFT JOIN classes cl ON cl.id = cp.class_id \
+             {kelas} \
              WHERE p.user_id = $1 ORDER BY p.created_at DESC LIMIT $2",
+                kelas = super::kelas_utama_lateral("p.user_id"),
+            ),
             &[&user_id, &limit],
         )
         .await
@@ -231,16 +238,18 @@ pub async fn pending_pamong_permits(
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT p.id, u.full_name, u.nis, COALESCE(tc.name, cl.name), \
+            &format!(
+                "SELECT p.id, u.full_name, u.nis, COALESCE(tc.name, cl.name), \
                 p.type, p.start_date, p.end_date, p.reason, p.created_at \
              FROM permit_requests p JOIN users u ON u.id = p.user_id \
              LEFT JOIN classes tc ON tc.id = p.class_id \
-             LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
-             LEFT JOIN classes cl ON cl.id = cp.class_id \
+             {kelas} \
              WHERE p.pamong_status = 'pending' AND p.guru_status = 'pending' \
                 AND COALESCE(tc.require_pamong, cl.require_pamong, $2) = TRUE \
                 AND ($3::bigint IS NULL OR COALESCE(tc.pamong_id, cl.pamong_id) = $3) \
              ORDER BY p.created_at ASC LIMIT $1",
+                kelas = super::kelas_utama_lateral("p.user_id"),
+            ),
             &[&limit, &default_require, &pamong_id],
         )
         .await
@@ -266,13 +275,15 @@ pub async fn pamong_permits_decided_today(pool: &Pool, pamong_id: Option<i64>) -
     let c = pool.get().await?;
     let row = c
         .query_one(
-            "SELECT COUNT(*) FROM permit_requests p \
+            &format!(
+                "SELECT COUNT(*) FROM permit_requests p \
              LEFT JOIN classes tc ON tc.id = p.class_id \
-             LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
-             LEFT JOIN classes cl ON cl.id = cp.class_id \
+             {kelas} \
              WHERE p.pamong_status <> 'pending' \
                 AND (p.pamong_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date \
                 AND ($1::bigint IS NULL OR COALESCE(tc.pamong_id, cl.pamong_id) = $1)",
+                kelas = super::kelas_utama_lateral("p.user_id"),
+            ),
             &[&pamong_id],
         )
         .await
@@ -301,12 +312,16 @@ pub async fn decide_pamong_permit(
                     (SELECT c.require_pamong FROM classes c WHERE c.id = p.class_id), \
                     (SELECT c.require_pamong FROM class_participants cp \
                         JOIN classes c ON c.id = cp.class_id \
-                        WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1), $4) = TRUE \
+                        WHERE cp.user_id = p.user_id \
+                          ORDER BY (lower(coalesce(c.golongan, '')) IN ('bacaan', 'makna')) DESC, c.id \
+                          LIMIT 1), $4) = TRUE \
                 AND ($5::bigint IS NULL OR COALESCE( \
                     (SELECT c.pamong_id FROM classes c WHERE c.id = p.class_id), \
                     (SELECT c.pamong_id FROM class_participants cp \
                         JOIN classes c ON c.id = cp.class_id \
-                        WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1)) = $5)",
+                        WHERE cp.user_id = p.user_id \
+                          ORDER BY (lower(coalesce(c.golongan, '')) IN ('bacaan', 'makna')) DESC, c.id \
+                          LIMIT 1)) = $5)",
             &[&permit_id, &status, &staff_id, &default_require, &pamong_id],
         )
         .await
@@ -331,12 +346,12 @@ pub async fn pending_guru_permits(
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT p.id, u.full_name, u.nis, COALESCE(tc.name, cl.name), \
+            &format!(
+                "SELECT p.id, u.full_name, u.nis, COALESCE(tc.name, cl.name), \
                 p.type, p.start_date, p.end_date, p.reason, p.created_at \
              FROM permit_requests p JOIN users u ON u.id = p.user_id \
              LEFT JOIN classes tc ON tc.id = p.class_id \
-             LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
-             LEFT JOIN classes cl ON cl.id = cp.class_id \
+             {kelas} \
              WHERE p.guru_status = 'pending' \
                 AND p.pamong_status <> 'rejected' \
                 AND CASE WHEN COALESCE(tc.require_pamong, cl.require_pamong, $2) \
@@ -346,6 +361,8 @@ pub async fn pending_guru_permits(
                 AND ($3::bigint IS NULL \
                      OR COALESCE(p.wali_kelas_id, tc.wali_kelas_id, cl.wali_kelas_id) = $3) \
              ORDER BY p.created_at ASC LIMIT $1",
+                kelas = super::kelas_utama_lateral("p.user_id"),
+            ),
             &[&limit, &default_require, &wali_id],
         )
         .await
@@ -372,14 +389,16 @@ pub async fn guru_permits_decided_today(pool: &Pool, wali_id: Option<i64>) -> Re
     let c = pool.get().await?;
     let row = c
         .query_one(
-            "SELECT COUNT(*) FROM permit_requests p \
+            &format!(
+                "SELECT COUNT(*) FROM permit_requests p \
              LEFT JOIN classes tc ON tc.id = p.class_id \
-             LEFT JOIN class_participants cp ON cp.user_id = p.user_id AND cp.is_primary \
-             LEFT JOIN classes cl ON cl.id = cp.class_id \
+             {kelas} \
              WHERE p.guru_status <> 'pending' \
                 AND (p.guru_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date \
                 AND ($1::bigint IS NULL \
                      OR COALESCE(p.wali_kelas_id, tc.wali_kelas_id, cl.wali_kelas_id) = $1)",
+                kelas = super::kelas_utama_lateral("p.user_id"),
+            ),
             &[&wali_id],
         )
         .await
@@ -410,12 +429,16 @@ pub async fn decide_guru_permit(
                         (SELECT c.require_pamong FROM classes c WHERE c.id = p.class_id), \
                         (SELECT c.require_pamong FROM class_participants cp \
                             JOIN classes c ON c.id = cp.class_id \
-                            WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1), $5) \
+                            WHERE cp.user_id = p.user_id \
+                          ORDER BY (lower(coalesce(c.golongan, '')) IN ('bacaan', 'makna')) DESC, c.id \
+                          LIMIT 1), $5) \
                           AND COALESCE( \
                         (SELECT c.pamong_id FROM classes c WHERE c.id = p.class_id), \
                         (SELECT c.pamong_id FROM class_participants cp \
                             JOIN classes c ON c.id = cp.class_id \
-                            WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1)) IS NOT NULL \
+                            WHERE cp.user_id = p.user_id \
+                          ORDER BY (lower(coalesce(c.golongan, '')) IN ('bacaan', 'makna')) DESC, c.id \
+                          LIMIT 1)) IS NOT NULL \
                      THEN p.pamong_status = 'approved' \
                      ELSE TRUE END \
                 AND ($4::bigint IS NULL OR COALESCE( \
@@ -423,7 +446,9 @@ pub async fn decide_guru_permit(
                      (SELECT c.wali_kelas_id FROM classes c WHERE c.id = p.class_id), \
                      (SELECT c.wali_kelas_id FROM class_participants cp \
                         JOIN classes c ON c.id = cp.class_id \
-                        WHERE cp.user_id = p.user_id AND cp.is_primary LIMIT 1)) = $4)",
+                        WHERE cp.user_id = p.user_id \
+                          ORDER BY (lower(coalesce(c.golongan, '')) IN ('bacaan', 'makna')) DESC, c.id \
+                          LIMIT 1)) = $4)",
             &[&permit_id, &status, &staff_id, &wali_id, &default_require],
         )
         .await

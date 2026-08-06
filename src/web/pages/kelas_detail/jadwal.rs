@@ -11,7 +11,7 @@ use crate::models::{
 use crate::web::api::{
     delete_schedule_action, update_schedule_action,
 };
-use crate::web::components::EmptyState;
+use crate::web::components::{kartu_grid, AdminOnly, EmptyState};
 
 // ── Tab JADWAL ────────────────────────────────────────────────────────────────
 
@@ -30,6 +30,7 @@ pub(super) fn JadwalTab(
     // kitab di luar itu membuat progres kurikulum tak pernah tersentuh.
     let dalam_kurikulum: std::collections::HashSet<i64> =
         d.curriculum.iter().map(|c| c.book_id).filter(|b| *b > 0).collect();
+    let can_manage = d.can_manage;
     let book_opts = StoredValue::new(
         d.book_options
             .iter()
@@ -45,7 +46,9 @@ pub(super) fn JadwalTab(
     view! {
         <div class="space-y-3 stagger">
             <div class="md:max-w-md">
-                <BuatJadwalForm class_id=class_id room_options=room_opts refetch=refetch />
+                <AdminOnly can_manage=can_manage apa="membuat atau mengubah jadwal kelas">
+                    <BuatJadwalForm class_id=class_id room_options=room_opts refetch=refetch />
+                </AdminOnly>
             </div>
 
             // ── Statistik jadwal (mockup Jadwal Kelas) ──────────────────────
@@ -83,14 +86,15 @@ pub(super) fn JadwalTab(
                 }
                     .into_any()
             } else {
-                view! {
-                    <div class="ppm-card-grid">
-                        {schedules
+                kartu_grid(
+                        schedules
                             .into_iter()
-                            .map(|s| view! { <JadwalCard s=s room_options=room_opts book_options=book_opts refetch=refetch /> })
-                            .collect_view()}
-                    </div>
-                }
+                            .map(|s| {
+                                view! { <JadwalCard s=s room_options=room_opts book_options=book_opts can_manage=can_manage refetch=refetch /> }
+                                    .into_any()
+                            })
+                            .collect(),
+                    )
                     .into_any()
             }}
         </div>
@@ -102,6 +106,9 @@ fn JadwalCard(
     s: ScheduleItem,
     room_options: StoredValue<Vec<crate::models::RoomOption>>,
     book_options: StoredValue<Vec<crate::models::BookItem>>,
+    /// Admin/ketua saja: ubah & hapus jadwal. Pamong/dewan guru tetap boleh
+    /// memperbarui MATERI yang sedang dibahas (panel di bawah kartu).
+    can_manage: bool,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
     let sid = s.id;
@@ -205,10 +212,7 @@ fn JadwalCard(
     let field =
         "w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface";
     view! {
-        <div
-            class="ppm-card p-4 card-hover anim-in"
-            style="border-left:4px solid #064e3b"
-        >
+        <div class="ppm-card p-4 card-hover anim-in ppm-accent">
             <div class="flex items-center justify-between gap-2">
                 <p class="text-body-md font-bold text-on-background truncate">{title_ro}</p>
                 <div class="flex items-center gap-2 shrink-0">
@@ -223,13 +227,20 @@ fn JadwalCard(
                     <span class="ppm-chip bg-secondary-container text-primary">
                         {recurrence_label}
                     </span>
-                    <button
-                        class="w-8 h-8 rounded-lg bg-surface-container text-primary flex items-center justify-center press"
-                        on:click=move |_| editing.update(|e| *e = !*e)
-                        aria-label="Edit jadwal"
-                    >
-                        <span class="material-symbols-outlined text-[18px]">"edit"</span>
-                    </button>
+                    // Ubah jadwal = admin. Pamong/dewan guru tetap bisa
+                    // memperbarui materi lewat panel di bawah kartu ini.
+                    {can_manage
+                        .then(|| {
+                            view! {
+                                <button
+                                    class="w-8 h-8 rounded-lg bg-surface-container text-primary flex items-center justify-center press"
+                                    on:click=move |_| editing.update(|e| *e = !*e)
+                                    aria-label="Edit jadwal"
+                                >
+                                    <span class="material-symbols-outlined text-[18px]">"edit"</span>
+                                </button>
+                            }
+                        })}
                 </div>
             </div>
 
@@ -515,16 +526,21 @@ fn JadwalCard(
                             books=book_options
                             refetch=refetch
                         />
-                        <div class="flex justify-end mt-3 pt-3 border-t border-outline-variant/40">
-                            <button
-                                class="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-error-container/60 text-error text-body-sm font-semibold press disabled:opacity-60"
-                                disabled=move || busy.get()
-                                on:click=del
-                            >
-                                <span class="material-symbols-outlined text-[18px]">"delete"</span>
-                                "Hapus Jadwal"
-                            </button>
-                        </div>
+                        {can_manage
+                            .then(|| {
+                                view! {
+                                    <div class="flex justify-end mt-3 pt-3 border-t border-outline-variant/40">
+                                        <button
+                                            class="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-error-container/60 text-error text-body-sm font-semibold press disabled:opacity-60"
+                                            disabled=move || busy.get()
+                                            on:click=del
+                                        >
+                                            <span class="material-symbols-outlined text-[18px]">"delete"</span>
+                                            "Hapus Jadwal"
+                                        </button>
+                                    </div>
+                                }
+                            })}
                     }
                         .into_any()
                 }
@@ -578,8 +594,7 @@ pub(super) fn PosisiBerjalan(
                     refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some(m.rsplit(": ").next().unwrap_or(&m).to_string()));
+                                        msg.set(Some(crate::web::components::pesan_galat(e)));
                 }
             }
             busy.set(false);

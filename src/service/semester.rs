@@ -24,9 +24,7 @@ pub fn semester_label(kind: &str, year: i16) -> String {
 }
 
 /// Hari ini (WIB) — acuan "semester sedang berjalan".
-fn today_wib() -> NaiveDate {
-    chrono::Utc::now().with_timezone(&super::fmt::wib()).date_naive()
-}
+use super::fmt::today_wib;
 
 fn to_item(r: repo::SemesterRow, today: NaiveDate) -> SemesterItem {
     // is_active = SEDANG BERJALAN (today di dalam rentang), otomatis dari tanggal.

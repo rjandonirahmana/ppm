@@ -9,7 +9,7 @@ use crate::models::ParentPermitItem;
 use crate::web::api::{
     children_permits, parent_home, submit_child_permit_action,
 };
-use crate::web::components::{DeviceFrame, EmptyState, MobileHeader};
+use crate::web::components::{kartu_grid, DeviceFrame, EmptyState, MobileHeader};
 
 #[component]
 pub fn OrtuIzinPage() -> impl IntoView {
@@ -258,14 +258,12 @@ pub fn OrtuIzinPage() -> impl IntoView {
                                         }
                                             .into_any()
                                     } else {
-                                        view! {
-                                            <div class="ppm-card-grid">
-                                                {list
+                                        kartu_grid(
+                                                list
                                                     .into_iter()
-                                                    .map(|p| view! { <PermitCard p=p /> })
-                                                    .collect_view()}
-                                            </div>
-                                        }
+                                                    .map(|p| view! { <PermitCard p=p /> }.into_any())
+                                                    .collect(),
+                                            )
                                             .into_any()
                                     }
                                 })

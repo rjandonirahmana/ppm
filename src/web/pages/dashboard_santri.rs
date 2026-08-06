@@ -11,28 +11,29 @@ use crate::web::components::{DeviceFrame, FetchError, NotifBell, Sheet};
 
 /// Warna aksen per jenis kehadiran (border kiri kartu + ikon).
 fn kind_colors(kind: &str) -> (&'static str, &'static str, &'static str, &'static str) {
-    // (border_css, icon, icon_wrap_cls, badge_cls)
+    // (border_cls, icon, icon_wrap_cls, badge_cls) — garis aksennya kelas dari
+    // palet, bukan hex yang ditulis ulang di tiap halaman.
     match kind {
         "late" => (
-            "border-left:4px solid #f59e0b",
+            "ppm-accent-warning",
             "schedule",
             "w-11 h-11 rounded-full flex items-center justify-center shrink-0 bg-warning/10 text-warning",
             "px-3 py-1.5 rounded-full text-label-md whitespace-nowrap bg-warning/10 text-warning",
         ),
         "permit" | "sick" => (
-            "border-left:4px solid #2563eb",
+            "ppm-accent-info",
             "medical_services",
             "w-11 h-11 rounded-full flex items-center justify-center shrink-0 bg-info/10 text-info",
             "px-3 py-1.5 rounded-full text-label-md whitespace-nowrap bg-info/10 text-info",
         ),
         "absent" => (
-            "border-left:4px solid #dc2626",
+            "ppm-accent-error",
             "close",
             "w-11 h-11 rounded-full flex items-center justify-center shrink-0 bg-error-container text-error",
             "px-3 py-1.5 rounded-full text-label-md whitespace-nowrap bg-error-container text-error",
         ),
         _ => (
-            "border-left:4px solid #059669",
+            "ppm-accent-success",
             "login",
             "w-11 h-11 rounded-full flex items-center justify-center shrink-0 bg-secondary-container text-primary",
             "px-3 py-1.5 rounded-full text-label-md whitespace-nowrap bg-success/10 text-success",
@@ -101,23 +102,36 @@ pub fn SantriDashboardPage() -> impl IntoView {
                         .then(|| {
                             view! {
                                 <Sheet
-                                    title="QR Absensi Saya"
+                                    title="Absensi Gerbang"
                                     on_close=move || show_qr.set(false)
                                     center_title=true
                                 >
-                                    <div class="w-52 h-52 mx-auto mt-5 bg-surface-container-lowest border-2 border-outline-variant rounded-2xl flex items-center justify-center">
-                                        <span class="material-symbols-outlined text-[150px] text-primary">
-                                            "qr_code_2"
+                                    // Dulu di sini tampil ikon QR besar dengan kalimat
+                                    // "tunjukkan kode ini ke pemindai" — padahal barisnya
+                                    // sendiri mengaku QR per-santri "segera hadir". Kode itu
+                                    // hiasan: dipindai pasti gagal, dan santri baru tahu
+                                    // setelah berdiri di depan gerbang. Diganti keterangan
+                                    // jujur + cara yang benar-benar berlaku sekarang.
+                                    <div class="mt-4 flex flex-col items-center text-center gap-3">
+                                        <span class="w-16 h-16 rounded-2xl bg-surface-container flex items-center justify-center">
+                                            <span class="material-symbols-outlined text-[32px] text-on-surface-variant">
+                                                "qr_code_2"
+                                            </span>
                                         </span>
+                                        <div>
+                                            <p class="text-body-md font-semibold text-on-background">
+                                                "QR absensi belum tersedia"
+                                            </p>
+                                            <p class="text-body-sm text-on-surface-variant mt-1">
+                                                "Absensi gerbang sekarang memakai KARTU RFID. Tempelkan kartumu ke pemindai di gerbang."
+                                            </p>
+                                        </div>
+                                        <p class="text-[11px] text-on-surface-variant/70">
+                                            "Kartu hilang atau belum punya? Hubungi pengelola."
+                                        </p>
                                     </div>
-                                    <p class="text-body-sm text-on-surface-variant text-center mt-4">
-                                        "Tunjukkan kode ini ke perangkat pemindai di gerbang."
-                                    </p>
-                                    <p class="text-[11px] text-on-surface-variant/70 text-center mt-1">
-                                        "(QR unik per-santri segera hadir — gunakan kartu RFID)"
-                                    </p>
                                     <button
-                                        class="w-full mt-6 py-3.5 bg-primary text-on-primary rounded-xl font-semibold"
+                                        class="w-full mt-5 py-3.5 bg-primary text-on-primary rounded-xl font-semibold press"
                                         on:click=move |_| show_qr.set(false)
                                     >
                                         "Tutup"
@@ -210,10 +224,7 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
                 {match home.schedule {
                     Some(s) => {
                         view! {
-                            <div
-                                class="ppm-card p-4"
-                                style="border-left:4px solid #059669"
-                            >
+                            <div class="ppm-card p-4 ppm-accent-success">
                                 <div class="flex gap-3">
                                     <div class="w-12 h-12 ppm-tile">
                                         <span class="material-symbols-outlined">"menu_book"</span>
@@ -493,10 +504,7 @@ fn ConnRequestsSection() -> impl IntoView {
 fn AttendanceRow(item: AttendanceItem) -> impl IntoView {
     let (border, icon, wrap_cls, badge_cls) = kind_colors(&item.kind);
     view! {
-        <div
-            class="ppm-card p-3 flex items-center gap-3 card-hover"
-            style=border
-        >
+        <div class=format!("ppm-card p-3 flex items-center gap-3 card-hover {border}")>
             <div class=wrap_cls>
                 <span class="material-symbols-outlined">{icon}</span>
             </div>

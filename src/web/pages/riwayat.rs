@@ -12,15 +12,17 @@ use leptos_meta::Title;
 
 use crate::models::{LaporanSantriData, RiwayatData, RiwayatItem};
 use crate::web::api::{laporan_santri_data, riwayat_data};
-use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
+use crate::web::components::{kartu_grid, DeviceFrame, EmptyState, FetchError, MobileHeader};
 use crate::web::pages::laporan::{attendance_card, gate_status_card, hafalan_card, points_lists};
 
+/// Kelas garis aksen kiri, bukan `style="border-left:…#hex"`: warnanya jadi
+/// milik palet (style/tailwind.css), bukan angka yang disalin per halaman.
 fn kind_border(kind: &str) -> &'static str {
     match kind {
-        "late" => "border-left:4px solid #f59e0b",
-        "permit" => "border-left:4px solid #2563eb",
-        "absent" => "border-left:4px solid #dc2626",
-        _ => "border-left:4px solid #059669",
+        "late" => "ppm-accent-warning",
+        "permit" => "ppm-accent-info",
+        "absent" => "ppm-accent-error",
+        _ => "ppm-accent-success",
     }
 }
 
@@ -193,9 +195,12 @@ fn RiwayatContent(d: RiwayatData, l: LaporanSantriData, month_filter: RwSignal<S
                                 </span>
                                 <h3 class="text-body-lg font-bold text-on-background">{m}</h3>
                             </div>
-                            <div class="ppm-card-grid">
-                                {items.into_iter().map(|it| view! { <RiwayatCard it=it /> }).collect_view()}
-                            </div>
+                            {kartu_grid(
+                                items
+                                    .into_iter()
+                                    .map(|it| view! { <RiwayatCard it=it /> }.into_any())
+                                    .collect(),
+                            )}
                         </div>
                     }
                 })
@@ -218,10 +223,7 @@ fn RiwayatCard(it: RiwayatItem) -> impl IntoView {
     };
     let pts_label = format!("{:+} Poin", it.points);
     view! {
-        <div
-            class="ppm-card p-4 flex items-start gap-3 card-hover anim-in"
-            style=border
-        >
+        <div class=format!("ppm-card p-4 flex items-start gap-3 card-hover anim-in {border}")>
             <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2">
                     <p class="text-body-md font-bold text-on-background truncate">{it.title}</p>

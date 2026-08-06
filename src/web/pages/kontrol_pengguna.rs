@@ -70,12 +70,23 @@ pub fn KontrolPenggunaPage() -> impl IntoView {
                             data.get()
                                 .map(|res| match res {
                                     Ok(d) => {
+                                        // Guru & pamong boleh MEMBUKA halaman ini untuk
+                                        // membaca jejak aktivitas, tapi seluruh kendali
+                                        // pengguna terkunci — dan daftar penggunanya
+                                        // memang tak dikirim server untuk mereka.
+                                        let boleh = d.can_manage;
                                         view! {
-                                            <Body
-                                                d=d
-                                                role_filter=role_filter
-                                                refetch=move || data.refetch()
-                                            />
+                                            {boleh
+                                                .then(|| {
+                                                    view! {
+                                                        <Body
+                                                            d=d.clone()
+                                                            role_filter=role_filter
+                                                            refetch=move || data.refetch()
+                                                        />
+                                                    }
+                                                })}
+                                            {(!boleh).then(|| view! { <HanyaLogCard /> })}
                                         }
                                             .into_any()
                                     }
@@ -94,14 +105,21 @@ pub fn KontrolPenggunaPage() -> impl IntoView {
                         }}
                     </Suspense>
 
-                    // ── Buat link registrasi (undangan admin) ────────────────
-                    <InvitePanel />
-
-                    // ── Perangkat RFID / Ruang ───────────────────────────────
-                    <RfidPanel />
-
-                    // ── Pasang kartu RFID ke pengguna ────────────────────────
-                    <KartuPanel />
+                    // Panel-panel kelola HANYA dirender untuk admin. Bukan
+                    // sekadar di-disable: isinya (daftar perangkat, pencarian
+                    // pengguna) pun bukan wewenang mereka.
+                    {move || {
+                        data.get()
+                            .and_then(|r| r.ok())
+                            .filter(|d| d.can_manage)
+                            .map(|_| {
+                                view! {
+                                    <InvitePanel />
+                                    <RfidPanel />
+                                    <KartuPanel />
+                                }
+                            })
+                    }}
 
                     // ── Activity Logs ────────────────────────────────────────
                     <Suspense fallback=|| ()>
@@ -128,6 +146,24 @@ fn AdminOnlyCard() -> impl IntoView {
             <p class="text-body-sm text-on-surface-variant">
                 "Hubungi administrator bila Anda perlu mengelola akun pengguna."
             </p>
+        </div>
+    }
+}
+
+/// Keterangan untuk guru & pamong: halaman terbuka, tapi hanya jejak aktivitas.
+#[component]
+fn HanyaLogCard() -> impl IntoView {
+    view! {
+        <div class="ppm-card p-5 flex items-start gap-3 border-dashed anim-in">
+            <span class="w-10 h-10 rounded-xl bg-surface-container-highest text-on-surface-variant flex items-center justify-center shrink-0">
+                <span class="material-symbols-outlined text-[20px]">"lock"</span>
+            </span>
+            <div class="min-w-0">
+                <p class="text-body-md font-semibold text-on-background">"Mode baca — jejak aktivitas"</p>
+                <p class="text-body-sm text-on-surface-variant mt-0.5">
+                    "Mengelola akun, peran, undangan, dan perangkat RFID adalah wewenang admin/ketua. Di halaman ini Anda dapat membaca jejak aktivitas di bawah."
+                </p>
+            </div>
         </div>
     }
 }
@@ -362,8 +398,7 @@ fn InvitePanel() -> impl IntoView {
                     code.set(token);
                 }
                 Err(e) => {
-                    let s = e.to_string();
-                    msg.set(Some(s.rsplit(": ").next().unwrap_or(&s).to_string()));
+                                        msg.set(Some(crate::web::components::pesan_galat(e)));
                 }
             }
             busy.set(false);
@@ -574,8 +609,7 @@ fn RfidPanel() -> impl IntoView {
                     data.refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy.set(false);
@@ -1027,8 +1061,7 @@ fn KartuPanel() -> impl IntoView {
                     pending.refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy.set(false);

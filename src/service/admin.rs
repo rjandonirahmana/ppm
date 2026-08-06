@@ -184,7 +184,28 @@ fn action_label(action: &str) -> String {
     }
 }
 
-pub async fn user_control_data(pool: &Pool, role_filter: Option<&str>) -> Result<UserControlData> {
+/// Payload halaman User Control.
+///
+/// `can_manage` false (guru/pamong) → daftar pengguna TIDAK diambil sama
+/// sekali. Mengunci tombol di UI saja tak cukup: daftar nama, kontak, dan
+/// peran seluruh penghuni pondok tetap terkirim ke browser dan bisa dibaca
+/// siapa pun yang membuka DevTools. Yang boleh mereka lihat cuma jejak
+/// aktivitas, dan itu diambil server fn terpisah.
+pub async fn user_control_data(
+    pool: &Pool,
+    role_filter: Option<&str>,
+    can_manage: bool,
+) -> Result<UserControlData> {
+    if !can_manage {
+        return Ok(UserControlData {
+            can_manage: false,
+            total: 0,
+            santri_count: 0,
+            staff_count: 0,
+            inactive_count: 0,
+            users: Vec::new(),
+        });
+    }
     let (counts, rows) = tokio::join!(
         repo::user_counts(pool),
         repo::list_users(pool, role_filter, 500),
@@ -209,7 +230,7 @@ pub async fn user_control_data(pool: &Pool, role_filter: Option<&str>) -> Result
         })
         .collect();
 
-    Ok(UserControlData { total, santri_count, staff_count, inactive_count, users })
+    Ok(UserControlData { can_manage: true, total, santri_count, staff_count, inactive_count, users })
 }
 
 pub async fn recent_activity(pool: &Pool, limit: i64) -> Result<Vec<ActivityLogItem>> {

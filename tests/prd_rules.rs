@@ -4,86 +4,31 @@
 //! pemanggilan, SP, dan rute tahap izin. Jalankan: `cargo test --test prd_rules`.
 
 use ppm::models::{
-    attendance_delta, category_points, pemanggilan_tier, permit_kind_label, permit_stage,
-    point_rule, prestasi_label, sp_level, weekly_reward_points,
+    attendance_note, pemanggilan_tier, permit_kind_label, permit_stage, point_rule, prestasi_label,
+    sp_level, weekly_reward_points,
 };
 
-// ── Nilai poin per kategori kegiatan (PRD hal. 7) ────────────────────────────
+// CATATAN: uji `category_points` dan `attendance_delta` DIHAPUS bersama kedua
+// fungsinya. Nilai poin per kategori kini hanya hidup di SQL — fungsi
+// `cat_default_points()` (migrasi 28) yang dipanggil `DELTA_SQL` di
+// repository::attendance — supaya aturannya tak punya dua salinan di dua
+// bahasa. Berkas ini sempat gagal DIKOMPILASI berbulan-bulan karena masih
+// mengimpornya, dan `cargo test` melaporkannya sebagai galat build satu target
+// sementara target lain tetap hijau, jadi kegagalannya tak terbaca.
+//
+// Yang tersisa di sini tetap murni Rust: fallback poin, reward, prestasi, tier
+// pemanggilan, SP, dan rute tahap izin.
 
 #[test]
-fn category_points_sesuai_prd() {
-    let kbm = category_points("kbm");
-    assert_eq!((kbm.present, kbm.telat, kbm.alfa, kbm.izin), (4, 1, 10, 3));
-
-    let non = category_points("non_kbm");
-    assert_eq!((non.present, non.telat, non.alfa, non.izin), (3, 1, 5, 2));
-
-    let piket = category_points("piket");
-    assert_eq!((piket.present, piket.telat, piket.alfa, piket.izin), (1, 0, 2, 0));
-
-    let apel = category_points("apel_kepulangan");
-    assert_eq!((apel.present, apel.telat, apel.alfa, apel.izin), (0, 0, 20, 5));
-
-    // Tak dikenal → legacy default (10/0/15/0).
-    let other = category_points("apa_saja");
-    assert_eq!((other.present, other.telat, other.alfa, other.izin), (10, 0, 15, 0));
-}
-
-// ── attendance_delta: arah + preset + override + sakit/cuti ──────────────────
-
-fn delta(status: &str, atype: &str) -> i32 {
-    attendance_delta(status, atype, None, None, None, None).0
-}
-
-#[test]
-fn delta_preset_per_kategori() {
-    // Hadir tepat waktu → BONUS (positif) sesuai preset.
-    assert_eq!(delta("present", "kbm"), 4);
-    assert_eq!(delta("present", "non_kbm"), 3);
-    assert_eq!(delta("present", "piket"), 1);
-    assert_eq!(delta("present", "apel_kepulangan"), 0);
-    assert_eq!(delta("present", "other"), 10);
-
-    // Telat → DIKURANGI.
-    assert_eq!(delta("late", "kbm"), -1);
-    assert_eq!(delta("late", "piket"), 0);
-
-    // Alfa → DIKURANGI.
-    assert_eq!(delta("absent", "kbm"), -10);
-    assert_eq!(delta("absent", "non_kbm"), -5);
-    assert_eq!(delta("absent", "apel_kepulangan"), -20);
-    assert_eq!(delta("absent", "other"), -15);
-
-    // Izin biasa → DIKURANGI (PRD).
-    assert_eq!(delta("permit", "kbm"), -3);
-    assert_eq!(delta("permit", "non_kbm"), -2);
-    assert_eq!(delta("permit", "apel_kepulangan"), -5);
-    assert_eq!(delta("permit", "piket"), 0);
-}
-
-#[test]
-fn delta_sakit_cuti_dan_luar_jadwal_nol() {
-    // Sakit/Cuti TIDAK mengurangi poin (PRD hal. 7 NB).
-    assert_eq!(delta("sick", "kbm"), 0);
-    assert_eq!(delta("sick", "apel_kepulangan"), 0);
-    // Hadir di luar jadwal → netral.
-    assert_eq!(delta("outside_schedule", "kbm"), 0);
-    // Status tak dikenal → netral.
-    assert_eq!(delta("entah", "kbm"), 0);
-}
-
-#[test]
-fn delta_override_per_jadwal_pakai_magnitudo_positif() {
-    // Override present 25 → +25 (abaikan preset kbm 4).
-    assert_eq!(attendance_delta("present", "kbm", Some(25), None, None, None).0, 25);
-    // Override late 7 (magnitudo) → -7.
-    assert_eq!(attendance_delta("late", "kbm", None, Some(7), None, None).0, -7);
-    // Override absent 30 → -30.
-    assert_eq!(attendance_delta("absent", "kbm", None, None, Some(30), None).0, -30);
-    // Override izin 9 → -9.
-    assert_eq!(attendance_delta("permit", "kbm", None, None, None, Some(9)).0, -9);
-    // Nilai negatif di override tetap dipakai sbagai MAGNITUDO (abs).
-    assert_eq!(attendance_delta("absent", "kbm", None, None, Some(-8), None).0, -8);
+fn attendance_note_sesuai_status() {
+    assert_eq!(attendance_note("present"), "Kedisiplinan");
+    assert_eq!(attendance_note("late"), "Kedisiplinan");
+    assert_eq!(attendance_note("absent"), "Pelanggaran");
+    assert_eq!(attendance_note("permit"), "Izin");
+    // Sakit/Cuti bersurat sah — dicatat terpisah, tak dihitung pelanggaran.
+    assert_eq!(attendance_note("sick"), "Sakit/Cuti");
+    assert_eq!(attendance_note("outside_schedule"), "Di luar jadwal");
+    assert_eq!(attendance_note("entah"), "Keterangan");
 }
 
 #[test]

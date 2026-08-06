@@ -9,7 +9,7 @@ use crate::web::api::{
     create_curriculum_action,
     delete_curriculum_action, update_curriculum_action,
 };
-use crate::web::components::EmptyState;
+use crate::web::components::{kartu_grid, EmptyState};
 
 // ── Tab KURIKULUM (migrasi 17) ───────────────────────────────────────────────
 
@@ -25,6 +25,10 @@ pub(super) fn KurikulumTab(
     view! {
         <div class="space-y-3 stagger">
             <div class="md:max-w-md">
+                // Kurikulum boleh disusun GURU & PAMONG, bukan admin saja:
+                // merekalah yang tahu kelasnya sedang membaca kitab apa dan
+                // sampai mana. Yang tetap admin-saja adalah struktur kelasnya
+                // (anggota, jadwal, wali/pamong).
                 <BuatKurikulumForm class_id=class_id book_options=book_opts refetch=refetch />
             </div>
 
@@ -38,14 +42,15 @@ pub(super) fn KurikulumTab(
                 }
                     .into_any()
             } else {
-                view! {
-                    <div class="ppm-card-grid">
-                        {items
+                kartu_grid(
+                        items
                             .into_iter()
-                            .map(|c| view! { <KurikulumCard c=c book_options=book_opts refetch=refetch /> })
-                            .collect_view()}
-                    </div>
-                }
+                            .map(|c| {
+                                view! { <KurikulumCard c=c book_options=book_opts refetch=refetch /> }
+                                    .into_any()
+                            })
+                            .collect(),
+                    )
                     .into_any()
             }}
         </div>
@@ -88,8 +93,7 @@ fn KurikulumCard(
                     refetch();
                 }
                 Err(e) => {
-                    let s = e.to_string();
-                    msg.set(Some((false, s.rsplit(": ").next().unwrap_or(&s).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy.set(false);
@@ -130,7 +134,7 @@ fn KurikulumCard(
     };
 
     view! {
-        <div class="ppm-card p-4 card-hover anim-in" style="border-left:4px solid #064e3b">
+        <div class="ppm-card p-4 card-hover anim-in ppm-accent">
             <div class="flex items-center justify-between gap-2">
                 <p class="text-body-md font-bold text-on-background truncate">{title_ro}</p>
                 <div class="flex items-center gap-2 shrink-0">
@@ -320,8 +324,7 @@ fn BuatKurikulumForm(
                     refetch();
                 }
                 Err(e) => {
-                    let m = e.to_string();
-                    msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(e))));
                 }
             }
             busy.set(false);

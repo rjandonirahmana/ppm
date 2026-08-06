@@ -8,7 +8,7 @@ use leptos_meta::Title;
 
 use crate::models::PermitReviewItem;
 use crate::web::api::{decide_permit_action, permit_queue_data};
-use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
+use crate::web::components::{kartu_grid, DeviceFrame, EmptyState, FetchError, MobileHeader};
 
 #[component]
 pub fn IzinStafPage() -> impl IntoView {
@@ -110,16 +110,15 @@ pub fn IzinStafPage() -> impl IntoView {
                                                 }
                                                     .into_any()
                                             } else {
-                                                view! {
-                                                    <div class="ppm-card-grid">
-                                                        {d.items
+                                                kartu_grid(
+                                                        d.items
                                                             .into_iter()
                                                             .map(|p| {
                                                                 view! { <PermitCard p=p busy_id=busy_id decide=decide /> }
+                                                                    .into_any()
                                                             })
-                                                            .collect_view()}
-                                                    </div>
-                                                }
+                                                            .collect(),
+                                                    )
                                                     .into_any()
                                             }}
                                         }

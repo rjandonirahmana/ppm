@@ -7,7 +7,7 @@ use leptos_meta::Title;
 
 use crate::models::RiwayatItem;
 use crate::web::api::{child_riwayat, parent_home};
-use crate::web::components::{DeviceFrame, EmptyState, MobileHeader};
+use crate::web::components::{kartu_grid, DeviceFrame, EmptyState, MobileHeader};
 
 #[component]
 pub fn OrtuRiwayatPage() -> impl IntoView {
@@ -223,15 +223,15 @@ fn RiwayatList(items: Vec<RiwayatItem>) -> impl IntoView {
                         </span>
                         <h3 class="text-body-lg font-bold text-on-background">{m}</h3>
                     </div>
-                    <div class="ppm-card-grid">
-                        {items
+                    {kartu_grid(
+                        items
                             .into_iter()
                             .map(|it| {
                                 let border = match it.kind.as_str() {
-                                    "late" => "border-left:4px solid #f59e0b",
-                                    "permit" => "border-left:4px solid #2563eb",
-                                    "absent" => "border-left:4px solid #dc2626",
-                                    _ => "border-left:4px solid #059669",
+                                    "late" => "ppm-accent-warning",
+                                    "permit" => "ppm-accent-info",
+                                    "absent" => "ppm-accent-error",
+                                    _ => "ppm-accent-success",
                                 };
                                 let badge = match it.kind.as_str() {
                                     "late" => "ppm-chip bg-warning/10 text-warning",
@@ -240,7 +240,7 @@ fn RiwayatList(items: Vec<RiwayatItem>) -> impl IntoView {
                                     _ => "ppm-chip bg-success/10 text-success",
                                 };
                                 view! {
-                                    <div class="ppm-card p-4 card-hover anim-in" style=border>
+                                    <div class=format!("ppm-card p-4 card-hover anim-in {border}")>
                                         <div class="flex items-center gap-2">
                                             <p class="text-body-md font-bold text-on-background truncate flex-1">
                                                 {it.title}
@@ -253,9 +253,10 @@ fn RiwayatList(items: Vec<RiwayatItem>) -> impl IntoView {
                                         </p>
                                     </div>
                                 }
+                                    .into_any()
                             })
-                            .collect_view()}
-                    </div>
+                            .collect(),
+                    )}
                 </div>
             }
         })
