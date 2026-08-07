@@ -34,7 +34,7 @@ pub fn BerandaPage() -> impl IntoView {
                             <span class="material-symbols-outlined text-on-primary text-2xl">"mosque"</span>
                         </div>
                         <div class="leading-tight">
-                            <p class="font-bold text-primary">"PPM AFM"</p>
+                            <p class="font-bold text-primary">"AFM SMART"</p>
                             <p class="text-[11px] text-on-surface-variant uppercase tracking-widest hidden sm:block">
                                 "Al-Faqih Mandiri"
                             </p>

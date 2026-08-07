@@ -6,8 +6,8 @@ use crate::models::{
     CurriculumItem, KelasDetail,
 };
 use crate::web::api::{
-    create_curriculum_action,
-    delete_curriculum_action, update_curriculum_action,
+    create_curriculum_action, delete_curriculum_action, kekosongan_materi,
+    update_curriculum_action,
 };
 use crate::web::components::{kartu_grid, EmptyState};
 
@@ -46,7 +46,7 @@ pub(super) fn KurikulumTab(
                         items
                             .into_iter()
                             .map(|c| {
-                                view! { <KurikulumCard c=c book_options=book_opts refetch=refetch /> }
+                                view! { <KurikulumCard class_id=class_id c=c book_options=book_opts refetch=refetch /> }
                                     .into_any()
                             })
                             .collect(),
@@ -59,6 +59,7 @@ pub(super) fn KurikulumTab(
 
 #[component]
 fn KurikulumCard(
+    class_id: i64,
     c: CurriculumItem,
     book_options: StoredValue<Vec<crate::models::BookItem>>,
     refetch: impl Fn() + Copy + Send + 'static,
@@ -120,6 +121,7 @@ fn KurikulumCard(
     // lama untuk baris yang belum tertaut) — di sini tinggal ditampilkan.
     let scope_label = c.range_label.clone();
     let belum_tertaut = c.book_id == 0;
+    let book_id_ro = c.book_id;
     let current_ro = c.current_label.clone();
     // Bar hijau saat khatam — penanda visual bahwa statusnya "Selesai".
     let bar_cls = if pct >= 100 {
@@ -281,6 +283,12 @@ fn KurikulumCard(
                         .into_any()
                 }
             }}
+            // ── Bagian yang paling banyak kosong ──────────────────────────
+            // Diletakkan PALING BAWAH, sesudah posisi & progres: urutannya
+            // mengikuti alur keputusan guru — "sudah sampai mana" dulu, baru
+            // "lalu ke mana sebaiknya".
+            {(!belum_tertaut)
+                .then(|| view! { <PanelKekosongan class_id=class_id book_id=book_id_ro /> })}
         </div>
     }
 }
@@ -637,5 +645,202 @@ pub(super) fn TitikMateri(
             </div>
         }
             .into_any()
+    }
+}
+
+/// Bagian kitab yang paling banyak KOSONG di kelas ini.
+///
+/// Dimuat hanya saat dibuka (bukan bersama halaman): satu kelas bisa punya
+/// beberapa materi kurikulum, dan menghitung peta kekosongan semuanya di muka
+/// berarti pekerjaan yang hampir selalu terbuang.
+#[component]
+pub(super) fn PanelKekosongan(class_id: i64, book_id: i64) -> impl IntoView {
+    let buka = RwSignal::new(false);
+    let cari = RwSignal::new(String::new());
+    let data = Resource::new(
+        move || (buka.get(), class_id, book_id),
+        |(b, cid, bid)| async move {
+            if !b || bid <= 0 {
+                return None;
+            }
+            kekosongan_materi(cid, bid).await.ok()
+        },
+    );
+
+    view! {
+        <div class="mt-3 border-t border-outline-variant/50 pt-2">
+            <button
+                type="button"
+                class="w-full flex items-center justify-between py-1 press"
+                on:click=move |_| buka.update(|b| *b = !*b)
+            >
+                <span class="text-[11px] font-bold tracking-wide text-on-surface-variant flex items-center gap-1.5">
+                    <span class="material-symbols-outlined text-[16px] text-warning">"insights"</span>
+                    "BAGIAN PALING BANYAK KOSONG"
+                </span>
+                <span
+                    class="material-symbols-outlined text-on-surface-variant transition-transform text-[20px]"
+                    class:rotate-180=move || buka.get()
+                >
+                    "expand_more"
+                </span>
+            </button>
+
+            {move || {
+                if !buka.get() {
+                    return ().into_any();
+                }
+                view! {
+                    <Suspense fallback=|| {
+                        view! {
+                            <div class="animate-pulse space-y-1.5 py-2">
+                                <div class="h-8 bg-surface-container rounded-lg"></div>
+                                <div class="h-8 bg-surface-container rounded-lg"></div>
+                            </div>
+                        }
+                    }>
+                        {move || {
+                            let Some(Some(d)) = data.get() else {
+                                return ().into_any();
+                            };
+                            if d.total_santri == 0 {
+                                return view! {
+                                    <p class="text-[11px] text-on-surface-variant py-2">
+                                        "Belum ada santri di kelas ini."
+                                    </p>
+                                }
+                                    .into_any();
+                            }
+                            if d.items.is_empty() {
+                                // Tuntas = kabar baik, dan sekaligus PETUNJUK:
+                                // materi ini tak perlu diulang, waktunya pindah.
+                                return view! {
+                                    <div class="rounded-lg bg-success/10 px-2.5 py-2 my-1">
+                                        <p class="text-[11px] font-semibold text-success flex items-center gap-1">
+                                            <span class="material-symbols-outlined text-[15px]">"task_alt"</span>
+                                            "Tuntas — seluruh santri sudah menguasai materi ini."
+                                        </p>
+                                        <p class="text-[11px] text-on-surface-variant mt-0.5">
+                                            "Tak ada yang perlu diulang di sini. Lanjutkan ke materi lain, \
+                                             atau tambahkan kitab berikutnya ke kurikulum kelas."
+                                        </p>
+                                    </div>
+                                }
+                                    .into_any();
+                            }
+                            let n = d.total_santri;
+                            let satuan = if d.satuan.is_empty() {
+                                "Ayat/Halaman".to_string()
+                            } else {
+                                d.satuan.clone()
+                            };
+                            let ringkas = format!(
+                                "{} dari {} bagian sudah tuntas seluruh santri",
+                                d.unit_tuntas, d.unit_total,
+                            );
+                            // Rentang terberat disebut lebih dulu sebagai
+                            // penunjuk, TANPA mengacak urutan daftarnya.
+                            let sorot = d
+                                .items
+                                .iter()
+                                .find(|it| it.terberat)
+                                .map(|it| format!("Paling kosong: {} ({} santri)", it.label, it.kosong));
+                            let semua = StoredValue::new(d.items);
+                            view! {
+                                <p class="text-[11px] text-on-surface-variant pb-1">{ringkas}</p>
+                                {sorot
+                                    .map(|t| {
+                                        view! {
+                                            <p class="text-[11px] font-semibold text-error pb-1.5 flex items-center gap-1">
+                                                <span class="material-symbols-outlined text-[14px]">"priority_high"</span>
+                                                {t}
+                                            </p>
+                                        }
+                                    })}
+
+                                // Cari nomor ayat/halaman: ketik "88" untuk
+                                // langsung melihat bagian yang memuatnya.
+                                // Daftarnya bisa panjang (Al Baqoroh 286 ayat),
+                                // dan menggulirnya untuk menemukan satu nomor
+                                // itu pekerjaan yang tak perlu.
+                                <input
+                                    type="text"
+                                    inputmode="numeric"
+                                    class="w-full bg-surface-container border-0 rounded-lg px-3 py-2 text-body-sm text-on-surface mb-1.5"
+                                    placeholder=format!("Cari nomor {} — mis. 88", satuan.to_lowercase())
+                                    prop:value=move || cari.get()
+                                    on:input=move |ev| cari.set(event_target_value(&ev))
+                                />
+
+                                <div class="space-y-1 max-h-72 overflow-y-auto pr-1">
+                                    {move || {
+                                        let q = cari.get();
+                                        let nomor = q.trim().parse::<i32>().ok();
+                                        let daftar: Vec<_> = semua
+                                            .get_value()
+                                            .into_iter()
+                                            .filter(|it| {
+                                                // Cocok bila nomornya ADA DI DALAM
+                                                // rentang — bukan cocok teks, karena
+                                                // yang dicari guru itu posisi.
+                                                nomor.is_none_or(|nm| {
+                                                    nm >= it.start_unit && nm <= it.end_unit
+                                                })
+                                            })
+                                            .collect();
+                                        if daftar.is_empty() {
+                                            return view! {
+                                                <p class="text-[11px] text-on-surface-variant py-2">
+                                                    "Tak ada bagian kosong pada nomor itu — berarti sudah dikuasai."
+                                                </p>
+                                            }
+                                                .into_any();
+                                        }
+                                        daftar
+                                            .into_iter()
+                                            .map(|it| {
+                                                let berat = it.kosong * 2 >= n;
+                                                let cls = if it.terberat {
+                                                    "flex items-center gap-2 rounded-lg px-2.5 py-1.5 bg-error-container/60 ring-1 ring-error/40"
+                                                } else if berat {
+                                                    "flex items-center gap-2 rounded-lg px-2.5 py-1.5 bg-error-container/40"
+                                                } else {
+                                                    "flex items-center gap-2 rounded-lg px-2.5 py-1.5 bg-surface-container"
+                                                };
+                                                let surat = (!it.surah_name.is_empty())
+                                                    .then(|| format!("{} · ", it.surah_name))
+                                                    .unwrap_or_default();
+                                                let setengah = (it.setengah > 0)
+                                                    .then(|| format!(" · {} setengah", it.setengah));
+                                                view! {
+                                                    <div class=cls>
+                                                        <div class="min-w-0 flex-1">
+                                                            <p class="text-body-sm font-semibold text-on-background truncate">
+                                                                {surat} {it.label}
+                                                            </p>
+                                                            <p class="text-[11px] text-on-surface-variant">
+                                                                {format!("{} dari {} santri kosong", it.kosong, n)}
+                                                                {setengah}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                }
+                                            })
+                                            .collect_view()
+                                            .into_any()
+                                    }}
+                                </div>
+                                <p class="text-[11px] text-on-surface-variant/70 mt-1.5">
+                                    "Urut dari awal kitab. Pakai daftar ini untuk memilih bagian yang \
+                                     dibahas berikutnya — ubah lewat tombol sunting di atas."
+                                </p>
+                            }
+                                .into_any()
+                        }}
+                    </Suspense>
+                }
+                    .into_any()
+            }}
+        </div>
     }
 }

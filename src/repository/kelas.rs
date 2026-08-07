@@ -28,7 +28,7 @@ LEFT JOIN LATERAL ( \
                         SELECT c.* FROM class_participants cp_ku \
                           JOIN classes c ON c.id = cp_ku.class_id \
                          WHERE cp_ku.user_id = p.user_id \
-                         ORDER BY (lower(coalesce(c.golongan, '')) IN ('bacaan', 'makna')) DESC, c.id \
+                         ORDER BY (c.category = 'kbm') DESC, c.id \
                          LIMIT 1 \
                     ) cl ON TRUE \
                     WHERE p.guru_status = 'pending' AND p.pamong_status <> 'rejected' \
@@ -401,10 +401,10 @@ pub async fn points_board(
         .collect())
 }
 
-/// Satu kelas yang diikuti santri, dengan golongannya (migrasi 16) —
-/// "" bila kelas itu di luar sistem golongan Bacaan/Makna.
+/// Satu kelas yang diikuti santri, dengan jenjangnya (migrasi 16) —
+/// "" bila kelas itu di luar sistem jenjang Bacaan/Makna.
 pub struct StudentClassRow {
-    pub golongan: String,
+    pub jenjang: String,
     pub name: String,
 }
 
@@ -413,7 +413,7 @@ pub struct StudentBoardRow {
     pub name: String,
     pub nis: Option<String>,
     pub points: i32,
-    /// SEMUA kelas yang diikuti santri (biasanya satu per golongan — satu
+    /// SEMUA kelas yang diikuti santri (biasanya satu per jenjang — satu
     /// Bacaan + satu Makna) — beda dari `points_board` yang cuma ambil SATU
     /// kelas (LIMIT 1) krn dulu diasumsikan satu santri = satu kelas.
     pub classes: Vec<StudentClassRow>,
@@ -435,7 +435,7 @@ pub async fn students_with_classes(pool: &Pool, limit: i64) -> Result<Vec<Studen
     let ids: Vec<i64> = students.iter().map(|r| r.get(0)).collect();
     let class_rows = c
         .query(
-            "SELECT DISTINCT cp.user_id, COALESCE(c.golongan, ''), c.name \
+            "SELECT DISTINCT cp.user_id, COALESCE(c.jenjang, ''), c.name \
              FROM class_participants cp JOIN classes c ON c.id = cp.class_id \
              WHERE cp.user_id = ANY($1) \
              ORDER BY 2 NULLS LAST, 3",
@@ -450,7 +450,7 @@ pub async fn students_with_classes(pool: &Pool, limit: i64) -> Result<Vec<Studen
         by_user
             .entry(uid)
             .or_default()
-            .push(StudentClassRow { golongan: r.get(1), name: r.get(2) });
+            .push(StudentClassRow { jenjang: r.get(1), name: r.get(2) });
     }
     Ok(students
         .into_iter()
@@ -592,13 +592,16 @@ pub struct ClassListRow {
     pub id: i64,
     pub name: String,
     pub description: String,
+    /// kbm | bacaan | non_kbm (migrasi 65).
     pub category: Option<String>,
-    /// Golongan (Bacaan/Makna/…, migrasi 16) — sumbu klasifikasi TERPISAH
-    /// dari category (lihat migration untuk alasan).
-    pub golongan: Option<String>,
+    /// Jenjang KBM (lambatan|cepatan|saringan|hadist_besar); None utk kategori
+    /// lain — hanya KBM yang berjenjang.
+    pub jenjang: Option<String>,
     pub teacher: String,
     pub member_count: i64,
     pub schedule_count: i64,
+    /// Nama wali kelas; None = belum ditunjuk.
+    pub wali_kelas: Option<String>,
 }
 
 /// Daftar kelas aktif + agregat (anggota unik, jumlah jadwal, pengajar terakhir).
@@ -606,13 +609,16 @@ pub async fn list_classes(pool: &Pool) -> Result<Vec<ClassListRow>> {
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT c.id, c.name, COALESCE(c.description, ''), c.category, c.golongan, \
+            "SELECT c.id, c.name, COALESCE(c.description, ''), c.category, c.jenjang, \
                 COALESCE((SELECT t.full_name FROM class_sessions s JOIN users t ON t.id = s.teacher_id \
                     WHERE s.class_id = c.id AND s.teacher_id IS NOT NULL \
                     ORDER BY s.session_date DESC LIMIT 1), '-'), \
                 (SELECT COUNT(DISTINCT cp.user_id) FROM class_participants cp WHERE cp.class_id = c.id), \
-                (SELECT COUNT(*) FROM class_schedules cs WHERE cs.class_id = c.id) \
-             FROM classes c WHERE c.status = 'active' ORDER BY c.created_at DESC",
+                (SELECT COUNT(*) FROM class_schedules cs WHERE cs.class_id = c.id), \
+                w.full_name \
+             FROM classes c \
+             LEFT JOIN users w ON w.id = c.wali_kelas_id \
+             WHERE c.status = 'active' ORDER BY c.created_at DESC",
             &[],
         )
         .await
@@ -624,10 +630,11 @@ pub async fn list_classes(pool: &Pool) -> Result<Vec<ClassListRow>> {
             name: r.get(1),
             description: r.get(2),
             category: r.get(3),
-            golongan: r.get(4),
+            jenjang: r.get(4),
             teacher: r.get(5),
             member_count: r.get(6),
             schedule_count: r.get(7),
+            wali_kelas: r.get(8),
         })
         .collect())
 }
@@ -651,34 +658,34 @@ pub async fn distinct_categories(pool: &Pool) -> Result<Vec<String>> {
     Ok(rows.into_iter().map(|r| r.get(0)).collect())
 }
 
-/// Golongan kelas yang sudah dipakai (DISTINCT, migrasi 16) — untuk dropdown +
+/// Jenjang kelas yang sudah dipakai (DISTINCT, migrasi 16) — untuk dropdown +
 /// ketik baru (mis. "Bacaan", "Makna").
-pub async fn distinct_golongan(pool: &Pool) -> Result<Vec<String>> {
+pub async fn distinct_jenjang(pool: &Pool) -> Result<Vec<String>> {
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT golongan FROM classes WHERE golongan IS NOT NULL AND golongan <> '' ORDER BY 1",
+            "SELECT jenjang FROM classes WHERE jenjang IS NOT NULL AND jenjang <> '' ORDER BY 1",
             &[],
         )
         .await
-        .context("distinct_golongan")?;
+        .context("distinct_jenjang")?;
     Ok(rows.into_iter().map(|r| r.get(0)).collect())
 }
 
-/// Ubah kelas (nama + kategori + golongan). category/golongan kosong → NULL.
+/// Ubah kelas (nama + kategori + jenjang). category/jenjang kosong → NULL.
 pub async fn update_class(
     pool: &Pool,
     class_id: i64,
     name: &str,
     category: Option<&str>,
-    golongan: Option<&str>,
+    jenjang: Option<&str>,
 ) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
         .execute(
-            "UPDATE classes SET name = $2, category = $3, golongan = $4, updated_at = NOW() \
+            "UPDATE classes SET name = $2, category = $3, jenjang = $4, updated_at = NOW() \
              WHERE id = $1",
-            &[&class_id, &name, &category, &golongan],
+            &[&class_id, &name, &category, &jenjang],
         )
         .await
         .context("update_class")?;
@@ -699,23 +706,34 @@ pub async fn class_totals(pool: &Pool) -> Result<(i64, i64)> {
     Ok((row.get(0), row.get(1)))
 }
 
-/// Buat kelas baru (nama + kategori + golongan, semua opsional) → id.
+/// Buat kelas baru (nama + kategori + jenjang, semua opsional) → id.
 pub async fn create_class(
     pool: &Pool,
     name: &str,
     category: Option<&str>,
-    golongan: Option<&str>,
+    jenjang: Option<&str>,
+    wali_kelas_id: Option<i64>,
     description: &str,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
-        .query_one(
-            "INSERT INTO classes (name, category, golongan, description) \
-             VALUES ($1, $2, $3, $4) RETURNING id",
-            &[&name, &category, &golongan, &description],
+        .query_opt(
+            // Peran wali diuji di pernyataan yang sama — sama seperti
+            // set_class_staff. Kelas KBM WAJIB punya wali (dijaga service);
+            // di sini yang dijaga adalah orang yang ditunjuk memang guru aktif.
+            "INSERT INTO classes (name, category, jenjang, description, wali_kelas_id) \
+             SELECT $1, $2, $3, $4, $5 \
+              WHERE $5::bigint IS NULL OR EXISTS ( \
+                    SELECT 1 FROM users u WHERE u.id = $5 \
+                      AND u.role IN ('teacher', 'dewan_guru') AND u.is_active) \
+             RETURNING id",
+            &[&name, &category, &jenjang, &description, &wali_kelas_id],
         )
         .await
         .context("create_class")?;
+    let Some(row) = row else {
+        anyhow::bail!("Guru yang dipilih sebagai wali kelas tidak valid.");
+    };
     Ok(row.get(0))
 }
 
@@ -724,7 +742,7 @@ pub struct ClassInfo {
     pub name: String,
     pub description: String,
     pub category: Option<String>,
-    pub golongan: Option<String>,
+    pub jenjang: Option<String>,
     pub wali_kelas_id: Option<i64>,
     pub wali_kelas_name: Option<String>,
     pub require_pamong: bool,
@@ -738,7 +756,7 @@ pub async fn class_info(pool: &Pool, class_id: i64) -> Result<Option<ClassInfo>>
     let c = pool.get().await?;
     let row = c
         .query_opt(
-            "SELECT cl.name, COALESCE(cl.description, ''), cl.category, cl.golongan, \
+            "SELECT cl.name, COALESCE(cl.description, ''), cl.category, cl.jenjang, \
                     cl.wali_kelas_id, w.full_name, cl.require_pamong, cl.verify_mode, \
                     cl.pamong_id, pm.full_name \
              FROM classes cl \
@@ -752,7 +770,7 @@ pub async fn class_info(pool: &Pool, class_id: i64) -> Result<Option<ClassInfo>>
         name: r.get(0),
         description: r.get(1),
         category: r.get(2),
-        golongan: r.get(3),
+        jenjang: r.get(3),
         wali_kelas_id: r.get(4),
         wali_kelas_name: r.get(5),
         require_pamong: r.get(6),
@@ -781,8 +799,16 @@ pub async fn set_class_staff(
     let c = pool.get().await?;
     let n = c
         .execute(
+            // Peran kedua petugas diuji di sini juga — lihat set_session_teacher.
+            // Syarat tambahan pada wali: kelasnya WAJIB KBM (migrasi 65).
             "UPDATE classes SET wali_kelas_id = $2, pamong_id = $3, verify_mode = $4 \
-             WHERE id = $1",
+             WHERE id = $1 \
+               AND ($2::bigint IS NULL OR (category = 'kbm' AND EXISTS ( \
+                     SELECT 1 FROM users u WHERE u.id = $2 \
+                       AND u.role IN ('teacher', 'dewan_guru') AND u.is_active))) \
+               AND ($3::bigint IS NULL OR EXISTS ( \
+                     SELECT 1 FROM users u WHERE u.id = $3 \
+                       AND u.role = 'supervisor' AND u.is_active))",
             &[&class_id, &wali_kelas_id, &pamong_id, &verify_mode],
         )
         .await
@@ -1051,16 +1077,28 @@ pub async fn create_session(
 ) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
-        .query_one(
+        .query_opt(
+            // WHERE NOT EXISTS(jadwal milik kelas LAIN): sesi tak boleh
+            // menggendong jadwal kelas orang. Kombinasi itu merusak hampir
+            // semua yang membacanya — jam mulai, batas terlambat, poin, ruang,
+            // dan siapa peserta yang di-auto-alpa — dan tak ada satu pun yang
+            // menyadarinya karena kedua id-nya sah masing-masing.
             "INSERT INTO class_sessions \
                 (class_id, class_schedule_id, teacher_id, title, session_date, book_id, book_pages) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+             SELECT $1, $2, $3, $4, $5, $6, $7 \
+              WHERE $2::bigint IS NULL OR EXISTS ( \
+                    SELECT 1 FROM class_schedules sch \
+                     WHERE sch.id = $2 AND sch.class_id = $1) \
+             RETURNING id",
             &[
                 &class_id, &schedule_id, &teacher_id, &title, &session_date, &book_id, book_pages,
             ],
         )
         .await
         .context("create_session")?;
+    let Some(row) = row else {
+        anyhow::bail!("Jadwal yang dipilih bukan milik kelas ini.");
+    };
     Ok(row.get(0))
 }
 
@@ -1075,8 +1113,13 @@ pub async fn add_member(
     let c = pool.get().await?;
     let n = c
         .execute(
+            // Hanya SANTRI yang boleh jadi peserta. Tanpa syarat ini seorang
+            // guru bisa didaftarkan sebagai peserta kelasnya sendiri lalu ikut
+            // terseret auto-alpa, papan poin, dan tagihan.
             "INSERT INTO class_participants (class_id, user_id) \
-             VALUES ($1, $2) ON CONFLICT (class_id, user_id) DO NOTHING",
+             SELECT $1, u.id FROM users u \
+              WHERE u.id = $2 AND u.role IN ('santri', 'santri_finance') AND u.is_active \
+             ON CONFLICT (class_id, user_id) DO NOTHING",
             &[&class_id, &user_id],
         )
         .await
@@ -1097,8 +1140,12 @@ pub async fn add_members(
     let c = pool.get().await?;
     let n = c
         .execute(
+            // Disaring lewat users: id yang bukan santri aktif dijatuhkan
+            // (alasan sama dengan add_member).
             "INSERT INTO class_participants (class_id, user_id) \
-             SELECT $1, uid FROM unnest($2::bigint[]) AS uid \
+             SELECT $1, u.id FROM users u \
+              WHERE u.id = ANY($2::bigint[]) \
+                AND u.role IN ('santri', 'santri_finance') AND u.is_active \
              ON CONFLICT (class_id, user_id) DO NOTHING",
             &[&class_id, &user_ids],
         )
@@ -1289,6 +1336,171 @@ pub async fn insert_sessions(
     Ok(n as i64)
 }
 
+/// Apakah kelas ini KBM? Penentu apakah ia boleh punya wali kelas, berjenjang,
+/// dan boleh direkam (migrasi 65). Kelas tak ada → false.
+pub async fn kelas_adalah_kbm(pool: &Pool, class_id: i64) -> Result<bool> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM classes WHERE id = $1 AND category = 'kbm')",
+            &[&class_id],
+        )
+        .await
+        .context("kelas_adalah_kbm")?;
+    Ok(row.get(0))
+}
+
+/// Apakah `user_id` PETUGAS kelas ini — wali kelasnya atau pamongnya?
+///
+/// Batas wewenang untuk hal-hal yang menyangkut isi kelas: mengisi kurikulum,
+/// menandai materi yang sedang berjalan, dan menunjuk guru/pamong tiap sesi.
+/// Bukan "peran guru" secara umum: guru kelas lain tak berkepentingan di sini,
+/// dan sebelum ini siapa pun ber-peran guru/pamong bisa menyunting kurikulum
+/// kelas mana pun.
+pub async fn petugas_kelas(pool: &Pool, class_id: i64, user_id: i64) -> Result<bool> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM classes \
+                             WHERE id = $1 AND (wali_kelas_id = $2 OR pamong_id = $2))",
+            &[&class_id, &user_id],
+        )
+        .await
+        .context("petugas_kelas")?;
+    Ok(row.get(0))
+}
+
+/// Kelas pemilik sebuah baris kurikulum — untuk menguji wewenang dari id
+/// kurikulum saja (sunting/hapus tak membawa class_id).
+pub async fn kelas_dari_kurikulum(pool: &Pool, curriculum_id: i64) -> Result<Option<i64>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt("SELECT class_id FROM curriculum WHERE id = $1", &[&curriculum_id])
+        .await
+        .context("kelas_dari_kurikulum")?;
+    Ok(row.map(|r| r.get(0)))
+}
+
+/// Apakah `user_id` PAMONG kelas ini? Lebih sempit dari [`petugas_kelas`] —
+/// wali kelas sengaja tidak termasuk. Dipakai untuk menata jadwal & anggota.
+pub async fn pamong_kelas(pool: &Pool, class_id: i64, user_id: i64) -> Result<bool> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM classes WHERE id = $1 AND pamong_id = $2)",
+            &[&class_id, &user_id],
+        )
+        .await
+        .context("pamong_kelas")?;
+    Ok(row.get(0))
+}
+
+/// Kelas pemilik sebuah jadwal — untuk menguji wewenang dari id jadwal saja.
+pub async fn kelas_dari_jadwal(pool: &Pool, schedule_id: i64) -> Result<Option<i64>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt("SELECT class_id FROM class_schedules WHERE id = $1", &[&schedule_id])
+        .await
+        .context("kelas_dari_jadwal")?;
+    Ok(row.map(|r| r.get(0)))
+}
+
+/// Kelas pemilik sebuah sesi — untuk menguji wewenang dari id sesi saja.
+pub async fn kelas_dari_sesi(pool: &Pool, session_id: i64) -> Result<Option<i64>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt("SELECT class_id FROM class_sessions WHERE id = $1", &[&session_id])
+        .await
+        .context("kelas_dari_sesi")?;
+    Ok(row.map(|r| r.get(0)))
+}
+
+/// Apakah kelas ini sudah punya wali? Dipakai menolak perpindahan kategori ke
+/// KBM sebelum walinya ditetapkan (wali KBM wajib).
+pub async fn kelas_punya_wali(pool: &Pool, class_id: i64) -> Result<bool> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM classes WHERE id = $1 AND wali_kelas_id IS NOT NULL)",
+            &[&class_id],
+        )
+        .await
+        .context("kelas_punya_wali")?;
+    Ok(row.get(0))
+}
+
+/// Apakah sesi ini milik kelas KBM? Gerbang siaran & rekaman suara.
+///
+/// Sengaja membaca kategori KELAS, bukan `COALESCE(jadwal.category, kelas)`
+/// seperti `session_category`: kolom kategori jadwal itu teks bebas penimpa
+/// JUDUL sesi, dan mengizinkan rekaman berdasarkan kata yang diketik orang di
+/// sana berarti kelas piket bisa ikut merekam hanya karena judulnya menyebut
+/// "pengajian".
+pub async fn sesi_kelas_kbm(pool: &Pool, session_id: i64) -> Result<bool> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "SELECT EXISTS ( \
+                SELECT 1 FROM class_sessions s JOIN classes cl ON cl.id = s.class_id \
+                 WHERE s.id = $1 AND cl.category = 'kbm')",
+            &[&session_id],
+        )
+        .await
+        .context("sesi_kelas_kbm")?;
+    Ok(row.get(0))
+}
+
+/// Kategori (`kbm`/`bacaan`/`non_kbm`) beberapa kelas sekaligus, untuk pelabelan.
+pub async fn kategori_kelas(
+    pool: &Pool,
+    class_ids: &[i64],
+) -> Result<std::collections::HashMap<i64, String>> {
+    if class_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT id, category FROM classes WHERE id = ANY($1::bigint[])",
+            &[&class_ids],
+        )
+        .await
+        .context("kategori_kelas")?;
+    Ok(rows.into_iter().map(|r| (r.get(0), r.get(1))).collect())
+}
+
+/// Dari daftar id, siapa saja yang SUDAH punya kelas KBM selain `class_id`?
+///
+/// Return `(nama santri, nama kelas KBM-nya)`. Kosong = semuanya boleh masuk.
+/// Hanya berarti bila `class_id` sendiri kelas KBM — untuk kelas non-KBM
+/// (piket, apel, sholat) tak ada batas jumlah dan query ini tak mengembalikan
+/// apa pun.
+pub async fn santri_dengan_kbm_lain(
+    pool: &Pool,
+    class_id: i64,
+    user_ids: &[i64],
+) -> Result<Vec<(String, String)>> {
+    if user_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT u.full_name, c2.name \
+             FROM users u \
+             JOIN class_participants cp ON cp.user_id = u.id \
+             JOIN classes c2 ON c2.id = cp.class_id AND c2.category = 'kbm' \
+             WHERE u.id = ANY($2::bigint[]) AND cp.class_id <> $1 \
+               AND EXISTS (SELECT 1 FROM classes tgt \
+                            WHERE tgt.id = $1 AND tgt.category = 'kbm') \
+             ORDER BY u.full_name",
+            &[&class_id, &user_ids],
+        )
+        .await
+        .context("santri_dengan_kbm_lain")?;
+    Ok(rows.into_iter().map(|r| (r.get(0), r.get(1))).collect())
+}
+
 /// Keluarkan santri dari kelas (semua barisnya lintas-jadwal).
 pub async fn remove_member(pool: &Pool, class_id: i64, user_id: i64) -> Result<bool> {
     let c = pool.get().await?;
@@ -1309,9 +1521,17 @@ pub async fn set_session_teacher(
     teacher_id: Option<i64>,
 ) -> Result<bool> {
     let c = pool.get().await?;
+    // Peran targetnya diuji DI DALAM pernyataan yang sama. Dropdown UI memang
+    // hanya menawarkan guru, tapi request-nya bisa dirakit sendiri dengan id
+    // siapa pun — dan "guru sesi" menentukan siapa yang boleh menyiarkan,
+    // mengoreksi absensi, dan memverifikasi. Memeriksanya lebih dulu lalu
+    // meng-UPDATE tak sama amannya: di antara keduanya peran bisa berubah.
     let n = c
         .execute(
-            "UPDATE class_sessions SET teacher_id = $2 WHERE id = $1",
+            "UPDATE class_sessions SET teacher_id = $2 WHERE id = $1 \
+               AND ($2::bigint IS NULL OR EXISTS ( \
+                     SELECT 1 FROM users u WHERE u.id = $2 \
+                       AND u.role IN ('teacher', 'dewan_guru') AND u.is_active))",
             &[&session_id, &teacher_id],
         )
         .await
@@ -1329,7 +1549,12 @@ pub async fn set_session_pamong(
     let c = pool.get().await?;
     let n = c
         .execute(
-            "UPDATE class_sessions SET pamong_id = $2 WHERE id = $1",
+            // Alasan sama dengan set_session_teacher: pamong sesi menentukan
+            // siapa yang berhak memverifikasi absensinya.
+            "UPDATE class_sessions SET pamong_id = $2 WHERE id = $1 \
+               AND ($2::bigint IS NULL OR EXISTS ( \
+                     SELECT 1 FROM users u WHERE u.id = $2 \
+                       AND u.role = 'supervisor' AND u.is_active))",
             &[&session_id, &pamong_id],
         )
         .await
@@ -1709,7 +1934,7 @@ pub struct SantriKelasRow {
     pub id: i64,
     pub name: String,
     pub category: Option<String>,
-    pub golongan: Option<String>,
+    pub jenjang: Option<String>,
     pub wali_kelas: Option<String>,
     pub pamong: Option<String>,
     /// Peran PEMIRSA di kelas ini (selalu false untuk santri).
@@ -1726,7 +1951,7 @@ pub async fn classes_of_student(pool: &Pool, user_id: i64) -> Result<Vec<SantriK
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT DISTINCT cl.id, cl.name, cl.category, cl.golongan, \
+            "SELECT DISTINCT cl.id, cl.name, cl.category, cl.jenjang, \
                     w.full_name, pm.full_name \
              FROM class_participants cp \
              JOIN classes cl ON cl.id = cp.class_id \
@@ -1744,7 +1969,7 @@ pub async fn classes_of_student(pool: &Pool, user_id: i64) -> Result<Vec<SantriK
             id: r.get(0),
             name: r.get(1),
             category: r.get(2),
-            golongan: r.get(3),
+            jenjang: r.get(3),
             wali_kelas: r.get(4),
             pamong: r.get(5),
             saya_wali: false,
@@ -1814,7 +2039,7 @@ pub async fn classes_of_staff(pool: &Pool, user_id: i64) -> Result<Vec<SantriKel
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT cl.id, cl.name, cl.category, cl.golongan, \
+            "SELECT cl.id, cl.name, cl.category, cl.jenjang, \
                     w.full_name, pm.full_name, \
                     (cl.wali_kelas_id = $1) AS saya_wali, \
                     (cl.pamong_id = $1) AS saya_pamong \
@@ -1833,7 +2058,7 @@ pub async fn classes_of_staff(pool: &Pool, user_id: i64) -> Result<Vec<SantriKel
             id: r.get(0),
             name: r.get(1),
             category: r.get(2),
-            golongan: r.get(3),
+            jenjang: r.get(3),
             wali_kelas: r.get(4),
             pamong: r.get(5),
             saya_wali: r.get::<_, Option<bool>>(6).unwrap_or(false),

@@ -73,13 +73,19 @@ pub async fn consume_guest(
     redis: &mut ConnectionManager,
     code: &str,
 ) -> Result<Option<PendingGuest>> {
-    let json: Option<String> = redis.get(code_key(code)).await?;
+    // GETDEL, bukan GET lalu DEL: kode tamu sekali pakai, dan dua mesin yang
+    // memindai kode yang sama pada saat bersamaan sama-sama lolos GET sebelum
+    // salah satunya sempat DEL — keduanya lalu tercatat check-in dengan kode
+    // yang sama. GETDEL menyatukan ambil-dan-hapus jadi satu operasi atomik di
+    // sisi Redis, jadi hanya satu pemanggil yang bisa menang.
+    let json: Option<String> = redis::cmd("GETDEL")
+        .arg(code_key(code))
+        .query_async(redis)
+        .await?;
     let Some(json) = json else {
         return Ok(None);
     };
-    let g: PendingGuest = serde_json::from_str(&json)?;
-    let _: () = redis.del(code_key(code)).await.unwrap_or(());
-    Ok(Some(g))
+    Ok(Some(serde_json::from_str(&json)?))
 }
 
 /// Tandai kode sukses check-in (untuk polling HP tamu).

@@ -1,4 +1,4 @@
-//! web/pages/login.rs — Portal PPM AFM (dua kolom: branding + form).
+//! web/pages/login.rs — Portal AFM SMART (dua kolom: branding + form).
 //!
 //! Diporting dari desain `login_portal_ppm_afm_polished`. Toggle password lewat
 //! inline JS (progressive enhancement). Submit → server fn `login_action`
@@ -86,7 +86,7 @@ pub fn LoginPage() -> impl IntoView {
     };
 
     view! {
-        <Title text="Portal PPM AFM — Masuk" />
+        <Title text="Masuk — AFM SMART" />
         <PasswordToggleScript />
         <div class="min-h-screen flex items-center justify-center p-4">
             <div class="fixed inset-0 z-0">
@@ -99,11 +99,14 @@ pub fn LoginPage() -> impl IntoView {
                 <div class="spiritual-gradient hidden md:flex flex-col justify-between p-12 text-on-primary">
                     <div class="space-y-8">
                         <div class="flex items-center gap-4">
-                            <div class="w-14 h-14 bg-primary-fixed rounded-xl flex items-center justify-center shadow-inner">
-                                <span class="material-symbols-outlined text-primary text-4xl">"mosque"</span>
+                            // Logo asli, bukan glyph masjid generik: ini
+                            // penanda lembaganya, dan ikon bawaan font tak
+                            // mewakili apa pun yang khas.
+                            <div class="w-14 h-14 bg-white rounded-xl flex items-center justify-center shadow-inner overflow-hidden">
+                                <img src="/icons/logo.png" alt="Logo AFM SMART" class="w-full h-full object-contain p-1.5" />
                             </div>
                             <div>
-                                <h1 class="text-display-md tracking-tight leading-none">"Portal PPM AFM"</h1>
+                                <h1 class="text-display-md tracking-tight leading-none">"AFM SMART"</h1>
                                 <p class="text-primary-fixed/80 text-sm font-medium mt-1 uppercase tracking-widest">
                                     "Pusat Pendidikan Modern"
                                 </p>
@@ -132,10 +135,10 @@ pub fn LoginPage() -> impl IntoView {
                 <div class="p-8 md:p-16 flex flex-col justify-center bg-surface relative">
                     // Header khusus mobile
                     <div class="md:hidden flex flex-col items-center mb-10 text-center">
-                        <div class="w-20 h-20 spiritual-gradient rounded-2xl flex items-center justify-center mb-4 shadow-xl">
-                            <span class="material-symbols-outlined text-on-primary text-5xl">"mosque"</span>
+                        <div class="w-20 h-20 bg-white rounded-2xl flex items-center justify-center mb-4 shadow-xl overflow-hidden">
+                            <img src="/icons/logo.png" alt="Logo AFM SMART" class="w-full h-full object-contain p-2" />
                         </div>
-                        <h1 class="text-display-md text-primary">"Portal PPM AFM"</h1>
+                        <h1 class="text-display-md text-primary">"AFM SMART"</h1>
                         <p class="text-primary font-medium text-xs uppercase tracking-widest opacity-70 mt-1">
                             "Pusat Pendidikan Modern"
                         </p>

@@ -176,6 +176,10 @@ pub async fn child_info(pool: &Pool, student_id: i64) -> Result<Option<StudentRo
 }
 
 pub struct ParentPermitRow {
+    pub id: i64,
+    /// Diajukan ORANG TUA atas nama anaknya (bukan santri sendiri).
+    pub oleh_ortu: bool,
+    pub requester_name: String,
     pub child_name: String,
     pub kind: String,
     pub start_date: chrono::NaiveDate,
@@ -192,22 +196,22 @@ pub async fn permits_of_children(pool: &Pool, parent_id: i64, limit: i64) -> Res
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT u.full_name, p.type, p.start_date, p.end_date, p.reason, \
-                    p.pamong_status, p.guru_status, \
-                    COALESCE(tc.require_pamong, cl.require_pamong, TRUE), p.created_at \
-             FROM permit_requests p \
-             JOIN parent_connections pc ON pc.student_id = p.user_id \
-                  AND pc.parent_id = $1 AND pc.status = 'connected' \
-             JOIN users u ON u.id = p.user_id \
-             LEFT JOIN classes tc ON tc.id = p.class_id \
-LEFT JOIN LATERAL ( \
-                 SELECT c.* FROM class_participants cp_ku \
-                   JOIN classes c ON c.id = cp_ku.class_id \
-                  WHERE cp_ku.user_id = p.user_id \
-                  ORDER BY (lower(coalesce(c.golongan, '')) IN ('bacaan', 'makna')) DESC, c.id \
-                  LIMIT 1 \
-             ) cl ON TRUE \
-             ORDER BY p.created_at DESC LIMIT $2",
+            &format!(
+                "SELECT u.full_name, p.type, p.start_date, p.end_date, p.reason, \
+                        p.pamong_status, p.guru_status, \
+                        COALESCE(tc.require_pamong, cl.require_pamong, TRUE), p.created_at, \
+                        p.id, (p.requested_by <> p.user_id AND rb.role = 'parent'), \
+                        COALESCE(rb.full_name, '') \
+                 FROM permit_requests p \
+                 JOIN parent_connections pc ON pc.student_id = p.user_id \
+                      AND pc.parent_id = $1 AND pc.status = 'connected' \
+                 JOIN users u ON u.id = p.user_id \
+                 LEFT JOIN users rb ON rb.id = p.requested_by \
+                 LEFT JOIN classes tc ON tc.id = p.class_id \
+                 {kelas} \
+                 ORDER BY p.created_at DESC LIMIT $2",
+                kelas = super::kelas_utama_lateral("p.user_id"),
+            ),
             &[&parent_id, &limit],
         )
         .await
@@ -224,6 +228,9 @@ LEFT JOIN LATERAL ( \
             guru_status: r.get(6),
             require_pamong: r.get(7),
             created_at: r.get(8),
+            id: r.get(9),
+            oleh_ortu: r.get(10),
+            requester_name: r.get(11),
         })
         .collect())
 }

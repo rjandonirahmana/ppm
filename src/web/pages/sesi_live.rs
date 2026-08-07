@@ -78,7 +78,7 @@ pub fn SesiLivePage() -> impl IntoView {
     }
 
     view! {
-        <Title text="Sesi Live — PPM AFM" />
+        <Title text="Sesi Live — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-44 max-w-md mx-auto">
                 <Suspense fallback=|| {

@@ -206,7 +206,7 @@ pub fn MateriPage() -> impl IntoView {
     });
 
     view! {
-        <Title text="Materials Library — PPM AFM" />
+        <Title text="Materials Library — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Materials Library" subtitle="File bersama untuk santri & pengajar" back_href="/staf" />

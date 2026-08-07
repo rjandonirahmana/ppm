@@ -9,7 +9,7 @@ use crate::models::ParentPermitItem;
 use crate::web::api::{
     children_permits, parent_home, submit_child_permit_action,
 };
-use crate::web::components::{kartu_grid, DeviceFrame, EmptyState, MobileHeader};
+use crate::web::components::{kartu_grid, DeviceFrame, EmptyState, MobileHeader, SheetIzin};
 
 #[component]
 pub fn OrtuIzinPage() -> impl IntoView {
@@ -31,6 +31,8 @@ pub fn OrtuIzinPage() -> impl IntoView {
 
     let show_form = RwSignal::new(false);
     let filter = RwSignal::new("all".to_string());
+    // Izin yang sedang dibuka detailnya (None = tertutup).
+    let detail = RwSignal::new(Option::<i64>::None);
 
     // ── Form state ──────────────────────────────────────────────────────────
     let child = RwSignal::new(Option::<i64>::None);
@@ -38,6 +40,9 @@ pub fn OrtuIzinPage() -> impl IntoView {
     let start = RwSignal::new(String::new());
     let end = RwSignal::new(String::new());
     let reason = RwSignal::new(String::new());
+    // Kosong = izin sehari penuh (migrasi 66).
+    let jam_mulai = RwSignal::new(String::new());
+    let jam_selesai = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
 
@@ -52,18 +57,22 @@ pub fn OrtuIzinPage() -> impl IntoView {
         }
         busy.set(true);
         msg.set(None);
-        let (k, s, e2, r) = (
+        let (k, s, e2, jm, js, r) = (
             kind.get_untracked(),
             start.get_untracked(),
             end.get_untracked(),
+            jam_mulai.get_untracked(),
+            jam_selesai.get_untracked(),
             reason.get_untracked(),
         );
         leptos::task::spawn_local(async move {
-            match submit_child_permit_action(cid, k, s, e2, r).await {
+            match submit_child_permit_action(cid, k, s, e2, jm, js, r).await {
                 Ok(_) => {
                     msg.set(Some((true, "Izin terkirim — menunggu persetujuan pengurus.".into())));
                     start.set(String::new());
                     end.set(String::new());
+                    jam_mulai.set(String::new());
+                    jam_selesai.set(String::new());
                     reason.set(String::new());
                     permits.refetch();
                 }
@@ -78,7 +87,7 @@ pub fn OrtuIzinPage() -> impl IntoView {
     };
 
     view! {
-        <Title text="Daftar Izin Santri — PPM AFM" />
+        <Title text="Daftar Izin Santri — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Daftar Izin Santri" subtitle="Kelola permohonan izin putra/putri Anda" />
@@ -191,6 +200,30 @@ pub fn OrtuIzinPage() -> impl IntoView {
                                             </div>
                                         </div>
 
+                                        // Jam opsional — kosong = sehari penuh
+                                        // (migrasi 66).
+                                        <div class="space-y-2">
+                                            <label class="text-label-md text-on-surface-variant">
+                                                "Jam (kosongkan bila sehari penuh)"
+                                            </label>
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <input
+                                                    type="time"
+                                                    aria-label="Jam mulai"
+                                                    class="w-full bg-surface-container border-0 rounded-xl px-3 py-3 text-body-sm text-on-surface"
+                                                    prop:value=move || jam_mulai.get()
+                                                    on:input=move |ev| jam_mulai.set(event_target_value(&ev))
+                                                />
+                                                <input
+                                                    type="time"
+                                                    aria-label="Jam selesai"
+                                                    class="w-full bg-surface-container border-0 rounded-xl px-3 py-3 text-body-sm text-on-surface"
+                                                    prop:value=move || jam_selesai.get()
+                                                    on:input=move |ev| jam_selesai.set(event_target_value(&ev))
+                                                />
+                                            </div>
+                                        </div>
+
                                         <div class="space-y-2">
                                             <label class="text-label-md text-on-surface-variant">"Alasan"</label>
                                             <textarea
@@ -261,7 +294,7 @@ pub fn OrtuIzinPage() -> impl IntoView {
                                         kartu_grid(
                                                 list
                                                     .into_iter()
-                                                    .map(|p| view! { <PermitCard p=p /> }.into_any())
+                                                    .map(|p| view! { <PermitCard p=p buka=detail /> }.into_any())
                                                     .collect(),
                                             )
                                             .into_any()
@@ -271,6 +304,20 @@ pub fn OrtuIzinPage() -> impl IntoView {
                     </Suspense>
                 </div>
 
+
+                {move || {
+                    detail
+                        .get()
+                        .map(|pid| {
+                            view! {
+                                <SheetIzin
+                                    permit_id=pid
+                                    on_close=move || detail.set(None)
+                                    on_saved=move || permits.refetch()
+                                />
+                            }
+                        })
+                }}
             </div>
         </DeviceFrame>
     }
@@ -316,7 +363,7 @@ fn KindBtn(
 
 
 #[component]
-fn PermitCard(p: ParentPermitItem) -> impl IntoView {
+fn PermitCard(p: ParentPermitItem, buka: RwSignal<Option<i64>>) -> impl IntoView {
     let (badge, icon_badge) = match p.status_kind.as_str() {
         "approved" => (
             "px-2.5 py-1 rounded-lg text-body-sm font-semibold bg-success/10 text-success flex items-center gap-1",
@@ -334,8 +381,15 @@ fn PermitCard(p: ParentPermitItem) -> impl IntoView {
         ),
     };
     let quote = format!("\u{201C}{}\u{201D}", p.reason);
+    let pid = p.id;
+    // Orang tua BOLEH melihat detailnya, tapi tak boleh mengubah — sheet-nya
+    // sendiri yang menentukan (server mengirim can_edit=false untuk ortu).
+    let oleh_ortu = p.diajukan_oleh.starts_with("Diajukan orang tua");
     view! {
-        <div class="ppm-card p-4 card-hover anim-in">
+        <button
+            class="ppm-card p-4 card-hover anim-in w-full text-left press"
+            on:click=move |_| buka.set(Some(pid))
+        >
             <div class="flex items-start justify-between gap-2">
                 <p class="text-[11px] font-bold tracking-[0.15em] text-on-surface-variant uppercase">
                     {p.kind_label}
@@ -353,9 +407,21 @@ fn PermitCard(p: ParentPermitItem) -> impl IntoView {
             <p class="text-body-sm italic text-on-surface-variant mt-2 border-b border-outline-variant/40 pb-3">
                 {quote}
             </p>
+            // Siapa yang meminta — orang tua perlu tahu apakah izin ini ia
+            // sendiri yang ajukan, atau anaknya yang mengajukan.
+            <p class=if oleh_ortu {
+                "text-[11px] text-info flex items-center gap-1 mt-2"
+            } else {
+                "text-[11px] text-on-surface-variant flex items-center gap-1 mt-2"
+            }>
+                <span class="material-symbols-outlined text-[13px]">
+                    {if oleh_ortu { "family_restroom" } else { "person" }}
+                </span>
+                {p.diajukan_oleh}
+            </p>
             <p class="text-[10px] tracking-[0.12em] text-on-surface-variant uppercase mt-2.5">
                 {p.when_label}
             </p>
-        </div>
+        </button>
     }
 }

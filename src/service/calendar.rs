@@ -168,7 +168,7 @@ pub fn google_calendar_link(
             format!("{}/{}", date.format("%Y%m%d"), next.format("%Y%m%d"))
         }
     };
-    let details = format!("Kelas: {class_name}\nPengajar: {teacher}\n\nJadwal dari PPM AFM.");
+    let details = format!("Kelas: {class_name}\nPengajar: {teacher}\n\nJadwal dari AFM SMART.");
     format!(
         "https://calendar.google.com/calendar/render?action=TEMPLATE\
          &text={}&dates={}&details={}&ctz=Asia%2FJakarta",

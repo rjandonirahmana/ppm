@@ -30,7 +30,7 @@ pub fn AkademikSantriPage() -> impl IntoView {
     });
 
     view! {
-        <Title text="Akademik — PPM AFM" />
+        <Title text="Akademik — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Akademik" subtitle="Isi progres bacaan & hafalanmu sendiri" />

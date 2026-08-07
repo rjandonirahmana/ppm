@@ -65,14 +65,28 @@ pub async fn next_schedule(pool: &Pool, user_id: i64) -> Result<Option<ScheduleR
     let c = pool.get().await?;
     let row = c
         .query_opt(
-            "SELECT cs.title, c.name, cs.start_time \
+            // Dibaca dari SESI, bukan aturan jadwal: "jadwal berikutnya" adalah
+            // kejadian nyata. Versi lama memilih jadwal mana pun yang tanggal
+            // berlakunya mencakup hari ini, sehingga beranda santri bisa
+            // menjanjikan "Tahfidz 04:30" pada hari yang tak ada Tahfidz-nya.
+            //
+            // Tanggal dibandingkan dalam WIB, bukan CURRENT_DATE: server
+            // berjalan UTC, dan sampai pukul 07:00 WIB CURRENT_DATE masih
+            // menunjuk hari kemarin — sesi subuh hari ini akan terlewat.
+            // JOIN (bukan LEFT JOIN) ke class_schedules: yang dicari adalah
+            // jadwal, dan sesi dadakan tanpa jadwal memang tak punya jam mulai
+            // untuk ditampilkan.
+            "SELECT COALESCE(NULLIF(ses.title, ''), sch.title, ''), c.name, sch.start_time \
              FROM class_participants cp \
-             JOIN class_schedules cs ON cs.class_id = cp.class_id AND cs.status = 'active' \
-             JOIN classes c ON c.id = cs.class_id \
+             JOIN class_sessions ses ON ses.class_id = cp.class_id \
+                  AND ses.status <> 'cancelled' \
+             JOIN class_schedules sch ON sch.id = ses.class_schedule_id \
+             JOIN classes c ON c.id = ses.class_id \
              WHERE cp.user_id = $1 \
-               AND cs.start_date <= CURRENT_DATE \
-               AND (cs.end_date IS NULL OR cs.end_date >= CURRENT_DATE) \
-             ORDER BY cs.start_time ASC LIMIT 1",
+               AND (ses.session_date, sch.end_time) \
+                   >= ((NOW() AT TIME ZONE 'Asia/Jakarta')::date, \
+                       (NOW() AT TIME ZONE 'Asia/Jakarta')::time) \
+             ORDER BY ses.session_date, sch.start_time, ses.id LIMIT 1",
             &[&user_id],
         )
         .await
@@ -87,6 +101,9 @@ pub async fn next_schedule(pool: &Pool, user_id: i64) -> Result<Option<ScheduleR
 pub struct ActiveSchedule {
     pub id: i64,
     pub limit_entry: NaiveTime,
+    /// Sesi hari ini milik jadwal itu. Selalu ada: keberadaannyalah yang
+    /// membuktikan jadwal ini memang berlangsung hari ini.
+    pub session_id: i64,
 }
 
 /// Jadwal aktif yang sedang berlangsung untuk user pada waktu WIB tertentu,
@@ -112,15 +129,33 @@ pub async fn active_schedule_now(
     let c = pool.get().await?;
     let row = c
         .query_opt(
-            "SELECT cs.id, cs.limit_entery_time \
+            // JOIN class_sessions ITU INTINYA — bukan sekadar mengambil id sesi.
+            //
+            // `class_schedules` adalah ATURAN ("Tahfidz tiap Senin 04:30"),
+            // bukan kejadian. Versi lama query ini hanya menguji rentang
+            // start_date..end_date + jam, jadi jadwal Senin ikut cocok pada
+            // Selasa, Rabu, dan seterusnya: santri bisa menempel kartu tiap
+            // hari dan tercatat hadir di kelas yang tak berlangsung.
+            //
+            // Pola recurrence-nya sendiri sudah dihitung di satu tempat
+            // (service::kelas::dates_in_range) dan dimaterialisasi jadi baris
+            // `class_sessions` oleh tugas latar. Menyalin ulang logika
+            // daily/weekly/monthly/custom ke SQL di sini berarti dua penafsiran
+            // recurrence yang harus terus sepakat. Jadi: yang berhak dihadiri
+            // hanya yang punya SESI hari ini.
+            //
+            // Sesi 'cancelled' (ditandai libur) tak menerima absensi — itu
+            // justru gunanya menandai libur.
+            "SELECT sch.id, sch.limit_entery_time, ses.id \
              FROM class_participants cp \
-             JOIN class_schedules cs ON cs.class_id = cp.class_id AND cs.status = 'active' \
+             JOIN class_schedules sch ON sch.class_id = cp.class_id AND sch.status = 'active' \
+             JOIN class_sessions ses ON ses.class_schedule_id = sch.id \
+                  AND ses.session_date = $2 AND ses.status <> 'cancelled' \
              WHERE cp.user_id = $1 \
-               AND cs.start_date <= $2 AND (cs.end_date IS NULL OR cs.end_date >= $2) \
-               AND $3::time >= cs.start_time - INTERVAL '45 minutes' \
-               AND $3::time <= cs.end_time \
-               AND (cs.room_id IS NULL OR cs.room_id = $4) \
-             ORDER BY (cs.room_id IS NULL), cs.start_time LIMIT 1",
+               AND $3::time >= sch.start_time - INTERVAL '45 minutes' \
+               AND $3::time <= sch.end_time \
+               AND (sch.room_id IS NULL OR sch.room_id = $4) \
+             ORDER BY (sch.room_id IS NULL), sch.start_time, ses.id LIMIT 1",
             &[&user_id, &today, &now_time, &device_id],
         )
         .await
@@ -128,6 +163,7 @@ pub async fn active_schedule_now(
     Ok(row.map(|r| ActiveSchedule {
         id: r.get(0),
         limit_entry: r.get(1),
+        session_id: r.get(2),
     }))
 }
 
@@ -147,16 +183,20 @@ pub async fn active_schedule_room_elsewhere(
     let c = pool.get().await?;
     let row = c
         .query_opt(
+            // Sama seperti active_schedule_now: hanya jadwal yang PUNYA SESI
+            // hari ini yang boleh bicara. Tanpa ini pesan "kelasmu di Masjid"
+            // bisa muncul pada hari yang kelas itu tak berlangsung sama sekali.
             "SELECT COALESCE(dev.location, dev.device_name) \
              FROM class_participants cp \
-             JOIN class_schedules cs ON cs.class_id = cp.class_id AND cs.status = 'active' \
-             JOIN rfid_devices dev ON dev.id = cs.room_id \
+             JOIN class_schedules sch ON sch.class_id = cp.class_id AND sch.status = 'active' \
+             JOIN class_sessions ses ON ses.class_schedule_id = sch.id \
+                  AND ses.session_date = $2 AND ses.status <> 'cancelled' \
+             JOIN rfid_devices dev ON dev.id = sch.room_id \
              WHERE cp.user_id = $1 \
-               AND cs.start_date <= $2 AND (cs.end_date IS NULL OR cs.end_date >= $2) \
-               AND $3::time >= cs.start_time - INTERVAL '45 minutes' \
-               AND $3::time <= cs.end_time \
-               AND cs.room_id <> $4 \
-             ORDER BY cs.start_time LIMIT 1",
+               AND $3::time >= sch.start_time - INTERVAL '45 minutes' \
+               AND $3::time <= sch.end_time \
+               AND sch.room_id <> $4 \
+             ORDER BY sch.start_time LIMIT 1",
             &[&user_id, &today, &now_time, &device_id],
         )
         .await
@@ -164,26 +204,9 @@ pub async fn active_schedule_room_elsewhere(
     Ok(row.map(|r| r.get(0)))
 }
 
-/// Sesi kelas hari ini untuk jadwal tsb (bila guru sudah memulai sesi).
-pub async fn session_for_schedule_today(
-    pool: &Pool,
-    schedule_id: i64,
-    today: NaiveDate,
-) -> Result<Option<i64>> {
-    let c = pool.get().await?;
-    let row = c
-        .query_opt(
-            // ORDER BY id: tanpa itu, LIMIT 1 memilih sembarang bila sempat ada
-            // duplikat (migrasi 52 mencegah yang baru, tapi data lama bisa
-            // menyisakannya). Sesi TERTUA yang dipilih — itu yang absensinya
-            // sudah menempel.
-            "SELECT id FROM class_sessions \
-             WHERE class_schedule_id = $1 AND session_date = $2 ORDER BY id LIMIT 1",
-            &[&schedule_id, &today],
-        )
-        .await?;
-    Ok(row.map(|r| r.get(0)))
-}
+// `session_for_schedule_today` dihapus: `active_schedule_now` kini menempuh
+// class_sessions untuk membuktikan jadwalnya memang berlangsung hari ini, jadi
+// id sesinya sudah ikut terbawa dan pencarian kedua tinggal duplikasi.
 
 pub struct SessionRow {
     pub id: i64,
@@ -337,7 +360,13 @@ pub struct SessionDetailRow {
     pub teacher_id: Option<i64>,
     /// Pamong bertugas verifikasi sesi (migrasi 33) — None = pakai pamong kelas.
     pub pamong_id: Option<i64>,
+    /// Label kategori untuk TAMPILAN — bisa teks bebas dari jadwal.
     pub category: Option<String>,
+    /// Kategori KELAS-nya: kbm | bacaan | non_kbm (migrasi 65). Ini yang jadi
+    /// gerbang fitur, bukan `category` di atas — kategori jadwal boleh diketik
+    /// apa saja ("Pengajian KBM Malam"), jadi memakainya sebagai penentu
+    /// membuat panel Hafalan muncul di kelas yang bukan Bacaan.
+    pub class_category: String,
     /// Materi buku sesi ini (migrasi 20) — None bila tak ada buku dipilih.
     pub book_id: Option<i64>,
     pub book_title: Option<String>,
@@ -358,18 +387,143 @@ pub struct SessionDetailRow {
 pub async fn session_broadcasters(
     pool: &Pool,
     session_id: i64,
-) -> Result<Option<(Option<i64>, Option<i64>, Option<i64>)>> {
+) -> Result<Option<(Option<i64>, Option<i64>, Option<i64>, String)>> {
     let c = pool.get().await?;
     let row = c
         .query_opt(
-            "SELECT s.teacher_id, COALESCE(s.pamong_id, cl.pamong_id), cl.wali_kelas_id \
+            // `status` ikut: siaran tak boleh dimulai pada sesi yang sudah
+            // SELESAI. Setelah selesai, rekamannya dipindah ke penyimpanan
+            // objek dan berkas lokalnya dihapus — potongan yang datang
+            // belakangan akan membuat berkas lokal BARU yang tak seorang pun
+            // tahu keberadaannya, sementara DB menunjuk berkas final.
+            "SELECT s.teacher_id, COALESCE(s.pamong_id, cl.pamong_id), cl.wali_kelas_id, s.status \
              FROM class_sessions s JOIN classes cl ON cl.id = s.class_id \
              WHERE s.id = $1",
             &[&session_id],
         )
         .await
         .context("session_broadcasters")?;
-    Ok(row.map(|r| (r.get(0), r.get(1), r.get(2))))
+    Ok(row.map(|r| (r.get(0), r.get(1), r.get(2), r.get(3))))
+}
+
+/// Satu sesi KBM yang sebentar lagi mulai dan pamongnya perlu diingatkan.
+pub struct PengingatSesi {
+    pub session_id: i64,
+    pub class_name: String,
+    pub title: String,
+    /// "05:00 – 06:30"
+    pub jam: String,
+    pub pamong_name: String,
+    pub pamong_phone: String,
+    /// Guru sesi sudah ditunjuk? Pesan menyesuaikan — mengingatkan hal yang
+    /// sudah dikerjakan hanya melatih orang mengabaikan pesan berikutnya.
+    pub ada_guru: bool,
+    pub ada_pamong_sesi: bool,
+}
+
+/// Sesi KBM yang mulai ~1 jam lagi, pamong kelasnya punya nomor HP, dan
+/// pengingatnya belum pernah dikirim (migrasi 67).
+///
+/// Jendelanya `[+{dari} menit, +{sampai} menit]` dari sekarang WIB — dilebarkan
+/// melebihi jarak antar-tick supaya tak ada sesi yang terlewat di celah waktu,
+/// sementara `pamong_reminded_at` yang menjaga tak ada yang dikirim dua kali.
+///
+/// Hanya KBM: kelas lain diverifikasi pamong bertugas satu langkah, tak ada
+/// guru pengajar yang perlu ditunjuk lebih dulu.
+pub async fn sesi_perlu_pengingat(
+    pool: &Pool,
+    dari_menit: i32,
+    sampai_menit: i32,
+) -> Result<Vec<PengingatSesi>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT s.id, cl.name, COALESCE(NULLIF(s.title, ''), sch.title, 'Sesi Kelas'), \
+                    to_char(sch.start_time, 'HH24:MI') || ' – ' || to_char(sch.end_time, 'HH24:MI'), \
+                    pm.full_name, pm.phone_number, \
+                    s.teacher_id IS NOT NULL, s.pamong_id IS NOT NULL \
+             FROM class_sessions s \
+             JOIN classes cl ON cl.id = s.class_id AND cl.category = 'kbm' \
+             JOIN class_schedules sch ON sch.id = s.class_schedule_id \
+             JOIN users pm ON pm.id = cl.pamong_id \
+                  AND pm.is_active AND COALESCE(pm.phone_number, '') <> '' \
+             WHERE s.status <> 'cancelled' \
+               AND s.pamong_reminded_at IS NULL \
+               AND s.session_date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date \
+               AND sch.start_time BETWEEN \
+                     ((NOW() AT TIME ZONE 'Asia/Jakarta') + make_interval(mins => $1))::time \
+                 AND ((NOW() AT TIME ZONE 'Asia/Jakarta') + make_interval(mins => $2))::time \
+             ORDER BY sch.start_time",
+            &[&dari_menit, &sampai_menit],
+        )
+        .await
+        .context("sesi_perlu_pengingat")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| PengingatSesi {
+            session_id: r.get(0),
+            class_name: r.get(1),
+            title: r.get(2),
+            jam: r.get(3),
+            pamong_name: r.get(4),
+            pamong_phone: r.get::<_, Option<String>>(5).unwrap_or_default(),
+            ada_guru: r.get(6),
+            ada_pamong_sesi: r.get(7),
+        })
+        .collect())
+}
+
+/// Tandai pengingat sesi sudah terkirim. Dipanggil SETELAH WA berhasil dikirim
+/// — bila ditandai lebih dulu lalu pengirimannya gagal, pamongnya tak akan
+/// pernah diingatkan sama sekali.
+pub async fn tandai_pengingat_terkirim(pool: &Pool, session_id: i64) -> Result<()> {
+    let c = pool.get().await?;
+    c.execute(
+        "UPDATE class_sessions SET pamong_reminded_at = NOW() WHERE id = $1",
+        &[&session_id],
+    )
+    .await
+    .context("tandai_pengingat_terkirim")?;
+    Ok(())
+}
+
+/// Apakah `user_id` berkepentingan atas sesi ini?
+///
+/// SATU definisi untuk semua pintu sesi (siaran, unduh rekaman, SSE, chat).
+/// Sebelumnya tiap endpoint menafsirkan sendiri — dan `get_data`/`download`
+/// menafsirkannya sebagai "punya token yang sah", yang berarti santri mana pun
+/// cukup menebak id sesi untuk mendengarkan rekaman kelas lain.
+///
+/// Yang berkepentingan: petugas sesi itu (guru/pamong), petugas kelasnya (wali
+/// kelas/pamong kelas), santri anggota kelasnya, dan orang tua yang terhubung
+/// dengan salah satu anggotanya. Peran pengawas lintas-kelas (admin, ketua,
+/// dewan guru) TIDAK diurus di sini — itu keputusan peran, bukan keterkaitan
+/// data, dan pemanggilnya yang menentukan (lihat `web::live_audio`).
+///
+/// `false` juga berarti "sesi tak ada" — pemanggil tak boleh membedakan
+/// keduanya, karena selisih jawaban itu sendiri membocorkan sesi mana yang ada.
+pub async fn session_stakeholder(pool: &Pool, session_id: i64, user_id: i64) -> Result<bool> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "SELECT EXISTS ( \
+                SELECT 1 FROM class_sessions s \
+                  JOIN classes cl ON cl.id = s.class_id \
+                 WHERE s.id = $1 AND ( \
+                       s.teacher_id = $2 OR s.pamong_id = $2 \
+                    OR cl.wali_kelas_id = $2 OR cl.pamong_id = $2 \
+                    OR EXISTS (SELECT 1 FROM class_participants cp \
+                                WHERE cp.class_id = s.class_id AND cp.user_id = $2) \
+                    OR EXISTS (SELECT 1 FROM parent_connections pc \
+                                 JOIN class_participants cp2 ON cp2.user_id = pc.student_id \
+                                WHERE pc.parent_id = $2 AND pc.status = 'connected' \
+                                  AND cp2.class_id = s.class_id) \
+                 ))",
+            &[&session_id, &user_id],
+        )
+        .await
+        .context("session_stakeholder")?;
+    Ok(row.get(0))
 }
 
 pub async fn session_category(pool: &Pool, session_id: i64) -> Result<Option<String>> {
@@ -396,7 +550,7 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
                     s.recording_size, s.teacher_id, COALESCE(cs.category, c.category), \
                     s.book_id, b.title, s.book_pages, s.pamong_id, \
                     s.target_book_id, tb.title, s.target_pages, s.actual_detail, \
-                    c.wali_kelas_id, c.pamong_id, w.full_name \
+                    c.wali_kelas_id, c.pamong_id, w.full_name, c.category \
              FROM class_sessions s \
              JOIN classes c ON c.id = s.class_id \
              LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
@@ -434,6 +588,7 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
         class_wali_id: r.get(21),
         class_pamong_id: r.get(22),
         wali_name: r.get(23),
+        class_category: r.get(24),
     }))
 }
 
@@ -513,12 +668,19 @@ pub async fn mark_manual_present(
     let c = pool.get().await?;
     let n = c
         .execute(
+            // JOIN class_participants = pagarnya. UI memang hanya menampilkan
+            // santri kelas ini, tapi UI bukan batas keamanan: request bisa
+            // dirakit sendiri dengan user_id siapa pun. Tanpa join ini, satu
+            // request cukup untuk menempelkan kehadiran (dan poinnya) pada
+            // orang yang tak pernah masuk kelas itu.
             "INSERT INTO attendances \
                 (user_id, class_session_id, class_schedule_id, gate_label, status, method, note, \
                  scan_date) \
-             SELECT $1, s.id, s.class_schedule_id, 'manual', 'present', 'manual', 'ditandai staf', \
-                    s.session_date \
-             FROM class_sessions s WHERE s.id = $2 \
+             SELECT cp.user_id, s.id, s.class_schedule_id, 'manual', 'present', 'manual', \
+                    'ditandai staf', s.session_date \
+             FROM class_sessions s \
+             JOIN class_participants cp ON cp.class_id = s.class_id AND cp.user_id = $1 \
+             WHERE s.id = $2 \
              ON CONFLICT (user_id, class_session_id) DO NOTHING",
             &[&student_id, &session_id],
         )
@@ -547,9 +709,14 @@ pub async fn mark_attendance_bulk(
             "INSERT INTO attendances \
                 (user_id, class_session_id, class_schedule_id, gate_label, status, method, note, \
                  scan_date) \
-             SELECT uid, s.id, s.class_schedule_id, 'manual', $3, 'manual', $4, s.session_date \
-             FROM class_sessions s CROSS JOIN unnest($2::bigint[]) AS uid \
-             WHERE s.id = $1 \
+             // unnest disaring lewat class_participants — id yang bukan anggota
+             // kelas sesi ini diam-diam dijatuhkan, bukan dicatat (alasan sama
+             // dengan mark_manual_present).
+             SELECT cp.user_id, s.id, s.class_schedule_id, 'manual', $3, 'manual', $4, \
+                    s.session_date \
+             FROM class_sessions s \
+             JOIN class_participants cp ON cp.class_id = s.class_id \
+             WHERE s.id = $1 AND cp.user_id = ANY($2::bigint[]) \
              ON CONFLICT (user_id, class_session_id) DO NOTHING",
             &[&session_id, &student_ids, &status, &note],
         )

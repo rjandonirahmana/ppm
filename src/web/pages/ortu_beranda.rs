@@ -38,7 +38,7 @@ pub fn OrtuBerandaPage() -> impl IntoView {
     let show_search = RwSignal::new(false);
 
     view! {
-        <Title text="Pantauan Orang Tua — PPM AFM" />
+        <Title text="Pantauan Orang Tua — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Pantauan Orang Tua" />

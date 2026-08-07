@@ -62,7 +62,7 @@ impl TelegramService {
             "🚨 <b>SERVER ERROR ALERT</b> 🚨\n\
              \n\
              📅 <b>Waktu:</b> {timestamp}\n\
-             🔧 <b>Service:</b> PPM AFM\n\
+             🔧 <b>Service:</b> AFM SMART\n\
              📊 <b>Status Code:</b> {status_line}\n\
              💬 <b>Error Type:</b> {kind}\n\
              ❌ <b>Detail:</b>\n<pre>{safe_detail}</pre>\n\

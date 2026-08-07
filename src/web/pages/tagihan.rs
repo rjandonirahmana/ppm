@@ -36,7 +36,7 @@ pub fn FinancePage() -> impl IntoView {
     let paid = Resource::new(|| (), |_| async move { paid_bills_data().await });
 
     view! {
-        <Title text="Pembayaran Santri — PPM AFM" />
+        <Title text="Pembayaran Santri — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Pembayaran Santri" subtitle="Kelola & verifikasi pembayaran" />
@@ -405,7 +405,7 @@ pub fn MyBillsPage() -> impl IntoView {
     let refetch = move || data.refetch();
 
     view! {
-        <Title text="Pembayaran Saya — PPM AFM" />
+        <Title text="Pembayaran Saya — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Pembayaran Saya" subtitle="Pembayaran & bukti transfer" back_href="/santri" />

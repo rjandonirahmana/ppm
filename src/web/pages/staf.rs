@@ -46,7 +46,7 @@ pub fn StafDashboardPage() -> impl IntoView {
     });
 
     view! {
-        <Title text="Dashboard Staf — PPM AFM" />
+        <Title text="Dashboard Staf — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Dashboard Staf" subtitle="Ringkasan aktivitas hari ini" />

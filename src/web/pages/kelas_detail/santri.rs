@@ -19,7 +19,10 @@ pub(super) fn SantriTab(
     d: KelasDetail,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
-    let can_manage = d.can_manage;
+    // Jadwal & anggota kelas kini juga wewenang PAMONG kelas ini, bukan admin
+    // saja (wali kelas tetap tidak). Flag-nya dihitung server — lihat
+    // KelasDetail::can_manage_jadwal.
+    let can_manage = d.can_manage_jadwal;
     let members = StoredValue::new(d.members.clone());
     let total = d.members.len();
     let query = RwSignal::new(String::new());
@@ -61,7 +64,7 @@ pub(super) fn SantriTab(
             <div class="space-y-3 md:max-w-md">
             // Santri masuk KELAS (migrasi 61), bukan jadwal — jadi tak perlu
             // lagi menunggu ada jadwal sebelum anggota bisa ditambahkan.
-            <AdminOnly can_manage=can_manage apa="menambah atau mengeluarkan santri dari kelas">
+            <AdminOnly can_manage=can_manage apa="menambah atau mengeluarkan santri dari kelas" siapa="admin, ketua, atau pamong kelas ini">
                 <AddMemberForm class_id=class_id refetch=refetch />
             </AdminOnly>
 
@@ -146,8 +149,9 @@ pub(super) fn SantriTab(
                                     >
                                         <span class="material-symbols-outlined text-[18px]">"auto_stories"</span>
                                     </button>
-                                    // Mengeluarkan santri = wewenang admin; tombolnya
-                                    // tak ditampilkan sama sekali untuk peran lain.
+                                    // Mengeluarkan santri = wewenang admin/ketua
+                                    // atau pamong kelas ini; tombolnya tak
+                                    // ditampilkan sama sekali untuk yang lain.
                                     {can_manage
                                         .then(|| {
                                             view! {

@@ -192,7 +192,7 @@ pub async fn weekly_recap(
             "SELECT u.full_name, u.nis, \
                 (SELECT c.name FROM class_participants cp JOIN classes c ON c.id = cp.class_id \
                     WHERE cp.user_id = u.id \
-                    ORDER BY (lower(coalesce(c.golongan, '')) IN ('bacaan', 'makna')) DESC, c.id \
+                    ORDER BY (c.category = 'kbm') DESC, c.id \
                     LIMIT 1), \
                 COUNT(*) FILTER (WHERE a.status = 'present'), \
                 COUNT(*) FILTER (WHERE a.status IN ('late','outside_schedule')), \
@@ -330,11 +330,20 @@ pub async fn approved_today(pool: &Pool) -> Result<i64> {
 /// Daftar santri satu SESI yang menunggu verifikasi pada `stage` ("pamong" |
 /// "final"), dibatasi kepemilikan bila `actor_id` Some (pamong/wali sesi itu);
 /// None = admin/dewan (semua). Dipakai panel verifikasi per-sesi di detail sesi.
+/// `actor_pamong = true` → `actor_id` dicocokkan ke PAMONG sesi, bukan guru.
+///
+/// Penanda ini bukan hiasan. Tahap "final" biasanya dijalankan guru, jadi dulu
+/// `actor_id` selalu diadu dengan `COALESCE(cs.teacher_id, cl.wali_kelas_id)`.
+/// Sejak mode kelas `verify_mode='pamong'` ada, tahap final bisa dijalankan
+/// PAMONG — mengadu id pamong dengan kolom guru tak akan pernah cocok, dan
+/// membiarkan `actor_id` NULL (perilaku lama) berarti pamong mana pun boleh
+/// memfinalkan sesi kelas siapa pun.
 pub async fn session_verify_list(
     pool: &Pool,
     session_id: i64,
     stage: &str,
     actor_id: Option<i64>,
+    actor_pamong: bool,
 ) -> Result<Vec<PendingRow>> {
     let c = pool.get().await?;
     let sql = if stage == "pamong" {
@@ -354,16 +363,20 @@ pub async fn session_verify_list(
          LEFT JOIN classes cl ON cl.id = cs.class_id \
          WHERE a.class_session_id = $1 AND a.verify_status = 'pending' \
            AND a.pamong_status <> 'rejected' \
-           AND CASE WHEN COALESCE(cl.require_pamong, TRUE) \
-                         AND COALESCE(cs.pamong_id, cl.pamong_id) IS NOT NULL \
-                THEN a.pamong_status = 'approved' ELSE TRUE END \
-           AND ($2::bigint IS NULL OR COALESCE(cs.teacher_id, cl.wali_kelas_id) = $2) \
+           AND ($2::bigint IS NULL OR \
+                CASE WHEN $3::bool THEN COALESCE(cs.pamong_id, cl.pamong_id) \
+                     ELSE COALESCE(cs.teacher_id, cl.wali_kelas_id) END = $2) \
          ORDER BY u.full_name"
     };
-    let rows = c
-        .query(sql, &[&session_id, &actor_id])
-        .await
-        .context("session_verify_list")?;
+    // Cabang "pamong" tak memakai $3 (tahapnya memang selalu milik pamong),
+    // jadi parameternya pun tak dikirim — Postgres menolak bind yang jumlahnya
+    // melebihi yang dideklarasikan pernyataan.
+    let rows = if stage == "pamong" {
+        c.query(sql, &[&session_id, &actor_id]).await
+    } else {
+        c.query(sql, &[&session_id, &actor_id, &actor_pamong]).await
+    }
+    .context("session_verify_list")?;
     Ok(rows
         .into_iter()
         .map(|r| PendingRow {
@@ -607,9 +620,6 @@ pub async fn pending_verify(
              LEFT JOIN classes cl ON cl.id = cs.class_id \
              WHERE a.verify_status = 'pending' \
                 AND a.pamong_status <> 'rejected' \
-                AND CASE WHEN COALESCE(cl.require_pamong, TRUE) \
-                              AND COALESCE(cs.pamong_id, cl.pamong_id) IS NOT NULL \
-                         THEN a.pamong_status = 'approved' ELSE TRUE END \
                 AND ($2::bigint IS NULL OR COALESCE(cs.teacher_id, cl.wali_kelas_id) = $2) \
              ORDER BY a.scanned_at ASC LIMIT $1",
             &[&limit, &teacher_id],
@@ -680,12 +690,110 @@ const DELTA_SQL: &str = "CASE \
 /// approved; 1 langkah → langsung. POIN diberikan DI SINI (sekali, saat final)
 /// utk KEDUA mode → hindari dobel dgn trigger (migrasi 32). Return true bila
 /// ada baris ter-update.
+/// `actor_pamong` — lihat [`session_verify_list`]: penentu apakah `actor_id`
+/// diadu dengan guru sesi atau pamong sesi. Daftar dan keputusan HARUS memakai
+/// syarat yang sama, kalau tidak orang bisa memutuskan baris yang tak pernah
+/// boleh ia lihat.
+/// Verifikasi final BANYAK absensi sekaligus — satu pernyataan, satu transaksi.
+///
+/// Versi satuannya dipanggil sekali per santri oleh tombol "verifikasi sesi":
+/// satu sesi 200 santri berarti 200 transaksi dan 400 perjalanan ke database
+/// (UPDATE + INSERT poin masing-masing). Di sini keduanya jadi satu pernyataan
+/// ber-CTE, bentuk yang sama dengan jalur verifikasi otomatis
+/// (`run_auto_verify_final`) supaya angka poinnya mustahil berbeda.
+///
+/// Syarat kepemilikan sama persis dengan versi satuan — lihat `decide_verify`.
+/// Baris yang tak lolos syarat diam-diam dilewati, bukan menggagalkan yang
+/// lain: pemanggilnya mengirim seluruh antrean sekaligus, dan satu baris yang
+/// sudah keburu diverifikasi orang lain tak boleh membatalkan sisanya.
+///
+/// Return jumlah baris yang benar-benar berubah.
+pub async fn decide_verify_bulk(
+    pool: &Pool,
+    att_ids: &[i64],
+    approver: i64,
+    approve: bool,
+    actor_id: Option<i64>,
+    actor_pamong: bool,
+) -> Result<i64> {
+    if att_ids.is_empty() {
+        return Ok(0);
+    }
+    let status = if approve { "approved" } else { "rejected" };
+    let c = pool.get().await?;
+
+    // Ditolak → cukup UPDATE, tak ada poin yang diberikan.
+    if !approve {
+        let n = c
+            .execute(
+                "UPDATE attendances a SET verify_status = $2, verified_by = $3, verified_at = NOW() \
+                 WHERE a.id = ANY($1::bigint[]) AND a.verify_status = 'pending' \
+                    AND a.pamong_status <> 'rejected' \
+                    AND ($4::bigint IS NULL OR \
+                        (SELECT CASE WHEN $5::bool THEN COALESCE(cs.pamong_id, cl.pamong_id) \
+                                     ELSE COALESCE(cs.teacher_id, cl.wali_kelas_id) END \
+                           FROM class_sessions cs \
+                            JOIN classes cl ON cl.id = cs.class_id \
+                           WHERE cs.id = a.class_session_id) = $4)",
+                &[&att_ids, &status, &approver, &actor_id, &actor_pamong],
+            )
+            .await
+            .context("decide_verify_bulk tolak")?;
+        return Ok(n as i64);
+    }
+
+    let sql = format!(
+        "WITH upd AS ( \
+            UPDATE attendances a SET verify_status = 'approved', verified_by = $2, \
+                                     verified_at = NOW() \
+             WHERE a.id = ANY($1::bigint[]) AND a.verify_status = 'pending' \
+                AND a.pamong_status <> 'rejected' \
+                AND ($3::bigint IS NULL OR \
+                    (SELECT CASE WHEN $4::bool THEN COALESCE(cs.pamong_id, cl.pamong_id) \
+                                 ELSE COALESCE(cs.teacher_id, cl.wali_kelas_id) END \
+                       FROM class_sessions cs \
+                        JOIN classes cl ON cl.id = cs.class_id \
+                       WHERE cs.id = a.class_session_id) = $3) \
+             RETURNING a.id, a.user_id, a.status, a.class_schedule_id \
+         ), \
+         pts AS ( \
+            SELECT att.id AS att_id, att.user_id, att.status, {DELTA_SQL} AS delta \
+              FROM upd att \
+              LEFT JOIN class_schedules sch ON sch.id = att.class_schedule_id \
+         ), \
+         lg AS ( \
+            INSERT INTO point_logs \
+                (user_id, delta, reason, category, given_by, attendance_id) \
+            SELECT p.user_id, p.delta, \
+                   'Kehadiran (' || p.status || ') — ' || \
+                   CASE p.status \
+                        WHEN 'present' THEN 'Kedisiplinan' \
+                        WHEN 'late'    THEN 'Kedisiplinan' \
+                        WHEN 'absent'  THEN 'Pelanggaran' \
+                        WHEN 'permit'  THEN 'Izin' \
+                        WHEN 'sick'    THEN 'Sakit/Cuti' \
+                        ELSE 'Keterangan' END, \
+                   CASE WHEN p.delta < 0 THEN 'discipline' ELSE 'attendance' END, \
+                   $2, p.att_id \
+              FROM pts p WHERE p.delta <> 0 \
+            RETURNING 1 \
+         ) \
+         SELECT count(*)::bigint FROM upd"
+    );
+    let row = c
+        .query_one(&sql, &[&att_ids, &approver, &actor_id, &actor_pamong])
+        .await
+        .context("decide_verify_bulk setujui")?;
+    Ok(row.get(0))
+}
+
 pub async fn decide_verify(
     pool: &Pool,
     att_id: i64,
     approver: i64,
     approve: bool,
-    teacher_id: Option<i64>,
+    actor_id: Option<i64>,
+    actor_pamong: bool,
 ) -> Result<bool> {
     let mut c = pool.get().await?;
     let tx = c.transaction().await.context("decide_verify tx")?;
@@ -694,18 +802,14 @@ pub async fn decide_verify(
         .query_opt(
             "UPDATE attendances a SET verify_status = $2, verified_by = $3, verified_at = NOW() \
              WHERE a.id = $1 AND a.verify_status = 'pending' \
-                AND CASE WHEN COALESCE( \
-                        (SELECT cl.require_pamong FROM class_sessions cs \
-                            JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = a.class_session_id), TRUE) \
-                          AND (SELECT COALESCE(cs.pamong_id, cl.pamong_id) FROM class_sessions cs \
-                                JOIN classes cl ON cl.id = cs.class_id \
-                                WHERE cs.id = a.class_session_id) IS NOT NULL \
-                     THEN a.pamong_status = 'approved' ELSE TRUE END \
+                AND a.pamong_status <> 'rejected' \
                 AND ($4::bigint IS NULL OR \
-                    (SELECT COALESCE(cs.teacher_id, cl.wali_kelas_id) FROM class_sessions cs \
+                    (SELECT CASE WHEN $5::bool THEN COALESCE(cs.pamong_id, cl.pamong_id) \
+                                 ELSE COALESCE(cs.teacher_id, cl.wali_kelas_id) END \
+                       FROM class_sessions cs \
                         JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = a.class_session_id) = $4) \
              RETURNING a.user_id, a.status, a.class_schedule_id",
-            &[&att_id, &status, &approver, &teacher_id],
+            &[&att_id, &status, &approver, &actor_id, &actor_pamong],
         )
         .await
         .context("decide_verify update")?;
@@ -817,7 +921,13 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
                           AND p.guru_status = 'approved' \
                           AND p.start_date <= s.session_date \
                           AND COALESCE(p.end_date, p.start_date) >= s.session_date \
-                          AND (p.class_id IS NULL OR p.class_id = s.class_id)) \
+                          AND (p.class_id IS NULL \
+                               OR EXISTS (SELECT 1 FROM permit_request_classes prc \
+                                           WHERE prc.permit_id = p.id \
+                                             AND prc.class_id = s.class_id)) \
+                          AND (p.start_time IS NULL \
+                               OR (sch.start_time < p.end_time \
+                                   AND sch.end_time > p.start_time))) \
                 RETURNING id, user_id, class_schedule_id \
              ), \
              lg AS ( \
@@ -877,14 +987,7 @@ pub async fn run_auto_verify_final(pool: &Pool) -> Result<i64> {
             UPDATE attendances a SET verify_status = 'approved', verified_at = NOW() \
             WHERE a.verify_status = 'pending' \
               AND a.pamong_status <> 'rejected' \
-              AND CASE WHEN COALESCE( \
-                      (SELECT cl.require_pamong FROM class_sessions cs \
-                          JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = a.class_session_id), TRUE) \
-                        AND (SELECT COALESCE(cs.pamong_id, cl.pamong_id) FROM class_sessions cs \
-                              JOIN classes cl ON cl.id = cs.class_id \
-                              WHERE cs.id = a.class_session_id) IS NOT NULL \
-                   THEN a.pamong_status = 'approved' AND a.pamong_at < NOW() - INTERVAL '1 day' \
-                   ELSE a.scanned_at < NOW() - INTERVAL '1 day' END \
+              AND a.scanned_at < NOW() - INTERVAL '1 day' \
             RETURNING a.id, a.user_id, a.status, a.class_schedule_id \
          ), \
          pts AS ( \
@@ -1038,6 +1141,94 @@ pub async fn session_for_correction(
 /// Pemanggil WAJIB sudah memverifikasi kewenangan lewat
 /// [`session_for_correction`]; fungsi ini tak memeriksanya lagi agar
 /// penjagaannya tidak berulang untuk tiap santri dalam satu koreksi massal.
+/// Koreksi absensi BANYAK santri dalam SATU pernyataan.
+///
+/// Versi satuannya (`upsert_session_attendance`) dipanggil dalam loop: satu
+/// sesi berisi 200 santri berarti 200 kali ambil-koneksi, 200 transaksi, dan
+/// 200 perjalanan bolak-balik ke database — untuk satu tombol "simpan". Di sini
+/// seluruhnya jadi satu transaksi dengan dua pernyataan set-based.
+///
+/// Bentuk masukan sengaja tiga larik sejajar (user_id, status, jam) alih-alih
+/// larik struct: itu yang bisa diterima `unnest` tanpa tipe komposit buatan.
+///
+/// Pagar keanggotaan kelas tetap sama dengan versi satuan — `JOIN
+/// class_participants` menjatuhkan id yang bukan anggota kelas sesi ini, jadi
+/// daftar dari klien tak bisa menyelundupkan santri kelas lain.
+///
+/// Return jumlah baris yang benar-benar tersimpan.
+pub async fn upsert_session_attendance_bulk(
+    pool: &Pool,
+    session_id: i64,
+    schedule_id: Option<i64>,
+    session_date: NaiveDate,
+    user_ids: &[i64],
+    statuses: &[String],
+    jams: &[Option<chrono::NaiveTime>],
+    actor_id: i64,
+) -> Result<i64> {
+    if user_ids.is_empty() {
+        return Ok(0);
+    }
+    let mut c = pool.get().await?;
+    let tx = c.transaction().await.context("upsert_bulk tx")?;
+
+    let rows = tx
+        .query(
+            "WITH masuk AS ( \
+                SELECT * FROM unnest($4::bigint[], $5::text[], $6::time[]) \
+                            AS t(uid, status, jam) \
+             ), \
+             ins AS ( \
+                INSERT INTO attendances \
+                    (user_id, class_session_id, class_schedule_id, gate_label, status, method, \
+                     note, scan_date, scanned_at) \
+                SELECT cp.user_id, $1, $2, 'manual', m.status, 'manual', 'diisi petugas', $3, \
+                       COALESCE(($3::date + m.jam) AT TIME ZONE 'Asia/Jakarta', NOW()) \
+                  FROM masuk m \
+                  JOIN class_sessions s ON s.id = $1 \
+                  JOIN class_participants cp \
+                       ON cp.class_id = s.class_id AND cp.user_id = m.uid \
+                ON CONFLICT (user_id, class_session_id) DO UPDATE \
+                   SET status = EXCLUDED.status, \
+                       verify_status = 'pending', \
+                       corrected_by = $7, \
+                       corrected_at = NOW(), \
+                       scanned_at = COALESCE(EXCLUDED.scanned_at, attendances.scanned_at) \
+                RETURNING id \
+             ) \
+             SELECT id FROM ins",
+            &[
+                &session_id,
+                &schedule_id,
+                &session_date,
+                &user_ids,
+                &statuses,
+                &jams,
+                &actor_id,
+            ],
+        )
+        .await
+        .context("upsert_bulk insert")?;
+
+    let ids: Vec<i64> = rows.iter().map(|r| r.get(0)).collect();
+    if ids.is_empty() {
+        tx.rollback().await.ok();
+        return Ok(0);
+    }
+
+    // Tarik poin dari status LAMA untuk SEMUA baris sekaligus (migrasi 51).
+    tx.execute(
+        "DELETE FROM point_logs WHERE attendance_id = ANY($1::bigint[]) \
+           AND category IN ('attendance', 'discipline')",
+        &[&ids],
+    )
+    .await
+    .context("upsert_bulk tarik poin")?;
+
+    tx.commit().await.context("upsert_bulk commit")?;
+    Ok(ids.len() as i64)
+}
+
 pub async fn upsert_session_attendance(
     pool: &Pool,
     session_id: i64,
@@ -1054,12 +1245,20 @@ pub async fn upsert_session_attendance(
     // Jam diisi → scanned_at disusun dari TANGGAL SESI + jam itu (WIB), bukan
     // waktu sekarang: petugas lazim mengisi absensi setelah sesi usai.
     let row = tx
-        .query_one(
+        .query_opt(
+            // SELECT ... FROM class_participants, bukan VALUES: keanggotaan
+            // kelas jadi syarat baris ini ada sama sekali. Koreksi massal
+            // menerima daftar user_id dari klien, dan tanpa pagar ini satu
+            // request bisa menuliskan kehadiran + poin atas nama siapa pun —
+            // termasuk santri kelas lain atau staf.
             "INSERT INTO attendances \
                 (user_id, class_session_id, class_schedule_id, gate_label, status, method, \
                  note, scan_date, scanned_at) \
-             VALUES ($1, $2, $3, 'manual', $4, 'manual', 'diisi petugas', $5, \
-                     COALESCE(($5::date + $6::time) AT TIME ZONE 'Asia/Jakarta', NOW())) \
+             SELECT cp.user_id, $2, $3, 'manual', $4, 'manual', 'diisi petugas', $5, \
+                    COALESCE(($5::date + $6::time) AT TIME ZONE 'Asia/Jakarta', NOW()) \
+             FROM class_sessions s \
+             JOIN class_participants cp ON cp.class_id = s.class_id AND cp.user_id = $1 \
+             WHERE s.id = $2 \
              ON CONFLICT (user_id, class_session_id) DO UPDATE \
                 SET status = EXCLUDED.status, \
                     verify_status = 'pending', \
@@ -1075,6 +1274,15 @@ pub async fn upsert_session_attendance(
         .await
         .context("upsert_attendance")?;
 
+    // Tak ada baris = user itu bukan anggota kelas sesi ini (atau sesinya tak
+    // ada). Dilaporkan sebagai false, bukan galat: pemanggil sudah menghitung
+    // "berapa yang tersimpan", dan koreksi massal tak boleh gagal seluruhnya
+    // hanya karena satu id nyasar.
+    let Some(row) = row else {
+        tx.rollback().await.ok();
+        tracing::warn!(session_id, user_id, "koreksi absensi ditolak: bukan anggota kelas");
+        return Ok(false);
+    };
     let att_id: i64 = row.get(0);
     // Tarik poin dari status LAMA (log yang tertaut baris ini, migrasi 51).
     tx.execute(

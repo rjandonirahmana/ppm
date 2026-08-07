@@ -41,7 +41,7 @@ pub fn KelasPage() -> impl IntoView {
     let tab = RwSignal::new("kelas".to_string());
 
     view! {
-        <Title text="Manajemen Kelas — PPM AFM" />
+        <Title text="Manajemen Kelas — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Manajemen Kelas" subtitle="Kelola kurikulum & pembagian santri" />
@@ -128,20 +128,11 @@ pub fn KelasPage() -> impl IntoView {
                                     Ok(d) => {
                                         let d_can_manage = d.can_manage;
                                         let items = d.items.clone();
-                                        let mut cats: Vec<String> = items
-                                            .iter()
-                                            .map(|k| k.category.clone())
-                                            .filter(|c| !c.is_empty())
-                                            .collect();
-                                        cats.sort();
-                                        cats.dedup();
-                                        let mut golongans: Vec<String> = items
-                                            .iter()
-                                            .map(|k| k.golongan.clone())
-                                            .filter(|g| !g.is_empty())
-                                            .collect();
-                                        golongans.sort();
-                                        golongans.dedup();
+                                        // Daftar kategori/jenjang tak lagi
+                                        // dikumpulkan dari data: keduanya kini
+                                        // himpunan tetap (models::KATEGORI_KELAS,
+                                        // models::JENJANG), bukan apa pun yang
+                                        // kebetulan sudah pernah diketik orang.
                                         view! {
                                             <div class="space-y-4">
                                             // ── Statistik: baris ringkas (kartu ukuran-konten,
@@ -190,20 +181,6 @@ pub fn KelasPage() -> impl IntoView {
                                                 />
                                             </div>
 
-                                            // Datalist autocomplete kategori + golongan (tak terlihat).
-                                            <datalist id="kategori-kelas">
-                                                {cats
-                                                    .into_iter()
-                                                    .map(|c| view! { <option value=c></option> })
-                                                    .collect_view()}
-                                            </datalist>
-                                            <datalist id="golongan-kelas">
-                                                {golongans
-                                                    .into_iter()
-                                                    .map(|g| view! { <option value=g></option> })
-                                                    .collect_view()}
-                                            </datalist>
-
                                             // ── Daftar kelas: kartu "Tambah" (statis, sel pertama)
                                             // + kartu kelas (reaktif filter pencarian). Kartu Tambah
                                             // KINI menyatu di grid (dulu terpisah di kolom sempit di
@@ -213,7 +190,11 @@ pub fn KelasPage() -> impl IntoView {
                                                 // Hanya admin yang boleh membuat kelas — dikunci di
                                                 // sini, bukan dibiarkan gagal "forbidden" saat disimpan.
                                                 <AdminOnly can_manage=d_can_manage apa="membuat kelas baru">
-                                                    <TambahKelas show_form=show_form refetch=move || data.refetch() />
+                                                    <TambahKelas
+                                                        show_form=show_form
+                                                        guru=d.teacher_options.clone()
+                                                        refetch=move || data.refetch()
+                                                    />
                                                 </AdminOnly>
                                                 {move || {
                                                     let q = query.get().to_lowercase();
@@ -258,10 +239,19 @@ pub fn KelasPage() -> impl IntoView {
 }
 
 #[component]
-fn TambahKelas(show_form: RwSignal<bool>, refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
+fn TambahKelas(
+    show_form: RwSignal<bool>,
+    /// Guru calon wali kelas — wajib dipilih bila kelasnya KBM.
+    guru: Vec<crate::models::TeacherOption>,
+    refetch: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
     let name = RwSignal::new(String::new());
-    let category = RwSignal::new(String::new());
-    let golongan = RwSignal::new(String::new());
+    // Default KBM: itu kelas yang paling sering dibuat, dan pilihan default
+    // yang salah membuat orang melewatkan bidang wali yang wajib.
+    let category = RwSignal::new("kbm".to_string());
+    let jenjang = RwSignal::new(String::new());
+    let wali = RwSignal::new(0i64);
+    let guru = StoredValue::new(guru);
     let desc = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let error = RwSignal::new(Option::<String>::None);
@@ -273,18 +263,20 @@ fn TambahKelas(show_form: RwSignal<bool>, refetch: impl Fn() + Copy + Send + 'st
         }
         busy.set(true);
         error.set(None);
-        let (n, cat, g, d) = (
+        let (n, cat, g, w, d) = (
             name.get_untracked(),
             category.get_untracked(),
-            golongan.get_untracked(),
+            jenjang.get_untracked(),
+            wali.get_untracked(),
             desc.get_untracked(),
         );
         leptos::task::spawn_local(async move {
-            match create_class_action(n, cat, g, d).await {
+            match create_class_action(n, cat, g, w, d).await {
                 Ok(_) => {
                     name.set(String::new());
-                    category.set(String::new());
-                    golongan.set(String::new());
+                    category.set("kbm".to_string());
+                    jenjang.set(String::new());
+                    wali.set(0);
                     desc.set(String::new());
                     show_form.set(false);
                     refetch();
@@ -329,22 +321,58 @@ fn TambahKelas(show_form: RwSignal<bool>, refetch: impl Fn() + Copy + Send + 'st
                             on:input=move |ev| name.set(event_target_value(&ev))
                             required=true
                         />
-                        <input
-                            type="text"
-                            list="kategori-kelas"
+                        // Dropdown TERTUTUP, bukan teks bebas: kategori kini
+                        // hanya dua (migrasi 65). Sebelumnya kolom ini boleh
+                        // diketik apa saja dan di produksi terisi enam nilai
+                        // yang mencampur jenis kegiatan dengan jenjang.
+                        <select
                             class="w-full bg-surface-container border-0 rounded-xl px-4 py-3 text-body-md text-on-surface"
-                            placeholder="Kategori (mis. Lambatan) — ketik baru bila belum ada"
                             prop:value=move || category.get()
-                            on:input=move |ev| category.set(event_target_value(&ev))
-                        />
-                        <input
-                            type="text"
-                            list="golongan-kelas"
-                            class="w-full bg-surface-container border-0 rounded-xl px-4 py-3 text-body-md text-on-surface"
-                            placeholder="Golongan (mis. Bacaan/Makna) — ketik baru bila belum ada"
-                            prop:value=move || golongan.get()
-                            on:input=move |ev| golongan.set(event_target_value(&ev))
-                        />
+                            on:change=move |ev| category.set(event_target_value(&ev))
+                        >
+                            {crate::models::KATEGORI_KELAS
+                                .iter()
+                                .map(|(k, l)| view! { <option value=*k>{*l}</option> })
+                                .collect_view()}
+                        </select>
+                        // Jenjang hanya milik KBM; untuk non-KBM tak ada yang
+                        // perlu dipilih, jadi bidangnya tak ditampilkan sama
+                        // sekali alih-alih ditampilkan lalu diabaikan.
+                        <Show when=move || category.get() == "kbm">
+                            <select
+                                class="w-full bg-surface-container border-0 rounded-xl px-4 py-3 text-body-md text-on-surface"
+                                prop:value=move || jenjang.get()
+                                on:change=move |ev| jenjang.set(event_target_value(&ev))
+                                required=true
+                            >
+                                <option value="">"— pilih jenjang —"</option>
+                                {crate::models::JENJANG
+                                    .iter()
+                                    .map(|(k, l)| view! { <option value=*k>{*l}</option> })
+                                    .collect_view()}
+                            </select>
+                            // WALI KELAS wajib sejak kelas KBM dibuat: dialah
+                            // satu-satunya penyetuju izin santri kelas itu, jadi
+                            // kelas KBM tanpa wali berarti izin santrinya
+                            // menggantung tanpa tujuan.
+                            <select
+                                class="w-full bg-surface-container border-0 rounded-xl px-4 py-3 text-body-md text-on-surface"
+                                on:change=move |ev| {
+                                    wali.set(event_target_value(&ev).parse().unwrap_or(0))
+                                }
+                                required=true
+                            >
+                                <option value="">"— pilih wali kelas (wajib) —"</option>
+                                {guru
+                                    .get_value()
+                                    .into_iter()
+                                    .map(|t| view! { <option value=t.id.to_string()>{t.name}</option> })
+                                    .collect_view()}
+                            </select>
+                            <p class="text-[11px] text-on-surface-variant -mt-1">
+                                "Wali kelas menyetujui izin santri kelas ini."
+                            </p>
+                        </Show>
                         <textarea
                             rows="2"
                             class="w-full bg-surface-container border-0 rounded-xl px-4 py-3 text-body-md text-on-surface resize-none"
@@ -396,30 +424,39 @@ fn TambahKelas(show_form: RwSignal<bool>, refetch: impl Fn() + Copy + Send + 'st
 #[component]
 fn KelasCard(k: KelasItem) -> impl IntoView {
     let href = format!("/kelas/{}", k.id);
+    // Kelas KBM WAJIB punya wali (dialah penyetuju izin santrinya). Aturannya
+    // ditegakkan di jalur tulis, tapi baris lama bisa lolos dari sebelum aturan
+    // ini ada — ditandai di sini supaya diperbaiki, bukan didiamkan.
+    let wali_kosong = k.category == "kbm" && k.wali_kelas.trim().is_empty();
     view! {
         <div class="ppm-card p-4 card-hover anim-in ppm-accent">
             <div class="flex flex-wrap gap-1.5 mb-1.5">
-                {(!k.golongan.is_empty())
+                // Kode disimpan, LABEL yang dipajang: "hadist_besar" bukan
+                // kalimat yang pantas dibaca orang.
+                {(!k.jenjang.is_empty())
                     .then(|| {
                         view! {
                             <span class="inline-block px-2.5 py-1 rounded-full bg-primary/10 text-primary text-[10px] font-bold tracking-wider uppercase">
-                                {k.golongan.clone()}
+                                {crate::models::jenjang_label(&k.jenjang)}
                             </span>
                         }
                     })}
-                {{
-                    let kategori = crate::web::components::kategori_tampil(&k.golongan, &k.category);
-                    (!kategori.is_empty())
-                        .then(|| {
-                            view! {
-                                <span class="inline-block px-2.5 py-1 rounded-full bg-secondary-container text-primary text-[10px] font-bold tracking-wider uppercase">
-                                    {kategori}
-                                </span>
-                            }
-                        })
-                }}
+                <span class="inline-block px-2.5 py-1 rounded-full bg-secondary-container text-primary text-[10px] font-bold tracking-wider uppercase">
+                    {crate::models::kategori_label(&k.category)}
+                </span>
             </div>
             <h3 class="text-body-lg font-bold text-on-background">{k.name}</h3>
+            {wali_kosong
+                .then(|| {
+                    view! {
+                        <p class="mt-1.5 flex items-start gap-1.5 rounded-xl bg-warning/10 px-2.5 py-2 text-[11px] text-on-background">
+                            <span class="material-symbols-outlined text-[15px] text-warning shrink-0">
+                                "warning"
+                            </span>
+                            "Belum ada wali kelas — izin santri kelas ini tak punya penyetuju. Tetapkan di detail kelas."
+                        </p>
+                    }
+                })}
             <p class="text-body-sm text-on-surface-variant flex items-center gap-1 mt-1">
                 <span class="material-symbols-outlined text-[15px]">"person"</span>
                 {k.teacher}

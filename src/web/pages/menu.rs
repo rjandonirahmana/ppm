@@ -37,7 +37,7 @@ const LINKS: &[(&str, &str, &str)] = &[
 #[component]
 pub fn MenuPage() -> impl IntoView {
     view! {
-        <Title text="Menu Halaman — PPM AFM" />
+        <Title text="Menu Halaman — AFM SMART" />
         <div class="min-h-screen bg-surface p-6">
             <div class="max-w-3xl mx-auto">
                 <header class="flex items-center gap-3 mb-8">
@@ -45,7 +45,7 @@ pub fn MenuPage() -> impl IntoView {
                         <span class="material-symbols-outlined text-on-primary text-3xl">"mosque"</span>
                     </div>
                     <div class="flex-1">
-                        <h1 class="text-display-md text-primary">"PPM AFM"</h1>
+                        <h1 class="text-display-md text-primary">"AFM SMART"</h1>
                         <p class="text-body-sm text-on-surface-variant">"Pratinjau semua halaman (dev)"</p>
                     </div>
                     <button

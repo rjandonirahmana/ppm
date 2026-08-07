@@ -17,7 +17,7 @@ use leptos_meta::Title;
 use crate::models::{KelasSayaItem, SessionUser};
 use crate::web::api::kelas_saya_data;
 use crate::web::components::{
-    guard_sesi, kartu_grid, kategori_tampil, DeviceFrame, EmptyState, FetchError, MobileHeader,
+    guard_sesi, kartu_grid, DeviceFrame, EmptyState, FetchError, MobileHeader,
     Skeleton,
 };
 
@@ -30,7 +30,7 @@ pub fn KelasSayaPage() -> impl IntoView {
     guard_sesi(data);
 
     view! {
-        <Title text="Kelas Saya — PPM AFM" />
+        <Title text="Kelas Saya — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Kelas Saya" subtitle="Kurikulum & materi berjalan" />
@@ -85,8 +85,11 @@ fn KelasCard(k: KelasSayaItem) -> impl IntoView {
 
     let jumlah_teman = k.members.len();
     let members = StoredValue::new(k.members);
-    let golongan = k.golongan.clone();
-    let category = kategori_tampil(&k.golongan, &k.category);
+    // Lencana kembar ("piket"/"piket") tak mungkin lagi sejak migrasi 65:
+    // kategori dan jenjang kini dua himpunan terpisah, jadi tinggal dilabeli.
+    let kbm = k.category == "kbm";
+    let jenjang = crate::models::jenjang_label(&k.jenjang);
+    let category = crate::models::kategori_label(&k.category).to_string();
     let peran = k.peran_saya.clone();
     let wali = k.wali_kelas.clone();
     let pamong = k.pamong.clone();
@@ -100,8 +103,8 @@ fn KelasCard(k: KelasSayaItem) -> impl IntoView {
                     // adalah peserta, bukan petugas, jadi tak berlencana.
                     {(!peran.is_empty())
                         .then(|| view! { <span class="ppm-chip bg-primary text-on-primary">{peran.clone()}</span> })}
-                    {(!golongan.is_empty())
-                        .then(|| view! { <span class="ppm-chip bg-secondary-container text-primary">{golongan.clone()}</span> })}
+                    {(!jenjang.is_empty())
+                        .then(|| view! { <span class="ppm-chip bg-secondary-container text-primary">{jenjang.clone()}</span> })}
                     {(!category.is_empty())
                         .then(|| view! { <span class="ppm-chip bg-surface-container-highest text-on-surface-variant">{category.clone()}</span> })}
                 </div>
@@ -109,10 +112,21 @@ fn KelasCard(k: KelasSayaItem) -> impl IntoView {
             </div>
 
             // ── Petugas ────────────────────────────────────────────────────
-            <div class="grid grid-cols-2 gap-2">
-                <Petugas peran="Wali Kelas" nama=wali icon="badge" />
-                <Petugas peran="Pamong" nama=pamong icon="supervisor_account" />
-            </div>
+            // Wali kelas hanya ada di KBM (migrasi 65); kelas lain cukup
+            // pamong, jadi kotaknya melebar alih-alih memajang "Belum
+            // ditunjuk" untuk jabatan yang memang tak ada di sini.
+            {if kbm {
+                view! {
+                    <div class="grid grid-cols-2 gap-2">
+                        <Petugas peran="Wali Kelas" nama=wali icon="badge" />
+                        <Petugas peran="Pamong" nama=pamong icon="supervisor_account" />
+                    </div>
+                }
+                    .into_any()
+            } else {
+                view! { <Petugas peran="Pamong" nama=pamong icon="supervisor_account" /> }
+                    .into_any()
+            }}
 
             // ── Materi yang sedang dibahas per jadwal ──────────────────────
             {(!k.schedules.is_empty())

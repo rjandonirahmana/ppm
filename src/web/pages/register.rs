@@ -173,7 +173,7 @@ pub fn RegisterPage() -> impl IntoView {
 
     let field = "w-full bg-surface-container border-0 rounded-xl px-4 py-3 text-body-md text-on-surface";
     view! {
-        <Title text="Registrasi — PPM AFM" />
+        <Title text="Registrasi — AFM SMART" />
         <div class="min-h-screen flex items-center justify-center p-4 bg-surface">
             <div class="fixed inset-0 z-0"><div class="absolute inset-0 pattern-bg"></div></div>
             <main class="relative z-10 w-full max-w-md bg-surface-container-lowest rounded-2xl shadow-2xl overflow-hidden anim-in">

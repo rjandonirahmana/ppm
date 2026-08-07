@@ -55,7 +55,7 @@ pub fn RiwayatPage() -> impl IntoView {
     let month_filter = RwSignal::new(String::new());
 
     view! {
-        <Title text="Riwayat & Rapor — PPM AFM" />
+        <Title text="Riwayat & Rapor — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Riwayat & Rapor" subtitle="Kehadiran, poin, & capaian hafalan" />

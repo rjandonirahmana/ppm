@@ -43,7 +43,7 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
     };
 
     view! {
-        <Title text="Verifikasi Pamong — PPM AFM" />
+        <Title text="Verifikasi Pamong — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <header class="sticky top-0 z-10 bg-surface/90 backdrop-blur border-b border-outline-variant/60 px-5 py-4 flex items-center justify-between">

@@ -46,21 +46,33 @@ pub use users::*;
 /// baris bertanda primary di produksi), sehingga setiap join yang bersandar
 /// padanya menghasilkan NULL dan nama kelas hilang dari laporan.
 ///
-/// Aturannya diambil dari data yang memang sudah ada, bukan tebakan: kelas
-/// akademik ditandai `golongan` 'bacaan'/'makna' (migrasi 16); piket, sholat,
-/// dan apel berada di luar sistem dua-sumbu itu. Bila santri tak punya kelas
-/// akademik, jatuh ke kelas mana pun — diurut `id` supaya hasilnya tetap sama
-/// tiap kali dibaca.
+/// Sejak migrasi 65 pertanyaannya punya jawaban langsung: kelas KBM. Satu
+/// santri paling banyak punya SATU (dijaga trigger `trg_satu_kelas_kbm`), jadi
+/// ini bukan lagi "yang paling mungkin" melainkan memang kelasnya. Sebelumnya
+/// terpaksa menebak lewat `golongan IN ('bacaan','makna')` — sumbu klasifikasi
+/// lama yang di produksi tak pernah terisi seperti yang dibayangkan.
+///
+/// Santri tanpa kelas KBM (mis. baru masuk, baru ikut piket) jatuh ke kelas
+/// mana pun, diurut `id` supaya hasilnya tetap sama tiap kali dibaca.
 ///
 /// Pemakaian: sisipkan sebagai LATERAL, ganti `{U}` dengan kolom user id.
-/// Aliasnya `cl`, berisi seluruh kolom `classes`.
+/// Aliasnya `cl`.
+///
+/// Kolomnya disebut satu per satu, bukan `c.*`: lateral ini menempel di
+/// belasan query (rekap, papan poin, tagihan, izin) dan `classes` punya kolom
+/// teks panjang (`description`) serta kolom yang terus bertambah tiap migrasi.
+/// Yang dibaca pemanggil hanya sembilan di bawah — sisanya biaya transfer
+/// murni. Menambah kolom baru ke `classes` juga jadi tak diam-diam memperbesar
+/// setiap query ini.
 pub(crate) fn kelas_utama_lateral(user_col: &str) -> String {
     format!(
         "LEFT JOIN LATERAL ( \
-            SELECT c.* FROM class_participants cp_ku \
+            SELECT c.id, c.name, c.category, c.jenjang, c.description, \
+                   c.wali_kelas_id, c.pamong_id, c.require_pamong, c.verify_mode \
+              FROM class_participants cp_ku \
               JOIN classes c ON c.id = cp_ku.class_id \
              WHERE cp_ku.user_id = {user_col} \
-             ORDER BY (lower(coalesce(c.golongan, '')) IN ('bacaan', 'makna')) DESC, c.id \
+             ORDER BY (c.category = 'kbm') DESC, c.id \
              LIMIT 1 \
         ) cl ON TRUE"
     )

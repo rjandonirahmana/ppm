@@ -91,6 +91,12 @@ async fn monitor_child(pool: &Pool, child_id: i64) -> Result<Option<ChildMonitor
             let (status_label, status_kind) =
                 permit_stage(&p.pamong_status, &p.guru_status, p.require_pamong);
             PermitItem {
+                id: p.id,
+                diajukan_oleh: if p.oleh_ortu {
+                    format!("Diajukan orang tua — {}", p.requester_name)
+                } else {
+                    String::new()
+                },
                 kind_label: permit_kind_label(&p.kind).into(),
                 range_label: fmt_range(p.start_date, p.end_date),
                 class_label: p.class_name.unwrap_or_default(),
@@ -182,6 +188,12 @@ pub async fn children_permits(pool: &Pool, parent_id: i64) -> Result<Vec<ParentP
             let (status_label, status_kind) =
                 permit_stage(&p.pamong_status, &p.guru_status, p.require_pamong);
             ParentPermitItem {
+                id: p.id,
+                diajukan_oleh: if p.oleh_ortu {
+                    format!("Diajukan orang tua — {}", p.requester_name)
+                } else {
+                    "Diajukan santri sendiri".to_string()
+                },
                 child_name: p.child_name,
                 kind_label: permit_kind_label(&p.kind).into(),
                 range_label: fmt_range(p.start_date, p.end_date),
@@ -202,12 +214,17 @@ pub async fn submit_child_permit(
     kind: &str,
     start: &str,
     end: &str,
+    jam_mulai: &str,
+    jam_selesai: &str,
     reason: &str,
 ) -> Result<Vec<super::permits::PermitSplit>> {
     if !repo::is_connected(pool, parent_id, child_id).await? {
         bail_user!("forbidden");
     }
-    super::santri::submit_permit(pool, child_id, parent_id, kind, start, end, reason).await
+    super::santri::submit_permit(
+        pool, child_id, parent_id, kind, start, end, jam_mulai, jam_selesai, reason,
+    )
+    .await
 }
 
 // Migrasi 46: `confirm_child_permit` DIHAPUS — persetujuan izin kini murni

@@ -60,7 +60,7 @@ fn PoinPageInner() -> impl IntoView {
     };
 
     view! {
-        <Title text="Pantauan Poin Santri — PPM AFM" />
+        <Title text="Pantauan Poin Santri — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Pantauan Poin Santri" subtitle="Papan peringkat & penyesuaian poin" />

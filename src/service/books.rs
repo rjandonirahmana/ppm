@@ -277,3 +277,205 @@ pub(crate) fn format_page_ranges(v: &Value) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
+
+// ── Analisis kekosongan materi per KELAS ─────────────────────────────────────
+
+/// Bagian mana dari sebuah kitab yang paling banyak KOSONG di satu kelas.
+///
+/// Gunanya konkret: guru memilih halaman/ayat berikutnya berdasarkan di mana
+/// santrinya paling tertinggal, bukan sekadar melanjutkan dari posisi terakhir.
+/// Bagian yang sudah dikuasai hampir semua orang tak perlu diulang; bagian yang
+/// kosong di banyak santri itulah yang menahan mereka.
+///
+/// Cara hitung per unit (satu ayat, atau satu halaman):
+///   status 2 → tuntas, 1 → setengah, tak ada di peta → KOSONG.
+/// Unit-unit BERURUTAN dengan angka kekosongan yang sama digabung jadi satu
+/// rentang, supaya hasilnya terbaca sebagai "Ayat 45 – 60" alih-alih enam
+/// belas baris terpisah.
+///
+/// Hasilnya URUT DARI AWAL KITAB (surat, lalu nomor ayat/halaman) — guru
+/// membacanya seperti membaca kitabnya sendiri. Rentang paling kosong ditandai
+/// `terberat` supaya bisa disorot tanpa mengacak urutan.
+///
+/// Yang dikembalikan hanya rentang yang benar-benar ada kekosongannya. Kitab
+/// tanpa santri, atau yang sudah tuntas semua, mengembalikan daftar kosong —
+/// dan UI menyebutnya sebagai kabar baik, bukan kegagalan.
+pub async fn kekosongan_materi(
+    pool: &Pool,
+    class_id: i64,
+    book_id: i64,
+) -> Result<crate::models::KekosonganData> {
+    let Some(b) = repo::get_book(pool, book_id).await? else {
+        bail_user!("Materi tidak ditemukan.");
+    };
+    let surahs = value_to_surahs(&b.surahs);
+
+    // Daftar unit yang harus diperiksa, apa adanya sesuai bentuk kitabnya:
+    // (kunci peta, indeks surat, nama surat, nomor unit). Kuncinya dikirim ke
+    // SQL; sisanya dipakai menyusun label.
+    let mut units: Vec<(String, i32, String, i32)> = Vec::new();
+    if b.category == "quran" {
+        for (idx, sr) in surahs.iter().enumerate() {
+            for a in 1..=sr.ayat {
+                units.push((format!("{idx}:{a}"), idx as i32, sr.name.clone(), a));
+            }
+        }
+    } else {
+        for p in 1..=b.total_pages.max(0) {
+            units.push((p.to_string(), 0, String::new(), p));
+        }
+    }
+
+    let kunci: Vec<String> = units.iter().map(|(k, ..)| k.clone()).collect();
+    let (total_santri, hitung) = repo::hitung_kekosongan(pool, class_id, book_id, &kunci).await?;
+
+    let mut hasil: Vec<crate::models::KekosonganItem> = Vec::new();
+    let mut unit_tuntas = 0i64;
+    // Rentang berjalan: digabung selama (surat, kosong, setengah) tak berubah.
+    let mut jalan: Option<crate::models::KekosonganItem> = None;
+
+    for ((_, surah_idx, surah_name, nomor), (_, kosong, setengah)) in
+        units.iter().zip(hitung.iter())
+    {
+        let (kosong, setengah) = (*kosong, *setengah);
+        if kosong == 0 && setengah == 0 && total_santri > 0 {
+            unit_tuntas += 1;
+        }
+
+        let sambung = jalan.as_ref().is_some_and(|r| {
+            r.surah_idx == *surah_idx
+                && r.kosong == kosong
+                && r.setengah == setengah
+                && r.end_unit + 1 == *nomor
+        });
+        if sambung {
+            if let Some(r) = jalan.as_mut() {
+                r.end_unit = *nomor;
+            }
+            continue;
+        }
+    
+    if let Some(r) = jalan.take() {
+            if r.kosong > 0 || r.setengah > 0 {
+                hasil.push(r);
+            }
+        }
+        jalan = Some(crate::models::KekosonganItem {
+            label: String::new(),
+            start_unit: *nomor,
+            end_unit: *nomor,
+            surah_idx: *surah_idx,
+            surah_name: surah_name.clone(),
+            kosong,
+            setengah,
+            terberat: false,
+        });
+    }
+    if let Some(r) = jalan.take() {
+        if r.kosong > 0 || r.setengah > 0 {
+            hasil.push(r);
+        }
+    }
+
+    // URUT DARI AWAL KITAB — surat, lalu nomor ayat/halaman. Guru membaca peta
+    // ini seperti membaca kitabnya: dari depan ke belakang. Versi sebelumnya
+    // mengurutkan "paling banyak kosong dulu" lalu memotong sepuluh, jadi
+    // hasilnya melompat-lompat (ayat 200, lalu 12, lalu 88) dan bagian yang
+    // tak masuk sepuluh besar hilang sama sekali.
+    //
+    // Yang PALING kosong tetap ditonjolkan — tapi sebagai satu penunjuk di
+    // atas daftar, bukan dengan mengacak urutannya.
+    hasil.sort_by(|a, b| {
+        a.surah_idx
+            .cmp(&b.surah_idx)
+            .then(a.start_unit.cmp(&b.start_unit))
+    });
+
+    // Rentang terberat: kosong terbanyak; seri diputus oleh rentang yang lebih
+    // PANJANG (menutupnya sekali jalan memberi hasil terbesar untuk satu
+    // pertemuan), lalu oleh yang lebih awal.
+    let terberat = hasil
+        .iter()
+        .max_by(|a, b| {
+            a.kosong
+                .cmp(&b.kosong)
+                .then((a.end_unit - a.start_unit).cmp(&(b.end_unit - b.start_unit)))
+                .then(b.start_unit.cmp(&a.start_unit))
+        })
+        .map(|r| (r.surah_idx, r.start_unit));
+
+    let satuan = if b.category == "quran" { "Ayat" } else { "Halaman" };
+    for r in hasil.iter_mut() {
+        r.label = if r.start_unit == r.end_unit {
+            format!("{satuan} {}", r.start_unit)
+        } else {
+            format!("{satuan} {} – {}", r.start_unit, r.end_unit)
+        };
+    }
+
+    // Tandai yang terberat SETELAH label dibuat, supaya UI tak perlu
+    // membandingkan angka sendiri (dan tak bisa berbeda pendapat).
+    if let Some((si, su)) = terberat {
+        for r in hasil.iter_mut() {
+            if r.surah_idx == si && r.start_unit == su {
+                r.terberat = true;
+                break;
+            }
+        }
+    }
+
+    Ok(crate::models::KekosonganData {
+        book_title: b.title,
+        category: b.category,
+        satuan: satuan.to_string(),
+        total_santri,
+        items: hasil,
+        unit_tuntas,
+        unit_total: units.len() as i64,
+    })
+}
+
+#[cfg(test)]
+mod tests_kekosongan {
+    use std::collections::HashMap;
+
+    /// Penggabungan rentang: unit berurutan dengan angka kekosongan SAMA jadi
+    /// satu baris. Logika ini yang membuat hasilnya terbaca "Ayat 45 – 60"
+    /// alih-alih enam belas baris terpisah; diuji lewat peta buatan.
+    fn kosong_per_unit(peta: &[HashMap<String, u8>], key: &str) -> (i64, i64) {
+        let mut kosong = 0;
+        let mut setengah = 0;
+        for m in peta {
+            match m.get(key).copied().unwrap_or(0) {
+                0 => kosong += 1,
+                1 => setengah += 1,
+                _ => {}
+            }
+        }
+        (kosong, setengah)
+    }
+
+    #[test]
+    fn unit_tanpa_entri_dihitung_kosong() {
+        let a: HashMap<String, u8> = [("0:1".into(), 2u8)].into_iter().collect();
+        let b: HashMap<String, u8> = [("0:1".into(), 1u8)].into_iter().collect();
+        let c: HashMap<String, u8> = HashMap::new();
+        let peta = vec![a, b, c];
+
+        // Ayat 1: satu tuntas, satu setengah, satu belum tersentuh.
+        assert_eq!(kosong_per_unit(&peta, "0:1"), (1, 1));
+        // Ayat 2 tak ada di peta siapa pun → seluruhnya kosong. Inilah kasus
+        // yang paling sering terjadi dan yang paling perlu terlihat guru.
+        assert_eq!(kosong_per_unit(&peta, "0:2"), (3, 0));
+    }
+
+    /// Status di luar 1/2 diabaikan — sama seperti `value_to_unit_status`, agar
+    /// data lama yang cacat tak dihitung sebagai kemajuan.
+    #[test]
+    fn status_asing_tak_dianggap_tuntas() {
+        let m: HashMap<String, u8> = [("5".into(), 2u8)].into_iter().collect();
+        assert_eq!(kosong_per_unit(&[m], "5"), (0, 0));
+        let kosong: HashMap<String, u8> = HashMap::new();
+        assert_eq!(kosong_per_unit(&[kosong], "5"), (1, 0));
+    }
+}

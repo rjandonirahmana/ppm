@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # ═══════════════════════════════════════════════════════════════════════════════
-# Dockerfile — PPM AFM (Leptos SSR + Axum, satu binary)
+# Dockerfile — AFM SMART (Leptos SSR + Axum, satu binary)
 #
 # Build pipeline (pola sama e-ticketing):
 #   Stage 1 (builder): Alpine Rust nightly

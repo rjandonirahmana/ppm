@@ -1,4 +1,4 @@
-/* Input Tailwind PPM AFM — di-compile cargo-leptos → /pkg/ppm.css (statis).
+/* Input Tailwind AFM SMART — di-compile cargo-leptos → /pkg/ppm.css (statis).
    Menggantikan Play CDN. Utility di-purge lewat tailwind.config.js (content).
    CSS kustom (kelas non-utility) ditaruh setelah utilities sebagai CSS biasa. */
 /* Tailwind v4 (versi yang diunduh cargo-leptos). `@config` memuat tema
@@ -177,7 +177,11 @@ button:active{transform:scale(.96)}
     width:min(40rem,92vw);max-width:40rem;margin-inline:0;
     border-radius:1.75rem;
     max-height:86vh;
-    padding-bottom:1.75rem;
+    /* Dialog desktop lebih lega daripada bottom-sheet ponsel: di layar besar
+       panel 40rem dengan padding 1.5rem membuat isinya terasa menempel ke
+       tepi, terutama kartu/kotak berlatar yang tepinya sendiri sudah dekat. */
+    padding:2rem;
+    padding-bottom:2rem;
     box-shadow:0 24px 64px rgba(21,28,39,.22);
     animation:pp-dialog .24s cubic-bezier(.2,.8,.2,1) both;
   }
@@ -246,6 +250,13 @@ button:active{transform:scale(.96)}
     min-width:0;
   }
 }
+
+/* Area gestur geser (komponen SwipeArea) — kalender bulanan dsb.
+   `touch-action:pan-y` menyerahkan sumbu Y ke browser (gulir halaman tetap
+   normal) sambil menahan sumbu X supaya geser horizontal sampai ke handler
+   kita alih-alih dimakan gulir/navigasi-balik bawaan browser.
+   `user-select:none` mencegah teks tersorot saat diseret dengan tetikus. */
+.ppm-swipe-area{touch-action:pan-y;user-select:none;-webkit-user-select:none}
 
 /* Dek jadwal yang bisa digeser (beranda guru & pamong).
    Scroll-snap NATIVE, bukan animasi JS: geser jari di ponsel, trackpad dua jari

@@ -8,7 +8,9 @@ use leptos_meta::Title;
 
 use crate::models::PermitReviewItem;
 use crate::web::api::{decide_permit_action, permit_queue_data};
-use crate::web::components::{kartu_grid, DeviceFrame, EmptyState, FetchError, MobileHeader};
+use crate::web::components::{
+    kartu_grid, DeviceFrame, EmptyState, FetchError, MobileHeader, SheetIzin,
+};
 
 #[component]
 pub fn IzinStafPage() -> impl IntoView {
@@ -26,6 +28,9 @@ pub fn IzinStafPage() -> impl IntoView {
     });
 
     let busy_id = RwSignal::new(Option::<i64>::None);
+    // Detail izin yang sedang dibuka — wali kelas bisa membaca (dan menyunting)
+    // isinya sebelum memutuskan, bukan hanya melihat ringkasan di kartu.
+    let detail = RwSignal::new(Option::<i64>::None);
     let decide = move |id: i64, approve: bool| {
         if busy_id.get_untracked().is_some() {
             return;
@@ -39,7 +44,7 @@ pub fn IzinStafPage() -> impl IntoView {
     };
 
     view! {
-        <Title text="Tinjau Izin — PPM AFM" />
+        <Title text="Tinjau Izin — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Tinjau Izin" subtitle="Antrean izin menunggu keputusan" back_href="/staf" />
@@ -114,7 +119,7 @@ pub fn IzinStafPage() -> impl IntoView {
                                                         d.items
                                                             .into_iter()
                                                             .map(|p| {
-                                                                view! { <PermitCard p=p busy_id=busy_id decide=decide /> }
+                                                                view! { <PermitCard p=p busy_id=busy_id decide=decide buka=detail /> }
                                                                     .into_any()
                                                             })
                                                             .collect(),
@@ -130,6 +135,20 @@ pub fn IzinStafPage() -> impl IntoView {
                     </Suspense>
                 </div>
             </div>
+
+            {move || {
+                detail
+                    .get()
+                    .map(|pid| {
+                        view! {
+                            <SheetIzin
+                                permit_id=pid
+                                on_close=move || detail.set(None)
+                                on_saved=move || data.refetch()
+                            />
+                        }
+                    })
+            }}
         </DeviceFrame>
     }
 }
@@ -137,6 +156,7 @@ pub fn IzinStafPage() -> impl IntoView {
 #[component]
 fn PermitCard(
     p: PermitReviewItem,
+    buka: RwSignal<Option<i64>>,
     busy_id: RwSignal<Option<i64>>,
     decide: impl Fn(i64, bool) + Copy + Send + 'static,
 ) -> impl IntoView {
@@ -148,27 +168,106 @@ fn PermitCard(
         <div class="ppm-card p-4 space-y-3 card-hover anim-in">
             <div class="flex items-start justify-between gap-2">
                 <div class="min-w-0">
-                    <p class="text-body-md font-semibold text-on-background truncate">{p.student_name}</p>
+                    <button
+                        class="text-body-md font-semibold text-on-background truncate text-left hover:underline"
+                        on:click=move |_| buka.set(Some(id))
+                    >
+                        {p.student_name}
+                    </button>
                     <p class="text-body-sm text-on-surface-variant truncate">{meta}</p>
                 </div>
                 <span class="ppm-chip bg-primary/10 text-primary shrink-0">{p.kind_label}</span>
             </div>
 
-            // ── Progress dua-tahap: PARENT (selesai) → PAMONG (aktif) ──────
-            <div class="w-full">
-                <div class="flex justify-between text-[10px] font-bold text-on-surface-variant mb-1">
-                    <span class="text-primary">"ORANG TUA"</span>
-                    <span class="text-primary">"PENGURUS"</span>
-                </div>
-                <div class="h-1.5 w-full bg-outline-variant rounded-full overflow-hidden">
-                    <div class="h-full bg-primary w-1/2"></div>
-                </div>
-            </div>
+            // ── Rute persetujuan yang SEBENARNYA ───────────────────────────
+            // Dulu tertulis "ORANG TUA → PENGURUS" dengan bar mati di 50%.
+            // Orang tua berhenti jadi penyetuju sejak migrasi 46, dan
+            // "PENGURUS" tak menyebut siapa pun secara khusus — jadi
+            // indikatornya memberi kabar yang keliru sekaligus tak berguna.
+            //
+            // Sekarang: tahap yang benar-benar ada, dan bar-nya mengikuti
+            // keadaan izin ini. Kelas satu langkah hanya menampilkan wali.
+            {if p.dua_tahap {
+                // KOSONG bila pamong belum meninjau, SETENGAH bila sudah.
+                // Sebelumnya selalu setengah — bar yang tak pernah berubah
+                // memberi kesan satu tahap sudah beres padahal belum ada yang
+                // menyentuhnya. Tahap kedua (keputusan wali) baru mengisinya
+                // penuh, dan itu terjadi setelah kartunya hilang dari antrean.
+                let lebar = if p.pamong_ok {
+                    "h-full bg-primary w-1/2 transition-all"
+                } else {
+                    "h-full bg-primary w-0 transition-all"
+                };
+                let cls_pamong = if p.pamong_ok {
+                    "text-primary"
+                } else {
+                    "text-on-surface-variant"
+                };
+                view! {
+                    <div class="w-full">
+                        <div class="flex justify-between text-[10px] font-bold mb-1">
+                            <span class=cls_pamong>
+                                {if p.pamong_ok { "PAMONG KELAS ✓" } else { "PAMONG KELAS" }}
+                            </span>
+                            <span class="text-primary">"WALI KELAS"</span>
+                        </div>
+                        <div class="h-1.5 w-full bg-outline-variant rounded-full overflow-hidden">
+                            <div class=lebar></div>
+                        </div>
+                        {(!p.pamong_ok)
+                            .then(|| {
+                                view! {
+                                    <p class="text-[10px] text-on-surface-variant mt-1">
+                                        "Pamong belum meninjau — Anda tetap boleh memutuskan."
+                                    </p>
+                                }
+                            })}
+                    </div>
+                }
+                    .into_any()
+            } else {
+                view! {
+                    <div class="w-full">
+                        <div class="flex justify-between text-[10px] font-bold text-primary mb-1">
+                            <span>"WALI KELAS"</span>
+                            <span>"KEPUTUSAN FINAL"</span>
+                        </div>
+                        <div class="h-1.5 w-full bg-outline-variant rounded-full overflow-hidden">
+                            <div class="h-full bg-primary w-full"></div>
+                        </div>
+                    </div>
+                }
+                    .into_any()
+            }}
 
             <p class="text-body-sm text-on-surface-variant flex items-center gap-1">
                 <span class="material-symbols-outlined text-[15px]">"calendar_month"</span>
                 {p.range_label}
+                // Izin per jam (migrasi 66): tanpa jamnya, wali kelas mengira
+                // santrinya absen sehari penuh padahal cuma dua jam.
+                {(!p.jam_label.is_empty())
+                    .then(|| view! { <span class="text-primary font-semibold">{p.jam_label.clone()}</span> })}
             </p>
+
+            // Dampaknya, bukan cuma tanggalnya: kelas mana saja yang akan
+            // kosong bila izin ini disetujui.
+            {(!p.sesi_terlewat.is_empty())
+                .then(|| {
+                    let ringkas = format!("{} sesi terlewat", p.total_sesi);
+                    view! {
+                        <div class="rounded-xl bg-warning/5 border border-warning/30 px-3 py-2 space-y-1">
+                            <p class="text-[11px] font-bold text-on-background flex items-center gap-1">
+                                <span class="material-symbols-outlined text-[14px] text-warning">
+                                    "event_busy"
+                                </span>
+                                {ringkas}
+                            </p>
+                            <p class="text-[11px] text-on-surface-variant">
+                                {p.sesi_terlewat.join(" · ")}
+                            </p>
+                        </div>
+                    }
+                })}
             <p class="text-body-sm text-on-surface-variant italic">
                 {format!("\u{201C}{}\u{201D}", p.reason)}
             </p>

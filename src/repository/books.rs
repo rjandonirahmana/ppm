@@ -197,3 +197,74 @@ pub async fn upsert_progress(
     .context("upsert_progress")?;
     Ok(())
 }
+
+/// Hitung kekosongan per unit LANGSUNG DI SQL — hanya angkanya yang dikirim.
+///
+/// Versi pertama menarik seluruh `unit_status` tiap santri lalu menjumlahkan di
+/// Rust. Benar, tapi boros: satu kelas 30 santri × Al Baqoroh berarti 30 objek
+/// JSONB berisi ratusan kunci melintasi jaringan setiap kali panelnya dibuka —
+/// puluhan sampai ratusan kilobyte untuk menghasilkan beberapa baris angka.
+///
+/// Di sini yang menyeberang hanya `(unit, kosong, setengah)`: satu baris per
+/// ayat/halaman, berapa pun jumlah santrinya. Penggabungan jadi rentang tetap
+/// di Rust — itu urusan penyajian, bukan penyimpanan.
+///
+/// Nilainya dibandingkan sebagai TEKS ('1'/'2'), bukan di-cast ke int: satu
+/// nilai cacat di data lama akan menggagalkan SELURUH query bila memakai
+/// `::int`, dan aturannya pun sama dengan `value_to_unit_status` — selain 1 & 2
+/// dianggap belum tersentuh.
+///
+/// Return `(jumlah santri, [(kunci unit, kosong, setengah)])`.
+pub async fn hitung_kekosongan(
+    pool: &Pool,
+    class_id: i64,
+    book_id: i64,
+    kunci: &[String],
+) -> Result<(i64, Vec<(String, i64, i64)>)> {
+    if kunci.is_empty() {
+        return Ok((0, Vec::new()));
+    }
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "WITH st AS ( \
+                SELECT COALESCE(a.unit_status, '{}'::jsonb) AS s \
+                  FROM class_participants cp \
+                  JOIN users u ON u.id = cp.user_id \
+                       AND u.role IN ('santri', 'santri_finance') AND u.is_active \
+                  LEFT JOIN academic_user a ON a.user_id = u.id AND a.book_id = $2 \
+                 WHERE cp.class_id = $1 \
+             ), \
+             unit AS (SELECT k FROM unnest($3::text[]) AS k) \
+             SELECT unit.k, \
+                    count(*) FILTER ( \
+                        WHERE st.s ->> unit.k IS NULL \
+                           OR st.s ->> unit.k NOT IN ('1', '2'))::bigint AS kosong, \
+                    count(*) FILTER (WHERE st.s ->> unit.k = '1')::bigint AS setengah, \
+                    count(*)::bigint AS total \
+               FROM unit CROSS JOIN st \
+              GROUP BY unit.k",
+            &[&class_id, &book_id, &kunci],
+        )
+        .await
+        .context("hitung_kekosongan")?;
+
+    // Kelas tanpa santri → CROSS JOIN kosong → tak ada baris sama sekali.
+    // Itu keadaan sah, bukan galat: panel menyebutnya "belum ada santri".
+    let total = rows.first().map(|r| r.get::<_, i64>(3)).unwrap_or(0);
+    let mut per_unit: std::collections::HashMap<String, (i64, i64)> =
+        std::collections::HashMap::with_capacity(rows.len());
+    for r in &rows {
+        per_unit.insert(r.get(0), (r.get(1), r.get(2)));
+    }
+    // Dikembalikan MENGIKUTI URUTAN kunci yang diminta — SQL tak menjamin
+    // urutan GROUP BY, dan urutan itulah yang jadi urutan kitabnya.
+    let hasil = kunci
+        .iter()
+        .map(|k| {
+            let (kosong, setengah) = per_unit.get(k).copied().unwrap_or((total, 0));
+            (k.clone(), kosong, setengah)
+        })
+        .collect();
+    Ok((total, hasil))
+}

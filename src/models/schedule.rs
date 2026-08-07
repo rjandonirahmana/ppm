@@ -8,18 +8,38 @@ use serde::{Deserialize, Serialize};
 /// chunk — web/live_audio.rs) — satu sumber kebenaran, bukan enum (kategori
 /// kelas tetap teks bebas, lihat migration 6_class_category.sql).
 pub fn category_allows_recording(category: &str) -> bool {
-    category.trim().eq_ignore_ascii_case("pengajian")
+    // HANYA KBM. Kegiatan lain — piket, apel, sholat, totalan, dan Bacaan
+    // Al-Quran — tak punya isi yang perlu diputar ulang, jadi rekamannya tak
+    // dibuat sama sekali dan aksesnya ditutup.
+    //
+    // Sebelum migrasi 65 syaratnya kategori PERSIS "pengajian", dan di produksi
+    // tak ada satu pun kelas atau jadwal yang begitu ("Pengajian KBM Malam",
+    // "KBM", "Lambatan", …) — tombol siaran mati di mana-mana tanpa ada yang
+    // menyadarinya. Perhatikan bahwa yang diadu di sini harus kategori KELAS,
+    // bukan kategori jadwal yang teks bebas: lihat `repository::sesi_kelas_kbm`.
+    category.trim().eq_ignore_ascii_case("kbm")
 }
 
 #[cfg(test)]
 mod tests {
     use super::category_allows_recording;
 
+    /// Hanya KBM yang direkam (migrasi 65).
     #[test]
-    fn hanya_pengajian_boleh_rekam() {
-        assert!(category_allows_recording("Pengajian"));
-        assert!(category_allows_recording("  pengajian  "));
-        assert!(category_allows_recording("PENGAJIAN"));
+    fn hanya_kbm_boleh_rekam() {
+        assert!(category_allows_recording("kbm"));
+        assert!(category_allows_recording("  KBM  "));
+
+        // Kegiatan lain tak punya isi yang perlu diputar ulang.
+        assert!(!category_allows_recording("non_kbm"));
+        assert!(!category_allows_recording("bacaan"));
+
+        // Kategori teks-bebas peninggalan sebelum migrasi 65 TIDAK lagi lolos.
+        // Dulu syaratnya kata "pengajian", dan itu bisa diketik siapa pun di
+        // kategori JADWAL — kelas piket berjudul "Pengajian Malam" akan ikut
+        // merekam. Yang menentukan sekarang kategori KELAS.
+        assert!(!category_allows_recording("Pengajian"));
+        assert!(!category_allows_recording("Pengajian KBM Malam"));
         assert!(!category_allows_recording("Sholat"));
         assert!(!category_allows_recording("Tahfidz"));
         assert!(!category_allows_recording(""));
@@ -99,6 +119,9 @@ pub struct SessionChatItem {
 /// Payload halaman detail sesi /sesi/:id (staf).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionDetailData {
+    /// Kategori KELAS (kbm|bacaan|non_kbm) — gerbang fitur seperti Hafalan.
+    #[serde(default)]
+    pub class_category: String,
     /// Boleh mengoreksi status absensi sesi ini? TRUE hanya bila pemirsa adalah
     /// GURU PENGISI atau PAMONG bertugas sesi ini — cerminan persis penjagaan
     /// di repository::correct_attendance. Dihitung server supaya UI tak pernah

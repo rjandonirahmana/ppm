@@ -124,7 +124,7 @@ pub fn ProfilPage() -> impl IntoView {
     });
 
     view! {
-        <Title text="Profil — PPM AFM" />
+        <Title text="Profil — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Profil Pengguna" />
@@ -354,7 +354,7 @@ pub fn ProfilPage() -> impl IntoView {
 
                         // ── Versi aplikasi ─────────────────────────────────
                         <div class="bg-surface-container rounded-2xl p-5 text-center">
-                            <p class="text-body-md font-bold text-on-background">"Portal PPM AFM v0.1.0"</p>
+                            <p class="text-body-md font-bold text-on-background">"AFM SMART v0.1.0"</p>
                             <p class="text-body-sm text-on-surface-variant mt-1">
                                 "Absensi & pembinaan santri — dibuat dengan ♥ untuk keluarga PPM AFM."
                             </p>
@@ -382,7 +382,7 @@ fn ProfilContent(p: ProfilData) -> impl IntoView {
                     {p.role_label.clone()}
                 </span>
                 <span class="px-3 py-1 rounded-full bg-white/15 text-[11px] font-bold tracking-wider">
-                    "PPM AFM"
+                    "AFM SMART"
                 </span>
             </div>
             {(!p.username.is_empty())

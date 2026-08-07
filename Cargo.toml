@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# ppm — Absensi Santri PPM AFM. Satu crate: SSR (Axum) + Hydrate (WASM).
+# ppm — Absensi Santri AFM SMART. Satu crate: SSR (Axum) + Hydrate (WASM).
 # Leptos SSR: render cepat & hemat memori. Data di Postgres (lihat migration/).
 # ═══════════════════════════════════════════════════════════════════════════════
 

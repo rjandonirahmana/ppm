@@ -1,4 +1,4 @@
-//! main.rs — Server PPM AFM (Leptos SSR + Axum).
+//! main.rs — Server AFM SMART (Leptos SSR + Axum).
 //!
 //!   cargo leptos watch   # SSR + hydration WASM (dev penuh)
 //!   cargo run            # SSR saja (butuh DATABASE_URL di .env)
@@ -180,6 +180,30 @@ async fn main() -> Result<()> {
     // lihat repository::run_auto_absent). Set-based & idempotent (aman
     // dijalankan berulang). Bisa diganti cron eksternal via endpoint di
     // kemudian hari.
+    // Pengingat penugasan sesi KBM — TERPISAH dari job harian di bawah karena
+    // ketelitiannya beda: yang ini harus menyapa jendela "satu jam sebelum
+    // mulai", jadi ticknya menit-menitan. Jendela pencariannya (50–70 menit)
+    // sengaja lebih lebar dari jarak antar-tick supaya tak ada sesi yang jatuh
+    // di celah; `class_sessions.pamong_reminded_at` (migrasi 67) yang menjaga
+    // satu sesi hanya dikirimi sekali.
+    {
+        let pool = state.pool.clone();
+        let http = state.http.clone();
+        let waha = state.waha.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop {
+                tick.tick().await;
+                match ppm::service::permits::ingatkan_pamong_sesi(&http, &waha, &pool, 50, 70).await
+                {
+                    Ok(n) if n > 0 => tracing::info!("Pengingat sesi: {n} pesan terkirim ke pamong"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Pengingat sesi gagal: {e}"),
+                }
+            }
+        });
+    }
+
     {
         let pool = state.pool.clone();
         tokio::spawn(async move {

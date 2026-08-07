@@ -11,7 +11,7 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::hooks::use_params_map;
 
-use crate::models::{is_mengaji_category, HafalanItem, SessionAttRow, SessionChatItem, SessionDetailData};
+use crate::models::{HafalanItem, SessionAttRow, SessionChatItem, SessionDetailData};
 use crate::web::api::{
     correct_attendance_bulk_action, decide_session_action, hafalan_of_class_action,
     log_hafalan_action,
@@ -19,7 +19,7 @@ use crate::web::api::{
     set_session_actual_detail_action, set_session_book_action, set_session_live,
     set_session_pamong_action, set_session_target_action, set_session_teacher_action,
 };
-use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
+use crate::web::components::{DeviceFrame, FetchError, MobileHeader, SwipeArea};
 
 #[component]
 pub fn SesiDetailPage() -> impl IntoView {
@@ -30,7 +30,7 @@ pub fn SesiDetailPage() -> impl IntoView {
         Resource::new(move || session_id.get(), |id| async move { session_detail_data(id).await });
 
     view! {
-        <Title text="Detail Sesi — PPM AFM" />
+        <Title text="Detail Sesi — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Detail Sesi" back_href="/sesi" />
@@ -74,7 +74,19 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
 
     // ── Setoran Hafalan: hanya kelas kategori "Mengaji"/"Pengajian" ─────────
     let class_id = d.class_id;
-    let show_hafalan = is_mengaji_category(&d.category);
+    // Hafalan HANYA di kelas Bacaan Al-Quran. Dulu gerbangnya
+    // `is_mengaji_category` atas kategori JADWAL — teks bebas, dan jadwal KBM
+    // yang kebetulan berjudul "Pengajian KBM Malam" ikut memunculkan panel
+    // setoran hafalan di kelas yang tak pernah menyetor hafalan.
+    let show_hafalan = d.class_category == "bacaan";
+    // Urutan tab yang tampil — sumber tunggal untuk gestur geser dan bilah tab.
+    let urutan_tab = move || -> Vec<&'static str> {
+        if show_hafalan {
+            vec!["absensi", "kelola", "hafalan", "lainnya"]
+        } else {
+            vec!["absensi", "kelola", "lainnya"]
+        }
+    };
     let hafalan_students: Vec<(i64, String)> =
         d.attendance.iter().map(|a| (a.user_id, a.name.clone())).collect();
 
@@ -281,7 +293,25 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
         // di layar lebar); panel lain (form/chat) tetap dibatasi md:max-w-* per
         // arm — dulu SEMUA tab dibatasi md:max-w-2xl termasuk absensi, hasilnya
         // ruang kosong besar di kanan pada layar lebar (audit UI user).
-        <div>
+        // Geser kiri/kanan = pindah tab, seperti kalender bulanan. Daftar
+        // tabnya dihitung dari yang BENAR-BENAR tampil (Hafalan hanya ada di
+        // kelas Bacaan), jadi geser tak pernah mendarat di tab yang tak ada.
+        <SwipeArea
+            on_prev=move || {
+                let urut = urutan_tab();
+                let i = urut.iter().position(|t| *t == tab.get_untracked()).unwrap_or(0);
+                if i > 0 {
+                    tab.set(urut[i - 1].to_string());
+                }
+            }
+            on_next=move || {
+                let urut = urutan_tab();
+                let i = urut.iter().position(|t| *t == tab.get_untracked()).unwrap_or(0);
+                if i + 1 < urut.len() {
+                    tab.set(urut[i + 1].to_string());
+                }
+            }
+        >
             {move || {
                 match tab.get().as_str() {
                     "kelola" => {
@@ -664,7 +694,7 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                     }
                 }
             }}
-        </div>
+        </SwipeArea>
     }
 }
 

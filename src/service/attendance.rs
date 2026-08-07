@@ -84,14 +84,14 @@ pub async fn record_scan(
     // santri yang mestinya di masjid bisa menempel kartu di gedung putra dan
     // tetap terhitung hadir. Jadwal tanpa ruang tetap bebas di-tap di mana pun.
     let schedule = repo::active_schedule_now(pool, user_id, today, now_time, device.id).await?;
-    let (schedule_id, status, note) = match &schedule {
+    let (schedule_id, session_id, status, note) = match &schedule {
         Some(s) => {
             let st = if now_time <= s.limit_entry {
                 "present"
             } else {
                 "late"
             };
-            (Some(s.id), st, None)
+            (Some(s.id), Some(s.session_id), st, None)
         }
         None => {
             // SALAH RUANG → TOLAK, jangan catat apa pun. Santri yang jadwalnya
@@ -121,7 +121,7 @@ pub async fn record_scan(
             }
             // Tak ada jadwal aktif sama sekali → tetap dicatat sbg log gerbang
             // (perilaku lama, disengaja: jejak lalu-lalang tetap berguna).
-            (None, "outside_schedule", Some("scan di luar jadwal".to_string()))
+            (None, None, "outside_schedule", Some("scan di luar jadwal".to_string()))
         }
     };
 
@@ -135,13 +135,10 @@ pub async fn record_scan(
         });
     }
 
-    // Tautkan ke sesi kelas hari ini bila guru sudah memulai sesi.
-    let session_id = match schedule_id {
-        Some(sid) => repo::session_for_schedule_today(pool, sid, today)
-            .await
-            .unwrap_or(None),
-        None => None,
-    };
+    // Sesi tak perlu dicari lagi: `active_schedule_now` hanya cocok bila sesi
+    // hari ini memang ada, jadi id-nya sudah terbawa dari sana. Dulu ini query
+    // kedua yang bisa mengembalikan None — absensi lalu tercatat tanpa tertaut
+    // sesi mana pun, dan tak pernah muncul di panel verifikasi guru.
 
     // None = kalah balapan dgn tap kembar (ON CONFLICT). Bukan galat: mesin
     // cukup diberi tahu absennya sudah ada.
@@ -268,6 +265,10 @@ pub async fn verify_data(pool: &Pool, teacher_id: Option<i64>) -> Result<PamongD
 
 /// Verifikasi final satu absensi (tahap final, oleh ustad bertugas). `teacher_id`
 /// Some = guard hanya sesi yang ustadnya guru ini (migrasi 33).
+///
+/// Jalur SATUAN ini hanya dipakai peran guru/dewan_guru/admin (lihat server fn
+/// `decide_verify`), jadi pembandingnya selalu kolom GURU — pamong memutuskan
+/// lewat `decide_session` yang membawa penandanya sendiri.
 pub async fn decide_verify(
     pool: &Pool,
     att_id: i64,
@@ -275,7 +276,7 @@ pub async fn decide_verify(
     approve: bool,
     teacher_id: Option<i64>,
 ) -> Result<bool> {
-    repo::decide_verify(pool, att_id, approver, approve, teacher_id).await
+    repo::decide_verify(pool, att_id, approver, approve, teacher_id, false).await
 }
 
 // ── Verifikasi kehadiran PER-SESI (batch) ─────────────────────────────────────
@@ -285,10 +286,17 @@ pub async fn decide_verify(
 
 use crate::models::{SessionVerifyData, SessionVerifyItem};
 
-fn stage_for(role: &str, user_id: i64) -> (&'static str, &'static str, Option<i64>) {
+/// (tahap, label, id petugas yang membatasi daftar, petugas itu PAMONG?).
+///
+/// Elemen keempat menentukan kolom pembanding `actor`: pamong sesi atau guru
+/// sesi. Tanpa itu, id pamong pernah diadu dengan kolom guru — cocok tak
+/// pernah, atau lebih buruk: dilepas jadi NULL sehingga tak membatasi apa pun.
+type Tahap = (&'static str, &'static str, Option<i64>, bool);
+
+fn stage_for(role: &str, user_id: i64) -> Tahap {
     match role {
-        "supervisor" => ("pamong", "Verifikasi Pamong", Some(user_id)),
-        _ => ("final", "Verifikasi Final", None), // dewan_guru/admin/ketua
+        "supervisor" => ("pamong", "Verifikasi Pamong", Some(user_id), true),
+        _ => ("final", "Verifikasi Final", None, false), // dewan_guru/admin/ketua
     }
 }
 
@@ -302,20 +310,25 @@ fn stage_for(role: &str, user_id: i64) -> (&'static str, &'static str, Option<i6
 /// bukan "pamong". Kalau dipaksa lewat tahap pamong, absensinya berhenti di
 /// pamong_status='approved' dan tak pernah dapat poin — persis kelas yang
 /// verifikasinya seolah tak selesai-selesai.
-fn stage_untuk_mode(
-    role: &str,
-    mode: &str,
-    user_id: i64,
-) -> Option<(&'static str, &'static str, Option<i64>)> {
+fn stage_untuk_mode(role: &str, mode: &str, user_id: i64) -> Option<Tahap> {
     let pamong = role == "supervisor";
     match (mode, pamong) {
-        ("dua_tahap", true) => Some(("pamong", "Verifikasi Pamong", Some(user_id))),
-        ("dua_tahap", false) => Some(("final", "Verifikasi Final", None)),
+        ("dua_tahap", true) => Some(("pamong", "Verifikasi Pamong", Some(user_id), true)),
+        ("dua_tahap", false) => Some(("final", "Verifikasi Final", None, false)),
         // Cukup guru → pamong tak punya peran di sini.
         ("guru", true) => None,
-        ("guru", false) => Some(("final", "Verifikasi Final", None)),
-        // Cukup pamong → pamong memfinalkan; admin/dewan tetap boleh (pengawasan).
-        ("pamong", _) => Some(("final", "Verifikasi Final", None)),
+        ("guru", false) => Some(("final", "Verifikasi Final", None, false)),
+        // Cukup pamong → pamong memfinalkan, TAPI hanya sesi yang ia tanggung.
+        //
+        // Dulu baris ini memberi actor=None untuk siapa pun, termasuk pamong.
+        // actor=None berarti query verifikasi melepas syarat kepemilikan
+        // (`$2 IS NULL OR pamong_id = $2`), jadi pamong kelas A bisa membuka —
+        // dan memfinalkan — absensi kelas B. Di mode 'dua_tahap' pamong sudah
+        // dibatasi Some(user_id); ketimpangan itulah bugnya.
+        //
+        // admin/dewan_guru tetap None: pengawasan lintas kelas memang tugasnya.
+        ("pamong", true) => Some(("final", "Verifikasi Final", Some(user_id), true)),
+        ("pamong", false) => Some(("final", "Verifikasi Final", None, false)),
         _ => Some(stage_for(role, user_id)),
     }
 }
@@ -329,7 +342,8 @@ pub async fn session_verify(
     let mode = crate::repository::session_verify_mode(pool, session_id)
         .await?
         .unwrap_or_else(|| "dua_tahap".to_string());
-    let Some((stage, stage_label, actor)) = stage_untuk_mode(role, &mode, user_id) else {
+    let Some((stage, stage_label, actor, actor_pamong)) = stage_untuk_mode(role, &mode, user_id)
+    else {
         // Peran ini tak ikut memverifikasi kelas tsb → daftar kosong, panel
         // tak dirender.
         return Ok(SessionVerifyData {
@@ -338,7 +352,7 @@ pub async fn session_verify(
             items: Vec::new(),
         });
     };
-    let rows = repo::session_verify_list(pool, session_id, stage, actor).await?;
+    let rows = repo::session_verify_list(pool, session_id, stage, actor, actor_pamong).await?;
     Ok(SessionVerifyData {
         stage: stage.to_string(),
         stage_label: stage_label.to_string(),
@@ -367,21 +381,36 @@ pub async fn decide_session(
     let mode = crate::repository::session_verify_mode(pool, session_id)
         .await?
         .unwrap_or_else(|| "dua_tahap".to_string());
-    let Some((stage, _, actor)) = stage_untuk_mode(role, &mode, user_id) else {
+    let Some((stage, _, actor, actor_pamong)) = stage_untuk_mode(role, &mode, user_id) else {
         bail_user!("Kelas ini tak memerlukan verifikasi dari peran Anda.");
     };
-    let rows = repo::session_verify_list(pool, session_id, stage, actor).await?;
+    let rows = repo::session_verify_list(pool, session_id, stage, actor, actor_pamong).await?;
+
+    // Dipisah jadi DUA daftar lalu ditulis sekali masing-masing. Dulu satu
+    // panggilan per santri: sesi 200 santri = 200 transaksi dan 400 perjalanan
+    // ke database untuk satu tombol, dan bila koneksi putus di tengah, separuh
+    // sesi terverifikasi tanpa ada yang tahu di mana berhentinya.
+    let (tolak, setuju): (Vec<i64>, Vec<i64>) =
+        rows.into_iter().map(|r| r.id).partition(|id| reject_ids.contains(id));
+
     let mut n = 0i64;
-    for r in rows {
-        let approve = !reject_ids.contains(&r.id);
-        let ok = if stage == "pamong" {
-            repo::decide_pamong(pool, r.id, user_id, approve, actor).await?
-        } else {
-            repo::decide_verify(pool, r.id, user_id, approve, actor).await?
-        };
-        if ok {
-            n += 1;
+    if stage == "pamong" {
+        // Tahap pamong belum punya jalur set-based tersendiri: ia tak memberi
+        // poin, jadi biayanya satu UPDATE per baris tanpa insert menyertai.
+        for id in tolak.iter().chain(setuju.iter()) {
+            let approve = !reject_ids.contains(id);
+            if repo::decide_pamong(pool, *id, user_id, approve, actor).await? {
+                n += 1;
+            }
         }
+        return Ok(n);
+    }
+
+    if !tolak.is_empty() {
+        n += repo::decide_verify_bulk(pool, &tolak, user_id, false, actor, actor_pamong).await?;
+    }
+    if !setuju.is_empty() {
+        n += repo::decide_verify_bulk(pool, &setuju, user_id, true, actor, actor_pamong).await?;
     }
     Ok(n)
 }
@@ -439,7 +468,17 @@ pub async fn correct_attendance_bulk(
         bail_user!("Anda bukan guru/pamong yang bertugas di sesi ini.");
     };
 
-    let mut n = 0i64;
+    // Validasi & normalisasi dulu SELURUH baris, baru sekali tulis. Dulu tiap
+    // santri satu upsert: satu sesi 200 santri = 200 transaksi dan 200 kali
+    // perjalanan ke database untuk satu tombol "simpan".
+    //
+    // Validasi tetap MENGGAGALKAN SEMUA bila ada satu status tak dikenal —
+    // menyimpan sebagian dari koreksi massal meninggalkan sesi setengah benar
+    // yang tak bisa dibedakan dari yang belum dikoreksi.
+    let mut uids: Vec<i64> = Vec::with_capacity(items.len());
+    let mut statuses: Vec<String> = Vec::with_capacity(items.len());
+    let mut jams: Vec<Option<chrono::NaiveTime>> = Vec::with_capacity(items.len());
+
     for it in items {
         if !matches!(
             it.status.as_str(),
@@ -461,21 +500,23 @@ pub async fn correct_attendance_bulk(
             _ => it.status.as_str(),
         };
 
-        if repo::upsert_session_attendance(
-            pool,
-            session_id,
-            schedule_id,
-            session_date,
-            it.user_id,
-            status,
-            jam,
-            actor_id,
-        )
-        .await?
-        {
-            n += 1;
-        }
+        uids.push(it.user_id);
+        statuses.push(status.to_string());
+        jams.push(jam);
     }
+
+    let n = repo::upsert_session_attendance_bulk(
+        pool,
+        session_id,
+        schedule_id,
+        session_date,
+        &uids,
+        &statuses,
+        &jams,
+        actor_id,
+    )
+    .await?;
+
     Ok(n)
 }
 
@@ -489,4 +530,47 @@ fn parse_jam(s: &str) -> Result<Option<chrono::NaiveTime>> {
     chrono::NaiveTime::parse_from_str(s, "%H:%M")
         .map(Some)
         .map_err(|_| anyhow::anyhow!("Jam \"{s}\" tidak valid (format 24 jam, mis. 05:15)."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pamong hanya boleh menyentuh sesi yang IA tanggung — di ketiga mode.
+    ///
+    /// Regresi: di mode 'pamong' baris ini pernah mengembalikan actor `None`,
+    /// yang di query verifikasi berarti "tanpa batas kepemilikan". Pamong kelas
+    /// A karenanya bisa memfinalkan absensi kelas B, lengkap dengan poinnya.
+    #[test]
+    fn pamong_selalu_terikat_sesinya() {
+        for mode in ["dua_tahap", "pamong"] {
+            let (_, _, actor, actor_pamong) =
+                stage_untuk_mode("supervisor", mode, 7).expect("pamong ikut verifikasi");
+            assert_eq!(actor, Some(7), "mode {mode}: pamong wajib dibatasi id-nya");
+            assert!(actor_pamong, "mode {mode}: id itu dibandingkan ke kolom PAMONG");
+        }
+        // Mode 'guru' → pamong memang tak ikut sama sekali.
+        assert!(stage_untuk_mode("supervisor", "guru", 7).is_none());
+    }
+
+    /// Pamong memfinalkan di mode 'pamong' (bukan berhenti di tahap pamong,
+    /// yang akan membuat absensinya tak pernah berpoin).
+    #[test]
+    fn mode_pamong_langsung_final() {
+        let (stage, _, _, _) = stage_untuk_mode("supervisor", "pamong", 7).unwrap();
+        assert_eq!(stage, "final");
+        let (stage, _, _, _) = stage_untuk_mode("supervisor", "dua_tahap", 7).unwrap();
+        assert_eq!(stage, "pamong");
+    }
+
+    /// Pengawas lintas-kelas tetap tanpa batas, dan dibandingkan ke kolom GURU.
+    #[test]
+    fn dewan_dan_admin_mengawasi_semua() {
+        for mode in ["dua_tahap", "guru", "pamong"] {
+            let (stage, _, actor, actor_pamong) = stage_untuk_mode("dewan_guru", mode, 9).unwrap();
+            assert_eq!(stage, "final", "mode {mode}");
+            assert_eq!(actor, None, "mode {mode}: pengawas tak dibatasi");
+            assert!(!actor_pamong, "mode {mode}");
+        }
+    }
 }

@@ -2,6 +2,58 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Jenis kelas — TIGA (migrasi 65).
+///
+/// `kbm` = kelas belajar-mengajar: berjenjang, satu santri hanya boleh satu,
+/// dan wali kelasnyalah yang memutuskan izin.
+/// `bacaan` = Bacaan Al-Quran: berdiri sendiri, bukan KBM (tak berjenjang, tak
+/// terikat aturan satu-kelas) tapi juga bukan kegiatan seperti piket/apel.
+/// `non_kbm` = kegiatan lain (piket, apel malam, apel mingguan, sholat,
+/// totalan) — santri boleh ikut berapa pun.
+pub const KATEGORI_KELAS: &[(&str, &str)] = &[
+    ("kbm", "KBM — kelas belajar mengajar"),
+    ("bacaan", "Bacaan — Bacaan Al-Quran"),
+    ("non_kbm", "Non-KBM — piket, apel, sholat, dll"),
+];
+
+/// Jenjang kelas KBM, BERURUTAN — santri naik ke jenjang berikutnya setelah
+/// kurikulum jenjangnya tuntas.
+///
+/// Ada di `models` (bukan `service`) karena dipakai kedua sisi: server saat
+/// memvalidasi, dan WASM saat menyusun dropdown. `service` tak dikompilasi
+/// untuk WASM.
+pub const JENJANG: &[(&str, &str)] = &[
+    ("lambatan", "Lambatan"),
+    ("cepatan", "Cepatan"),
+    ("saringan", "Saringan"),
+    ("hadist_besar", "Hadist Besar"),
+];
+
+/// Label tampilan sebuah kode jenjang; kode tak dikenal → apa adanya.
+pub fn jenjang_label(kode: &str) -> String {
+    JENJANG
+        .iter()
+        .find(|(k, _)| *k == kode)
+        .map(|(_, l)| l.to_string())
+        .unwrap_or_else(|| kode.to_string())
+}
+
+/// Label tampilan kategori kelas — dipakai lencana di kartu & detail.
+pub fn kategori_label(kode: &str) -> &'static str {
+    match kode {
+        "kbm" => "KBM",
+        "bacaan" => "Bacaan",
+        "non_kbm" => "Non-KBM",
+        _ => "",
+    }
+}
+
+/// Jenjang sesudah `kode`, atau None bila sudah yang terakhir (Hadist Besar).
+pub fn jenjang_berikutnya(kode: &str) -> Option<&'static str> {
+    let i = JENJANG.iter().position(|(k, _)| *k == kode)?;
+    JENJANG.get(i + 1).map(|(k, _)| *k)
+}
+
 /// Sesi live di dashboard staf.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LiveSesi {
@@ -132,14 +184,19 @@ pub struct KelasItem {
     pub description: String,
     /// Kategori kelas (teks bebas: Cepatan/Lambatan/…). Kosong = belum diisi.
     pub category: String,
-    /// Golongan (migrasi 16): sumbu klasifikasi TERPISAH dari category —
+    /// Jenjang (migrasi 16): sumbu klasifikasi TERPISAH dari category —
     /// "Bacaan" (Lambatan/Cepatan) atau "Makna" (Hadist Besar/…). Kosong =
     /// kelas di luar sistem dua-sumbu ini.
-    pub golongan: String,
+    pub jenjang: String,
     /// Pengajar sesi terakhir kelas ini (kolom teacher tak ada di classes).
     pub teacher: String,
     pub member_count: i64,
     pub schedule_count: i64,
+    /// Nama wali kelas; kosong = belum ditunjuk. Untuk KBM itu keadaan yang
+    /// HARUS diperbaiki (izin santrinya tak punya penyetuju), jadi kartunya
+    /// menandainya alih-alih diam.
+    #[serde(default)]
+    pub wali_kelas: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -151,6 +208,10 @@ pub struct KelasData {
     pub total_kelas: i64,
     pub total_santri: i64,
     pub items: Vec<KelasItem>,
+    /// Guru yang bisa dipilih jadi wali kelas saat MEMBUAT kelas KBM — wali
+    /// wajib sejak awal, jadi pilihannya harus sudah ada di halaman ini.
+    #[serde(default)]
+    pub teacher_options: Vec<TeacherOption>,
 }
 
 /// Anggota kelas (LIHAT SANTRI).
@@ -263,12 +324,9 @@ pub struct KelasDetail {
     pub name: String,
     pub description: String,
     pub category: String,
-    /// Kategori yang sudah pernah dipakai (untuk dropdown + boleh ketik baru).
-    pub category_options: Vec<String>,
-    /// Golongan kelas ini (migrasi 16: "Bacaan"/"Makna"/…, kosong = tak diisi).
-    pub golongan: String,
-    /// Golongan yang sudah pernah dipakai (untuk dropdown + boleh ketik baru).
-    pub golongan_options: Vec<String>,
+    /// Jenjang KBM: lambatan|cepatan|hadist_besar (migrasi 65). Kosong utk
+    /// kelas non-KBM.
+    pub jenjang: String,
     /// Wali kelas (migrasi 29): guru penyetuju FINAL izin santri kelas ini.
     /// 0 = belum diset; wali_kelas_name utk tampilan.
     pub wali_kelas_id: i64,
@@ -282,6 +340,12 @@ pub struct KelasDetail {
     /// jadwal)? Hanya admin/ketua. Dihitung server supaya UI mengunci sendiri
     /// alih-alih menawarkan tombol yang pasti ditolak.
     pub can_manage: bool,
+    /// Boleh menata JADWAL & ANGGOTA kelas ini? admin/ketua ATAU pamong kelas
+    /// ini. Sengaja terpisah dari `can_manage`: pamong menata susunan kelas
+    /// sehari-hari, tapi identitas kelas dan penunjukan petugas tetap admin.
+    /// Wali kelas TIDAK termasuk — ia mengajar dan memutuskan izin.
+    #[serde(default)]
+    pub can_manage_jadwal: bool,
     /// Pamong kelas (migrasi 30): verifikasi kehadiran + tahap-1 izin + terima WA
     /// pengingat sesi. 0 = belum diset.
     pub pamong_id: i64,
@@ -347,12 +411,12 @@ pub struct CurriculumItem {
     pub current_label: String,
 }
 
-/// Satu kelas yang diikuti santri, berlabel golongan (migrasi 16) — santri
-/// biasanya punya satu tag per golongan (satu Bacaan + satu Makna).
+/// Satu kelas yang diikuti santri, berlabel jenjang (migrasi 16) — santri
+/// biasanya punya satu tag per jenjang (satu Bacaan + satu Makna).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StudentClassTag {
-    /// "Bacaan" / "Makna" / kosong (kelas di luar sistem golongan).
-    pub golongan: String,
+    /// "Bacaan" / "Makna" / kosong (kelas di luar sistem jenjang).
+    pub jenjang: String,
     pub name: String,
 }
 
@@ -394,6 +458,23 @@ pub struct PermitReviewItem {
     pub range_label: String,
     pub reason: String,
     pub when_label: String,
+    /// Sesi yang akan TERLEWAT bila izin ini disetujui: "kelas lambatan (3
+    /// sesi)". Wali kelas memutuskan sambil melihat akibatnya, bukan menebak
+    /// dari rentang tanggal.
+    #[serde(default)]
+    pub sesi_terlewat: Vec<String>,
+    /// Total sesi terlewat lintas kelas.
+    #[serde(default)]
+    pub total_sesi: i64,
+    /// "09:00 – 11:00 WIB" bila izinnya per jam; kosong = sehari penuh.
+    #[serde(default)]
+    pub jam_label: String,
+    /// Kelas tujuan memakai verifikasi dua langkah (pamong lalu wali kelas).
+    #[serde(default)]
+    pub dua_tahap: bool,
+    /// Tahap pamong sudah disetujui.
+    #[serde(default)]
+    pub pamong_ok: bool,
 }
 
 /// Payload halaman /izin-staf. Antrean disesuaikan peran peninjau (pamong →
@@ -436,7 +517,7 @@ pub struct KelasSayaItem {
     /// Pamong". Kosong untuk santri — ia peserta, bukan petugas.
     pub peran_saya: String,
     pub category: String,
-    pub golongan: String,
+    pub jenjang: String,
     /// Kosong = belum ditunjuk.
     pub wali_kelas: String,
     pub pamong: String,
@@ -452,4 +533,84 @@ pub struct KelasSayaData {
     /// dipakai halaman untuk menyesuaikan kalimatnya.
     pub sebagai_staf: bool,
     pub items: Vec<KelasSayaItem>,
+}
+
+#[cfg(test)]
+mod tests_kelas_kategori {
+    use super::*;
+
+    /// Jenjang BERURUTAN — kenaikan santri bersandar pada urutan ini.
+    #[test]
+    fn jenjang_naik_berurutan() {
+        assert_eq!(jenjang_berikutnya("lambatan"), Some("cepatan"));
+        assert_eq!(jenjang_berikutnya("cepatan"), Some("saringan"));
+        assert_eq!(jenjang_berikutnya("saringan"), Some("hadist_besar"));
+        // Jenjang terakhir tak punya lanjutan.
+        assert_eq!(jenjang_berikutnya("hadist_besar"), None);
+        assert_eq!(jenjang_berikutnya("entah"), None);
+    }
+
+    #[test]
+    fn label_dipajang_bukan_kode() {
+        assert_eq!(jenjang_label("hadist_besar"), "Hadist Besar");
+        assert_eq!(jenjang_label("saringan"), "Saringan");
+        // Kode asing dikembalikan apa adanya — lebih baik daripada kosong.
+        assert_eq!(jenjang_label("xyz"), "xyz");
+        assert_eq!(kategori_label("kbm"), "KBM");
+        assert_eq!(kategori_label("bacaan"), "Bacaan");
+        assert_eq!(kategori_label("non_kbm"), "Non-KBM");
+        assert_eq!(kategori_label("piket"), "");
+    }
+
+    /// Tiga kategori, dan hanya KBM yang berjenjang.
+    #[test]
+    fn kategori_tepat_tiga() {
+        let kode: Vec<&str> = KATEGORI_KELAS.iter().map(|(k, _)| *k).collect();
+        assert_eq!(kode, vec!["kbm", "bacaan", "non_kbm"]);
+        assert_eq!(JENJANG.len(), 4);
+    }
+}
+
+// ── Analisis kekosongan materi (per kelas, per kitab) ────────────────────────
+
+/// Satu rentang unit (ayat/halaman) yang paling banyak KOSONG di kelas.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KekosonganItem {
+    /// "Ayat 45 – 60" / "Halaman 12 – 20" / "Ayat 45" bila satu unit.
+    pub label: String,
+    /// Unit awal & akhir (nomor ayat dalam surat, atau nomor halaman).
+    pub start_unit: i32,
+    pub end_unit: i32,
+    /// Indeks surat (kitab Qur'an); 0 untuk kitab hadist.
+    pub surah_idx: i32,
+    /// Nama surat — kosong untuk kitab hadist.
+    pub surah_name: String,
+    /// Santri yang BELUM menyentuh bagian ini sama sekali.
+    pub kosong: i64,
+    /// Santri yang baru setengah (status 1).
+    pub setengah: i64,
+    /// Rentang dengan kekosongan TERBANYAK di kitab ini — ditandai server agar
+    /// UI tak perlu membandingkan angka sendiri.
+    #[serde(default)]
+    pub terberat: bool,
+}
+
+/// Peta kekosongan satu kitab di satu kelas — dasar guru memilih bagian mana
+/// yang paling perlu dibahas berikutnya.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct KekosonganData {
+    pub book_title: String,
+    /// quran | hadist — menentukan kata "ayat" atau "halaman".
+    pub category: String,
+    /// "Ayat" atau "Halaman" — dipakai UI untuk label & placeholder pencarian.
+    #[serde(default)]
+    pub satuan: String,
+    /// Santri kelas yang ikut dihitung.
+    pub total_santri: i64,
+    /// Rentang terlemah lebih dulu (kosong terbanyak).
+    pub items: Vec<KekosonganItem>,
+    /// Unit yang SUDAH tuntas seluruh santri — dipakai UI menyebut kemajuan
+    /// alih-alih hanya menampilkan kekurangan.
+    pub unit_tuntas: i64,
+    pub unit_total: i64,
 }

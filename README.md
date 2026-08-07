@@ -1,6 +1,6 @@
-# PPM AFM — Absensi Santri
+# AFM SMART — Absensi Santri
 
-Portal absensi santri **PPM AFM** — **Leptos SSR + Axum + PostgreSQL**. Render di
+Portal absensi santri **AFM SMART** — **Leptos SSR + Axum + PostgreSQL**. Render di
 server (cepat, hemat memori), interaktif via hydration WASM. Pola mengikuti proyek
 Leptos SSR lain di mesin ini (e-ticketing, wedding-web): satu binary, satu port.
 

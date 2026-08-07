@@ -292,11 +292,11 @@ pub fn DesktopSidebar() -> impl IntoView {
                 >
                     // ── Brand ────────────────────────────────────────────
                     <div class="flex items-center gap-3 px-5 pt-6 pb-5">
-                        <div class="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center">
-                            <span class="material-symbols-outlined">"mosque"</span>
+                        <div class="w-10 h-10 rounded-xl bg-white flex items-center justify-center overflow-hidden">
+                            <img src="/icons/logo.png" alt="" class="w-full h-full object-contain p-1" />
                         </div>
                         <div class="leading-tight min-w-0">
-                            <p class="font-bold text-body-lg">"PPM AFM"</p>
+                            <p class="font-bold text-body-lg">"AFM SMART"</p>
                             <p class="text-[10px] uppercase tracking-[0.18em] opacity-70">
                                 "Portal Absensi"
                             </p>
@@ -1202,6 +1202,11 @@ pub fn AdminOnly(
     /// Apa yang tak bisa dikerjakan, mis. "menambah santri ke kelas".
     #[prop(into)]
     apa: String,
+    /// Siapa yang sebenarnya boleh — default "admin atau ketua". Jadwal dan
+    /// anggota kelas juga terbuka untuk pamong kelas, dan menyebut "hanya
+    /// admin" di sana membuat pamong mengira aplikasinya rusak.
+    #[prop(into, default = String::from("admin atau ketua"))]
+    siapa: String,
     // `Children` (FnOnce), bukan `ChildrenFn`: isinya dirender paling banyak
     // sekali, dan ChildrenFn menuntut Sync — yang tak dipenuhi closure
     // `refetch` milik halaman kelas.
@@ -1216,9 +1221,9 @@ pub fn AdminOnly(
                 <span class="material-symbols-outlined text-[18px]">"lock"</span>
             </span>
             <div class="min-w-0">
-                <p class="text-body-sm font-semibold text-on-background">"Hanya admin"</p>
+                <p class="text-body-sm font-semibold text-on-background">"Terkunci"</p>
                 <p class="text-[11px] text-on-surface-variant">
-                    {format!("Hanya admin/ketua yang boleh {apa}. Hubungi admin bila perlu diubah.")}
+                    {format!("Hanya {siapa} yang boleh {apa}. Hubungi pengelola bila perlu diubah.")}
                 </p>
             </div>
         </div>
@@ -1298,19 +1303,6 @@ pub fn KotakCari(
     }
 }
 
-/// Kategori kelas yang layak dipajang DI SAMPING golongannya.
-///
-/// Kelas non-akademik kerap memakai kata yang sama untuk keduanya ("piket" /
-/// "piket"), dan dua lencana kembar berdampingan tak menerangkan apa pun —
-/// hanya bising. Kosong berarti "jangan tampilkan lencana kedua".
-pub fn kategori_tampil(golongan: &str, category: &str) -> String {
-    if category.trim().eq_ignore_ascii_case(golongan.trim()) {
-        String::new()
-    } else {
-        category.to_string()
-    }
-}
-
 /// Daftar kartu dua kolom yang tingginya berdiri sendiri (masonry).
 ///
 /// `<div class="ppm-card-grid">` polos memakai CSS Grid, dan grid selalu
@@ -1356,5 +1348,364 @@ pub fn Skeleton(
         <div class="animate-pulse space-y-3">
             {(0..baris).map(|_| view! { <div class=cls.clone()></div> }).collect_view()}
         </div>
+    }
+}
+
+/// Area yang bisa DIGESER kiri/kanan untuk berpindah (bulan, halaman, tab).
+///
+/// Memakai Pointer Events, bukan Touch Events: satu jalur kode melayani jari di
+/// ponsel DAN seret tetikus/trackpad di desktop. Touch Events hanya ada di
+/// perangkat sentuh, sehingga versi touch-only membuat gestur yang sama tak
+/// bekerja di layar besar.
+///
+/// Ambang 60 px + syarat `|dx| > |dy|`: tanpa keduanya, gulir vertikal biasa
+/// yang sedikit miring akan terbaca sebagai geser dan memindahkan bulan tanpa
+/// diminta. `touch-action:pan-y` (lihat `.ppm-swipe-area` di tailwind.css)
+/// membiarkan gulir vertikal tetap milik browser, sementara sumbu X jadi milik
+/// kita.
+#[component]
+pub fn SwipeArea(
+    /// Geser ke KANAN (jari bergerak ke kanan) — lazimnya "sebelumnya".
+    on_prev: impl Fn() + Copy + Send + 'static,
+    /// Geser ke KIRI — lazimnya "berikutnya".
+    on_next: impl Fn() + Copy + Send + 'static,
+    #[prop(optional, into)] class: String,
+    children: Children,
+) -> impl IntoView {
+    /// Jarak minimum yang dianggap sengaja digeser, dalam piksel.
+    const AMBANG: f64 = 60.0;
+
+    let mulai = RwSignal::new(Option::<(f64, f64)>::None);
+    let cls = format!("ppm-swipe-area {class}");
+
+    view! {
+        <div
+            class=cls
+            on:pointerdown=move |ev: leptos::ev::PointerEvent| {
+                mulai.set(Some((ev.client_x() as f64, ev.client_y() as f64)));
+            }
+            on:pointercancel=move |_| mulai.set(None)
+            on:pointerup=move |ev: leptos::ev::PointerEvent| {
+                let Some((x0, y0)) = mulai.get_untracked() else {
+                    return;
+                };
+                mulai.set(None);
+                let dx = ev.client_x() as f64 - x0;
+                let dy = ev.client_y() as f64 - y0;
+                if dx.abs() < AMBANG || dx.abs() <= dy.abs() {
+                    return;
+                }
+                if dx > 0.0 { on_prev() } else { on_next() }
+            }
+        >
+            {children()}
+        </div>
+    }
+}
+
+/// Panel detail satu pengajuan izin — SATU komponen untuk semua peran.
+///
+/// Isinya identik dari sisi mana pun dilihat; yang berbeda hanya apakah tombol
+/// sunting muncul, dan itu ditentukan server (`can_edit`). Membuat panel
+/// terpisah per peran berarti tiga tempat yang harus terus sepakat tentang apa
+/// itu "izin ini".
+#[component]
+pub fn SheetIzin(
+    permit_id: i64,
+    /// `Sync` diwajibkan `Sheet` (lihat bound di sana): penutupnya dipasang ke
+    /// listener dokumen yang bisa berjalan di luar thread render.
+    on_close: impl Fn() + Copy + Send + Sync + 'static,
+    /// Dipanggil setelah izin berhasil diubah, agar daftar pemanggil menyegar.
+    /// Cukup `Send` — dipanggil dari Effect, bukan dari dalam pohon view.
+    on_saved: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
+    let data = Resource::new(
+        move || permit_id,
+        |id| async move { crate::web::api::permit_detail(id).await },
+    );
+    let editing = RwSignal::new(false);
+    let busy = RwSignal::new(false);
+    let err = RwSignal::new(Option::<String>::None);
+
+    // `on_saved` TIDAK dipanggil dari dalam view: children <Suspense> menuntut
+    // Sync, sementara closure `refetch` milik halaman pemanggil hanya Send.
+    // Jadi penyimpanan menaikkan penghitung ini, dan Effect di luar view yang
+    // meneruskannya — closure-nya tak pernah ikut masuk pohon reaktif.
+    let tersimpan = RwSignal::new(0u32);
+    Effect::new(move |sebelumnya: Option<u32>| {
+        let n = tersimpan.get();
+        if sebelumnya.is_some_and(|p| p != n) {
+            on_saved();
+        }
+        n
+    });
+
+    // Nilai form; diisi dari data saat tombol sunting ditekan.
+    let f_kind = RwSignal::new(String::new());
+    let f_start = RwSignal::new(String::new());
+    let f_end = RwSignal::new(String::new());
+    let f_jm = RwSignal::new(String::new());
+    let f_js = RwSignal::new(String::new());
+    let f_reason = RwSignal::new(String::new());
+
+    let simpan = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        err.set(None);
+        let a = (
+            f_kind.get_untracked(),
+            f_start.get_untracked(),
+            f_end.get_untracked(),
+            f_jm.get_untracked(),
+            f_js.get_untracked(),
+            f_reason.get_untracked(),
+        );
+        leptos::task::spawn_local(async move {
+            match crate::web::api::update_permit_action(
+                permit_id, a.0, a.1, a.2, a.3, a.4, a.5,
+            )
+            .await
+            {
+                Ok(_) => {
+                    editing.set(false);
+                    data.refetch();
+                    tersimpan.update(|n| *n += 1);
+                }
+                Err(e) => err.set(Some(pesan_galat(e))),
+            }
+            busy.set(false);
+        });
+    };
+
+    let field = "w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface";
+
+    view! {
+        <Sheet title="Detail Perizinan" on_close=on_close>
+            <Suspense fallback=|| view! { <Skeleton baris=2 tinggi="h-20" /> }>
+                {move || {
+                    let Some(res) = data.get() else { return ().into_any() };
+                    let d = match res {
+                        Ok(d) => d,
+                        Err(e) => {
+                            return view! { <FetchError err=e.to_string() /> }.into_any();
+                        }
+                    };
+                    let badge = match d.status_kind.as_str() {
+                        "approved" => "ppm-chip bg-success/10 text-success",
+                        "rejected" => "ppm-chip bg-error-container text-error",
+                        _ => "ppm-chip bg-warning/10 text-warning",
+                    };
+                    let can_edit = d.can_edit;
+                    let d_form = d.clone();
+                    view! {
+                        // TANPA md:max-w-*: panelnya sendiri sudah dibatasi
+                        // 40rem, dan membatasi isinya lagi hanya menyisakan
+                        // pita kosong di kanan sementara teksnya menepi ke kiri.
+                        <div class="mt-1 space-y-3.5">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="min-w-0">
+                                    <p class="text-body-lg font-bold text-on-background truncate">
+                                        {d.kind_label.clone()}
+                                    </p>
+                                    <p class="text-body-sm text-on-surface-variant truncate">
+                                        {d.student_name.clone()}
+                                    </p>
+                                </div>
+                                <span class=badge>{d.status_label.clone()}</span>
+                            </div>
+
+                            // Siapa yang meminta — wali kelas perlu tahu apakah
+                            // ini permintaan santri sendiri atau orang tuanya.
+                            <p class=if d.oleh_ortu {
+                                "text-[11px] font-semibold text-info flex items-center gap-1"
+                            } else {
+                                "text-[11px] text-on-surface-variant flex items-center gap-1"
+                            }>
+                                <span class="material-symbols-outlined text-[14px]">
+                                    {if d.oleh_ortu { "family_restroom" } else { "person" }}
+                                </span>
+                                {d.diajukan_oleh.clone()}
+                            </p>
+
+                            <div class="rounded-xl bg-surface-container px-3 py-2.5 space-y-1">
+                                <p class="text-body-sm text-on-background flex items-center gap-1.5">
+                                    <span class="material-symbols-outlined text-[15px]">"calendar_month"</span>
+                                    {d.range_label.clone()}
+                                    {(!d.jam_label.is_empty())
+                                        .then(|| {
+                                            view! {
+                                                <span class="text-primary font-semibold">
+                                                    {d.jam_label.clone()}
+                                                </span>
+                                            }
+                                        })}
+                                </p>
+                                {(!d.class_label.is_empty())
+                                    .then(|| {
+                                        let w = if d.wali_name.is_empty() {
+                                            "wali kelas belum ditunjuk".to_string()
+                                        } else {
+                                            d.wali_name.clone()
+                                        };
+                                        view! {
+                                            <p class="text-[11px] text-on-surface-variant flex items-center gap-1.5">
+                                                <span class="material-symbols-outlined text-[14px]">"school"</span>
+                                                {format!("{} · {}", d.class_label.clone(), w)}
+                                            </p>
+                                        }
+                                    })}
+                            </div>
+
+                            {(!d.sesi_terlewat.is_empty())
+                                .then(|| {
+                                    view! {
+                                        <div class="rounded-xl bg-warning/5 border border-warning/30 px-3 py-2">
+                                            <p class="text-[11px] font-bold text-on-background flex items-center gap-1">
+                                                <span class="material-symbols-outlined text-[14px] text-warning">
+                                                    "event_busy"
+                                                </span>
+                                                {format!("{} sesi terlewat", d.total_sesi)}
+                                            </p>
+                                            <p class="text-[11px] text-on-surface-variant mt-0.5">
+                                                {d.sesi_terlewat.join(" · ")}
+                                            </p>
+                                        </div>
+                                    }
+                                })}
+
+                            <p class="text-body-sm text-on-surface-variant italic">
+                                {format!("\u{201C}{}\u{201D}", d.reason.clone())}
+                            </p>
+                            <p class="text-[10px] text-on-surface-variant/70">{d.when_label.clone()}</p>
+
+                            {move || {
+                                err.get()
+                                    .map(|e| {
+                                        view! {
+                                            <div class="p-2.5 bg-error-container text-on-error-container rounded-xl text-body-sm">
+                                                {e}
+                                            </div>
+                                        }
+                                    })
+                            }}
+
+                            {if can_edit {
+                                let dd = d_form.clone();
+                                view! {
+                                    <Show
+                                        when=move || editing.get()
+                                        fallback=move || {
+                                            let dd = dd.clone();
+                                            view! {
+                                                <button
+                                                    class="w-full py-3 rounded-xl bg-primary text-on-primary font-semibold press"
+                                                    on:click=move |_| {
+                                                        f_kind.set(dd.kind.clone());
+                                                        f_start.set(dd.start_date.clone());
+                                                        f_end.set(dd.end_date.clone());
+                                                        f_jm.set(dd.jam_mulai.clone());
+                                                        f_js.set(dd.jam_selesai.clone());
+                                                        f_reason.set(dd.reason.clone());
+                                                        editing.set(true);
+                                                    }
+                                                >
+                                                    "Ubah Pengajuan"
+                                                </button>
+                                            }
+                                        }
+                                    >
+                                        <form class="space-y-2 anim-in" method="post" on:submit=simpan>
+                                            <select
+                                                class=field
+                                                prop:value=move || f_kind.get()
+                                                on:change=move |ev| f_kind.set(event_target_value(&ev))
+                                            >
+                                                <option value="sick">"Izin Sakit"</option>
+                                                <option value="leave">"Izin Pulang"</option>
+                                                <option value="keperluan">"Keperluan"</option>
+                                            </select>
+                                            <div class="grid grid-cols-2 gap-2">
+                                                <input
+                                                    type="date"
+                                                    class=field
+                                                    aria-label="Mulai tanggal"
+                                                    prop:value=move || f_start.get()
+                                                    on:input=move |ev| f_start.set(event_target_value(&ev))
+                                                    required=true
+                                                />
+                                                <input
+                                                    type="date"
+                                                    class=field
+                                                    aria-label="Sampai tanggal"
+                                                    prop:value=move || f_end.get()
+                                                    on:input=move |ev| f_end.set(event_target_value(&ev))
+                                                />
+                                            </div>
+                                            <div class="grid grid-cols-2 gap-2">
+                                                <input
+                                                    type="time"
+                                                    class=field
+                                                    aria-label="Jam mulai"
+                                                    prop:value=move || f_jm.get()
+                                                    on:input=move |ev| f_jm.set(event_target_value(&ev))
+                                                />
+                                                <input
+                                                    type="time"
+                                                    class=field
+                                                    aria-label="Jam selesai"
+                                                    prop:value=move || f_js.get()
+                                                    on:input=move |ev| f_js.set(event_target_value(&ev))
+                                                />
+                                            </div>
+                                            <p class="text-[11px] text-on-surface-variant">
+                                                "Kosongkan jam untuk izin sehari penuh."
+                                            </p>
+                                            <textarea
+                                                rows="3"
+                                                class=format!("{field} resize-none")
+                                                prop:value=move || f_reason.get()
+                                                on:input=move |ev| f_reason.set(event_target_value(&ev))
+                                            ></textarea>
+                                            <div class="grid grid-cols-2 gap-2">
+                                                <button
+                                                    type="button"
+                                                    class="py-2.5 rounded-xl border border-outline-variant text-on-surface font-semibold text-body-sm"
+                                                    on:click=move |_| editing.set(false)
+                                                >
+                                                    "Batal"
+                                                </button>
+                                                <button
+                                                    type="submit"
+                                                    class="py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-body-sm disabled:opacity-60"
+                                                    disabled=move || busy.get()
+                                                >
+                                                    {move || if busy.get() { "Menyimpan…" } else { "Simpan" }}
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </Show>
+                                }
+                                    .into_any()
+                            } else {
+                                // Tombolnya TIDAK ADA, dan alasannya disebut —
+                                // tombol yang hilang tanpa penjelasan terasa
+                                // seperti aplikasi rusak.
+                                view! {
+                                    <p class="text-[11px] text-on-surface-variant flex items-start gap-1.5 rounded-xl bg-surface-container px-3 py-2">
+                                        <span class="material-symbols-outlined text-[15px] shrink-0">"lock"</span>
+                                        {d.lock_reason.clone()}
+                                    </p>
+                                }
+                                    .into_any()
+                            }}
+                        </div>
+                    }
+                        .into_any()
+                }}
+            </Suspense>
+        </Sheet>
     }
 }

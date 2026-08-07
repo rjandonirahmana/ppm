@@ -106,7 +106,7 @@ pub fn TamuPage() -> impl IntoView {
     let field = "w-full bg-surface-container border-0 rounded-xl px-4 py-3 text-body-md text-on-surface";
 
     view! {
-        <Title text="Buku Tamu — PPM AFM" />
+        <Title text="Buku Tamu — AFM SMART" />
         <div class="min-h-screen bg-surface text-on-surface flex flex-col items-center px-5 py-10">
             <div class="w-full max-w-md">
                 <header class="flex items-center gap-3 mb-8">

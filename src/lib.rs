@@ -1,4 +1,4 @@
-//! lib.rs — Entry point unified SSR + Hydration untuk PPM AFM.
+//! lib.rs — Entry point unified SSR + Hydration untuk AFM SMART.
 //!
 //! Satu `App` universal: server render HTML (SSR), klien memasang reaktivitas
 //! (hydrate) ke DOM yang sama → zero mismatch.

@@ -10,7 +10,14 @@ use serde::{Deserialize, Serialize};
 /// "pengajian", krn kategori kelas teks bebas (staf boleh ketik variasi).
 pub fn is_mengaji_category(category: &str) -> bool {
     let c = category.trim().to_lowercase();
-    c.contains("mengaji") || c.contains("pengajian") || c.contains("tahfidz") || c.contains("hafalan")
+    // 'kbm' = kelas belajar-mengajar (migrasi 65) — itulah kelas ngaji. Kata
+    // bebas di bawah dipertahankan untuk `class_schedules.category`, yang tetap
+    // teks bebas sebagai penimpa judul sesi.
+    c == "kbm"
+        || c.contains("mengaji")
+        || c.contains("pengajian")
+        || c.contains("tahfidz")
+        || c.contains("hafalan")
 }
 
 /// Satu baris setoran hafalan (riwayat santri / staf pencatat).

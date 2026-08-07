@@ -64,7 +64,7 @@ pub fn RekapMingguanPage() -> impl IntoView {
     let angkatan_filter = RwSignal::new(String::new());
 
     view! {
-        <Title text="Rekap Mingguan — PPM AFM" />
+        <Title text="Rekap Mingguan — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader

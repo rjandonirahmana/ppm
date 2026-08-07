@@ -307,7 +307,7 @@ pub fn GaleriPage() -> impl IntoView {
     };
 
     view! {
-        <Title text="Galeri Foto Kegiatan — PPM AFM" />
+        <Title text="Galeri Foto Kegiatan — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader

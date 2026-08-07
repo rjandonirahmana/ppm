@@ -82,6 +82,11 @@ pub struct ConnRequest {
 /// Satu izin milik anak (daftar izin sisi orang tua, lintas-anak).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParentPermitItem {
+    #[serde(default)]
+    pub id: i64,
+    /// "Diajukan orang tua — Budi"; kosong bila santri mengajukan sendiri.
+    #[serde(default)]
+    pub diajukan_oleh: String,
     pub child_name: String,
     pub kind_label: String,
     pub range_label: String,

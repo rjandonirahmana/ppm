@@ -58,7 +58,7 @@ pub fn GantiSandiPage() -> impl IntoView {
 
     let field = "w-full bg-surface-container border-0 rounded-xl px-4 py-3 text-body-md text-on-surface";
     view! {
-        <Title text="Ganti Kata Sandi — PPM AFM" />
+        <Title text="Ganti Kata Sandi — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Ganti Kata Sandi" subtitle="Perbarui sandi akun Anda" back_href="/profil" />

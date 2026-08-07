@@ -27,6 +27,19 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
                 <meta name="theme-color" content="#003527" />
 
+                // ── Identitas: ikon & manifest ────────────────────────────
+                // PNG, bukan .ico: seluruh browser yang dipakai santri (Chrome
+                // & Safari mobile) membacanya, dan satu berkas sumber lebih
+                // mudah dijaga tetap sama dengan logo aslinya.
+                // Ikon dibuat BUJUR SANGKAR berlatar putih — logo aslinya lebih
+                // tinggi daripada lebar, dan ikon non-persegi dipotong
+                // sembarang oleh peluncur aplikasi.
+                <link rel="icon" r#type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+                <link rel="icon" r#type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+                <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+                <link rel="manifest" href="/manifest.webmanifest" />
+                <meta name="apple-mobile-web-app-title" content="AFM SMART" />
+
                 // ── CSS: Tailwind self-host (di-compile cargo-leptos → statis) ──
                 // Ganti Play CDN: tanpa compile Tailwind di browser. Tema & CSS
                 // kustom ada di style/tailwind.css + tailwind.config.js.
@@ -173,7 +186,7 @@ pub fn App() -> impl IntoView {
     });
 
     view! {
-        <Title text="PPM AFM — Portal Absensi Santri" />
+        <Title text="AFM SMART — Portal Absensi Santri" />
         <Router>
             <FlatRoutes fallback=|| view! { <NotFoundPage /> }>
                 // Publik: beranda profil pesantren untuk pengunjung.

@@ -32,7 +32,7 @@ fn tab_cls(active: bool) -> &'static str {
 #[component]
 pub fn SesiPage() -> impl IntoView {
     view! {
-        <Title text="Sesi Kelas — PPM AFM" />
+        <Title text="Sesi Kelas — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Sesi Kelas" />

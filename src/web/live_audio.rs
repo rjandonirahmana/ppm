@@ -54,9 +54,137 @@ fn is_staff(role: &str) -> bool {
     matches!(role, "admin" | "supervisor" | "dewan_guru" | "teacher")
 }
 
+/// Peran yang memang mengawasi SELURUH kelas — tak perlu keterkaitan data.
+fn is_pengawas(role: &str) -> bool {
+    matches!(role, "admin" | "ketua" | "dewan_guru")
+}
+
+/// Gerbang tunggal semua pintu sesi: siaran, dengar, unduh.
+///
+/// Dulu `get_data` dan `download` hanya menuntut token yang sah. Artinya
+/// santri mana pun cukup mengganti angka di URL untuk mendengarkan — atau
+/// mengunduh — rekaman kelas lain; dan rekaman pengajian itu isinya orang
+/// betulan, bukan berkas anonim.
+///
+/// Kegagalan DB → TOLAK (503), bukan fail-open. Beda dari cek kategori di
+/// `post_chunk` yang sengaja fail-open: di sana yang dipertaruhkan hanya siaran
+/// yang bisa diulang, di sini isi rekaman orang lain.
+async fn boleh_akses_sesi(state: &AppState, claims: &Claims, session_id: i64) -> Option<StatusCode> {
+    // Kelas non-KBM tak punya rekaman sama sekali (migrasi 65) — pintunya
+    // ditutup untuk SEMUA orang, termasuk pengawas. Kalau ada berkas tertinggal
+    // dari sebelum aturan ini, ia tak lagi bisa diambil siapa pun.
+    match crate::repository::sesi_kelas_kbm(&state.pool, session_id).await {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::warn!(session_id, "tolak akses rekaman: kelas ini bukan KBM");
+            return Some(StatusCode::FORBIDDEN);
+        }
+        Err(e) => {
+            tracing::error!(session_id, "cek kategori sesi gagal (tolak): {e}");
+            return Some(StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
+    if is_pengawas(&claims.role) {
+        return None;
+    }
+    match crate::repository::session_stakeholder(&state.pool, session_id, claims.user_id).await {
+        Ok(true) => None,
+        Ok(false) => {
+            tracing::warn!(
+                session_id,
+                user_id = claims.user_id,
+                "tolak akses sesi: bukan pihak yang berkepentingan"
+            );
+            Some(StatusCode::FORBIDDEN)
+        }
+        Err(e) => {
+            tracing::error!(session_id, "cek akses sesi gagal (tolak): {e}");
+            Some(StatusCode::SERVICE_UNAVAILABLE)
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct ChunkQ {
     pub seq: u64,
+}
+
+/// Siaran yang sedang berjalan, dicatat di memori proses saat `seq = 0`.
+///
+/// Kenapa di memori dan bukan DB: potongan datang tiap ~4 detik per penyiar,
+/// dan modul ini sengaja dirancang agar potongan SUSULAN tak bergantung pada
+/// layanan lain (lihat catatan di `post_chunk`). Yang disimpan hanya dua fakta
+/// yang tak bisa disimpulkan dari berkas: SIAPA yang memulai, dan potongan
+/// ke berapa yang ditunggu berikutnya.
+struct Siaran {
+    pemilik: i64,
+    /// Nomor potongan yang ditunggu. Bukan sekadar penghitung: inilah yang
+    /// membedakan kiriman ulang (jaringan putus setelah server menulis tapi
+    /// sebelum jawabannya sampai) dari potongan baru. Tanpa ini, satu retry
+    /// menyisipkan potongan yang sama dua kali dan rekamannya cacat.
+    seq_berikut: u64,
+    sentuh: std::time::Instant,
+}
+
+/// Umur siaran tak tersentuh sebelum catatannya dibuang. Longgar: siaran yang
+/// masih hidup menyentuhnya tiap ~4 detik, dan membuang catatan siaran yang
+/// masih berjalan memaksa penyiarnya mengulang dari awal.
+const SIARAN_IDLE: std::time::Duration = std::time::Duration::from_secs(600);
+
+fn siaran_map() -> &'static std::sync::Mutex<std::collections::HashMap<i64, Siaran>> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static M: OnceLock<Mutex<HashMap<i64, Siaran>>> = OnceLock::new();
+    M.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Catat awal siaran baru (seq = 0) — menimpa catatan lama sesi itu.
+fn siaran_mulai(session_id: i64, pemilik: i64) {
+    let now = std::time::Instant::now();
+    if let Ok(mut m) = siaran_map().lock() {
+        m.retain(|_, s| now.duration_since(s.sentuh) < SIARAN_IDLE);
+        m.insert(session_id, Siaran { pemilik, seq_berikut: 1, sentuh: now });
+    }
+}
+
+/// Keputusan untuk potongan lanjutan (seq > 0).
+enum Lanjutan {
+    /// Tulis potongan ini, lalu naikkan penghitung.
+    Tulis,
+    /// Sudah pernah ditulis (kiriman ulang) — jawab OK tanpa menulis apa pun.
+    Duplikat,
+    Tolak(StatusCode),
+}
+
+fn siaran_lanjut(session_id: i64, pengirim: i64, seq: u64) -> Lanjutan {
+    let Ok(mut m) = siaran_map().lock() else {
+        // Kunci teracuni → jangan matikan siaran yang sedang jalan.
+        return Lanjutan::Tulis;
+    };
+    let Some(s) = m.get_mut(&session_id) else {
+        // Tak ada catatan: proses baru saja restart, atau potongan menyusul
+        // siaran yang sudah lama berhenti. Menuliskannya ke ekor berkas hanya
+        // menghasilkan rekaman yang tak bisa diputar — suruh klien mulai dari
+        // seq 0 supaya header WebM-nya utuh.
+        return Lanjutan::Tolak(StatusCode::CONFLICT);
+    };
+    if s.pemilik != pengirim {
+        // Kepemilikan dulu HANYA diperiksa di seq 0, jadi staf lain bisa
+        // menempelkan suaranya ke rekaman yang sedang berjalan.
+        return Lanjutan::Tolak(StatusCode::FORBIDDEN);
+    }
+    s.sentuh = std::time::Instant::now();
+    match seq.cmp(&s.seq_berikut) {
+        std::cmp::Ordering::Equal => {
+            s.seq_berikut += 1;
+            Lanjutan::Tulis
+        }
+        std::cmp::Ordering::Less => Lanjutan::Duplikat,
+        // Ada potongan yang hilang di tengah. Menerimanya berarti menambal
+        // lubang dengan audio yang salah posisi; lebih baik klien mengirim
+        // ulang yang tertinggal.
+        std::cmp::Ordering::Greater => Lanjutan::Tolak(StatusCode::CONFLICT),
+    }
 }
 
 /// Jendela & jatah potongan siaran per (pengguna, sesi).
@@ -132,20 +260,27 @@ pub async fn post_chunk(
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
     // Pertahanan berlapis: klien (AudioDock) sudah sembunyikan tombol siaran
-    // untuk kategori selain "Pengajian", tapi endpoint tetap tolak di server —
-    // jangan percaya klien bisa dipaksa kirim request langsung. Cek HANYA di
-    // seq=0 (awal siaran; kategori kelas tak berubah di tengah siaran) — bukan
-    // tiap potongan, agar potongan susulan TIDAK bergantung DB (filosofi modul
-    // ini: siaran jalan lewat file lokal, tahan gangguan). DB tak terjangkau
-    // saat cek → fail-OPEN (log saja): ini lapis TAMBAHAN, gerbang utama tetap
-    // UI klien + is_staff di atas; hiccup DB tak boleh mematikan seluruh siaran.
+    // untuk kelas non-KBM, tapi endpoint tetap tolak di server — jangan percaya
+    // klien bisa dipaksa kirim request langsung. Cek HANYA di seq=0 (awal
+    // siaran; kategori kelas tak berubah di tengah siaran) — bukan tiap
+    // potongan, agar potongan susulan TIDAK bergantung DB (filosofi modul ini:
+    // siaran jalan lewat file lokal, tahan gangguan).
+    //
+    // Kegagalan DB di sini MENOLAK, tak lagi fail-open seperti dulu: hanya KBM
+    // yang boleh punya berkas rekaman sama sekali (migrasi 65), dan berkas yang
+    // terlanjur lahir di kelas piket tak bisa "dibatalkan" belakangan —
+    // sementara siaran yang gagal mulai tinggal dicoba lagi.
     if q.seq == 0 {
-        match crate::repository::session_category(&state.pool, session_id).await {
-            Ok(cat) if cat.as_deref().is_some_and(|c| !crate::models::category_allows_recording(c)) => {
+        match crate::repository::sesi_kelas_kbm(&state.pool, session_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(session_id, "tolak siaran: kelas ini bukan KBM");
                 return StatusCode::FORBIDDEN.into_response();
             }
-            Ok(_) => {}
-            Err(e) => tracing::warn!(session_id, "cek kategori sesi gagal (lanjut, fail-open): {e}"),
+            Err(e) => {
+                tracing::error!(session_id, "cek kategori sesi gagal (tolak): {e}");
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
         }
 
         // KEPEMILIKAN SESI. Tanpa ini, staf mana pun bisa mengirim seq=0 ke
@@ -157,9 +292,17 @@ pub async fn post_chunk(
         // tinggal dicoba lagi, sedangkan rekaman yang terlanjur tertimpa tak
         // ada gantinya. Cek hanya di seq=0, jadi potongan susulan tetap tak
         // menyentuh DB (filosofi modul ini dipertahankan).
-        if !matches!(claims.role.as_str(), "admin" | "ketua" | "dewan_guru") {
-            match crate::repository::session_broadcasters(&state.pool, session_id).await {
-                Ok(Some((teacher, pamong, wali))) => {
+        match crate::repository::session_broadcasters(&state.pool, session_id).await {
+            Ok(Some((teacher, pamong, wali, status))) => {
+                // Sesi yang sudah selesai/batal tak menerima siaran lagi —
+                // rekamannya sudah dipindah dan berkas lokalnya dihapus, jadi
+                // potongan susulan hanya melahirkan berkas yatim yang isinya
+                // bertentangan dengan yang tercatat di DB.
+                if matches!(status.as_str(), "finished" | "cancelled") {
+                    tracing::warn!(session_id, %status, "tolak siaran: sesi sudah berakhir");
+                    return StatusCode::GONE.into_response();
+                }
+                if !is_pengawas(&claims.role) {
                     let me = Some(claims.user_id);
                     if teacher != me && pamong != me && wali != me {
                         tracing::warn!(
@@ -169,11 +312,30 @@ pub async fn post_chunk(
                         return StatusCode::FORBIDDEN.into_response();
                     }
                 }
-                Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-                Err(e) => {
-                    tracing::error!(session_id, "cek kepemilikan sesi gagal (tolak): {e}");
-                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
-                }
+            }
+            Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+            Err(e) => {
+                tracing::error!(session_id, "cek kepemilikan sesi gagal (tolak): {e}");
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+        }
+        siaran_mulai(session_id, claims.user_id);
+    } else {
+        // Potongan lanjutan: kepemilikan & urutan diperiksa dari catatan di
+        // memori — tanpa menyentuh DB, sesuai filosofi modul ini.
+        match siaran_lanjut(session_id, claims.user_id, q.seq) {
+            Lanjutan::Tulis => {}
+            Lanjutan::Duplikat => {
+                // Kiriman ulang yang sah. Dijawab OK supaya klien maju ke
+                // potongan berikutnya alih-alih mengulang selamanya.
+                return (StatusCode::OK, [("x-duplicate", "1")]).into_response();
+            }
+            Lanjutan::Tolak(s) => {
+                tracing::warn!(
+                    session_id, user_id = claims.user_id, seq = q.seq,
+                    "tolak potongan lanjutan: {s}"
+                );
+                return s.into_response();
             }
         }
     }
@@ -234,8 +396,12 @@ pub async fn get_data(
     Query(q): Query<DataQ>,
     headers: HeaderMap,
 ) -> Response {
-    if auth(&state, &headers).is_err() {
-        return StatusCode::UNAUTHORIZED.into_response();
+    let claims = match auth(&state, &headers) {
+        Ok(c) => c,
+        Err(s) => return s.into_response(),
+    };
+    if let Some(s) = boleh_akses_sesi(&state, &claims, session_id).await {
+        return s.into_response();
     }
     let path = recording_file(session_id);
     // Async sepanjang jalur: endpoint ini di-poll TERUS-MENERUS oleh setiap santri
@@ -264,7 +430,9 @@ pub async fn get_data(
         .into_response()
 }
 
-/// GET /api/live-audio/{id}/download — unduh rekaman penuh (login apa pun).
+/// GET /api/live-audio/{id}/download — unduh rekaman penuh.
+///
+/// Hanya pihak yang berkepentingan atas sesi ini (lihat `boleh_akses_sesi`).
 ///
 /// DI-STREAM, tidak dibaca sekaligus. Rekaman pengajian 1–2 jam berukuran puluhan
 /// MB; `std::fs::read` (versi lama) menaruh SELURUH file di RAM sebelum satu byte
@@ -276,8 +444,12 @@ pub async fn download(
     Path(session_id): Path<i64>,
     headers: HeaderMap,
 ) -> Response {
-    if auth(&state, &headers).is_err() {
-        return StatusCode::UNAUTHORIZED.into_response();
+    let claims = match auth(&state, &headers) {
+        Ok(c) => c,
+        Err(s) => return s.into_response(),
+    };
+    if let Some(s) = boleh_akses_sesi(&state, &claims, session_id).await {
+        return s.into_response();
     }
     let path = recording_file(session_id);
     let Ok(file) = tokio::fs::File::open(&path).await else {

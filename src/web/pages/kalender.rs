@@ -14,7 +14,7 @@ use crate::web::api::{
     academic_calendar_data, create_semester_action, delete_semester_action, semesters_data,
     update_semester_action,
 };
-use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
+use crate::web::components::{SwipeArea, DeviceFrame, FetchError, MobileHeader};
 
 const HARI: [&str; 7] = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 
@@ -51,7 +51,7 @@ pub fn KalenderPage() -> impl IntoView {
     });
 
     view! {
-        <Title text="Kalender Akademik — PPM AFM" />
+        <Title text="Kalender Akademik — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Kalender Akademik" subtitle="Jadwal sesi kelas bulan ini" />
@@ -134,7 +134,17 @@ pub fn KalenderPage() -> impl IntoView {
                                                         </button>
                                                     </div>
 
-                                                    <div class="ppm-card p-3">
+                                                    // Geser kiri/kanan = ganti bulan.
+                                                    // Tombol panah tetap ada:
+                                                    // gestur itu jalan pintas,
+                                                    // bukan satu-satunya jalan —
+                                                    // pengguna keyboard & pembaca
+                                                    // layar tak bisa menggeser.
+                                                    <SwipeArea
+                                                        on_prev=move || ym.set((py, pm))
+                                                        on_next=move || ym.set((ny, nm))
+                                                        class="ppm-card p-3"
+                                                    >
                                                         // Baris nama hari
                                                         <div class="grid grid-cols-7 gap-1 mb-1">
                                                             {HARI
@@ -194,7 +204,7 @@ pub fn KalenderPage() -> impl IntoView {
                                                                 })
                                                                 .collect_view()}
                                                         </div>
-                                                    </div>
+                                                    </SwipeArea>
                                                 </div>
 
                                                 // ── Daftar sesi hari terpilih (kanan) ────

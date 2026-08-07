@@ -45,7 +45,7 @@ macro_rules! raw_page_mobile {
 // ── Admin (sidebar desktop, full-width) ────────────────────────────────────────
 // staf/guru/dewan_guru/poin/poin_dewan: sudah jadi halaman DINAMIS (data ASLI) —
 // lihat staf.rs, analisis.rs, poin.rs. Versi HTML statis dihapus dari sini.
-raw_page!(KoneksiOrtuPage, "koneksi_ortu.html", "Koneksi Orang Tua — PPM AFM");
+raw_page!(KoneksiOrtuPage, "koneksi_ortu.html", "Koneksi Orang Tua — AFM SMART");
 // verifikasi_tahap2: kini halaman DINAMIS (verifikasi_tahap2.rs, data DB).
 
 // ── Mobile (device frame di desktop) ───────────────────────────────────────────
@@ -53,7 +53,7 @@ raw_page!(KoneksiOrtuPage, "koneksi_ortu.html", "Koneksi Orang Tua — PPM AFM")
 // profil.rs — data DB). Versi embed dihapus.
 // orang_tua: sudah jadi halaman DINAMIS (ortu_beranda.rs dkk, data DB).
 // verifikasi_pamong: sudah jadi halaman DINAMIS (verifikasi_pamong.rs, data DB).
-raw_page_mobile!(HalaqahDaftarPage, "halaqah_daftar.html", "Daftar Halaqah — PPM AFM");
-raw_page_mobile!(HalaqahMulaiPage, "halaqah_mulai.html", "Mulai Sesi Halaqah — PPM AFM");
-raw_page_mobile!(HalaqahLivePage, "halaqah_live.html", "Sesi Halaqah Live — PPM AFM");
-raw_page_mobile!(RekamanPage, "rekaman.html", "Rekaman Materi — PPM AFM");
+raw_page_mobile!(HalaqahDaftarPage, "halaqah_daftar.html", "Daftar Halaqah — AFM SMART");
+raw_page_mobile!(HalaqahMulaiPage, "halaqah_mulai.html", "Mulai Sesi Halaqah — AFM SMART");
+raw_page_mobile!(HalaqahLivePage, "halaqah_live.html", "Sesi Halaqah Live — AFM SMART");
+raw_page_mobile!(RekamanPage, "rekaman.html", "Rekaman Materi — AFM SMART");

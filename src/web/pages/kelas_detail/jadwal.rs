@@ -2,6 +2,7 @@
 //! Formulir buat/sunting ada di [`super::jadwal_form`].
 
 use super::jadwal_form::{BuatJadwalForm, CustomDatePicker};
+use super::kurikulum::PanelKekosongan;
 
 use leptos::prelude::*;
 
@@ -30,7 +31,10 @@ pub(super) fn JadwalTab(
     // kitab di luar itu membuat progres kurikulum tak pernah tersentuh.
     let dalam_kurikulum: std::collections::HashSet<i64> =
         d.curriculum.iter().map(|c| c.book_id).filter(|b| *b > 0).collect();
-    let can_manage = d.can_manage;
+    // Jadwal & anggota kelas kini juga wewenang PAMONG kelas ini, bukan admin
+    // saja (wali kelas tetap tidak). Flag-nya dihitung server — lihat
+    // KelasDetail::can_manage_jadwal.
+    let can_manage = d.can_manage_jadwal;
     let book_opts = StoredValue::new(
         d.book_options
             .iter()
@@ -46,7 +50,7 @@ pub(super) fn JadwalTab(
     view! {
         <div class="space-y-3 stagger">
             <div class="md:max-w-md">
-                <AdminOnly can_manage=can_manage apa="membuat atau mengubah jadwal kelas">
+                <AdminOnly can_manage=can_manage apa="membuat atau mengubah jadwal kelas" siapa="admin, ketua, atau pamong kelas ini">
                     <BuatJadwalForm class_id=class_id room_options=room_opts refetch=refetch />
                 </AdminOnly>
             </div>
@@ -90,7 +94,7 @@ pub(super) fn JadwalTab(
                         schedules
                             .into_iter()
                             .map(|s| {
-                                view! { <JadwalCard s=s room_options=room_opts book_options=book_opts can_manage=can_manage refetch=refetch /> }
+                                view! { <JadwalCard class_id=class_id s=s room_options=room_opts book_options=book_opts can_manage=can_manage refetch=refetch /> }
                                     .into_any()
                             })
                             .collect(),
@@ -103,11 +107,13 @@ pub(super) fn JadwalTab(
 
 #[component]
 fn JadwalCard(
+    class_id: i64,
     s: ScheduleItem,
     room_options: StoredValue<Vec<crate::models::RoomOption>>,
     book_options: StoredValue<Vec<crate::models::BookItem>>,
-    /// Admin/ketua saja: ubah & hapus jadwal. Pamong/dewan guru tetap boleh
-    /// memperbarui MATERI yang sedang dibahas (panel di bawah kartu).
+    /// Admin/ketua ATAU pamong kelas ini: ubah & hapus jadwal. Wali kelas &
+    /// dewan guru tetap boleh memperbarui MATERI yang sedang dibahas (panel di
+    /// bawah kartu) — itu wewenang terpisah.
     can_manage: bool,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
@@ -521,6 +527,7 @@ fn JadwalCard(
                                 }
                             })}
                         <PosisiBerjalan
+                            class_id=class_id
                             schedule_id=sid
                             s=s_posisi.clone()
                             books=book_options
@@ -563,6 +570,7 @@ fn JadwalCard(
 /// keduanya tak bisa berbeda cara membacanya.
 #[component]
 pub(super) fn PosisiBerjalan(
+    class_id: i64,
     schedule_id: i64,
     s: crate::models::ScheduleItem,
     books: StoredValue<Vec<crate::models::BookItem>>,
@@ -692,6 +700,17 @@ pub(super) fn PosisiBerjalan(
                             </form>
                         }
                     })
+            }}
+
+            // Peta kekosongan materi yang SEDANG dibahas — di sinilah guru
+            // memilih posisi berikutnya, jadi di sini pula ia perlu tahu bagian
+            // mana yang paling banyak kosong. Mengikuti buku yang SEDANG
+            // dipilih di atas (reaktif), bukan yang tersimpan: guru yang sedang
+            // menimbang ganti kitab langsung melihat peta kitab itu.
+            {move || {
+                let bid = book.get();
+                (bid > 0)
+                    .then(|| view! { <PanelKekosongan class_id=class_id book_id=bid /> })
             }}
         </div>
     }

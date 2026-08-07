@@ -1,4 +1,4 @@
-/** Tailwind config PPM AFM — di-compile cargo-leptos (tailwind-input-file).
+/** Tailwind config AFM SMART — di-compile cargo-leptos (tailwind-input-file).
  *  content = sumber kelas untuk purge → hanya kelas yang DIPAKAI ikut ke CSS.
  *  Tema Material-3 (dulu disuntik via Play CDN <script>), kini di sini. */
 module.exports = {

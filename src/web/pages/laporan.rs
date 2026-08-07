@@ -22,7 +22,7 @@ use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 pub fn LaporanPage() -> impl IntoView {
     let session = use_context::<Resource<Option<SessionUser>>>();
     view! {
-        <Title text="Laporan — PPM AFM" />
+        <Title text="Laporan — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Laporan" subtitle="Ringkasan performa & kehadiran" />

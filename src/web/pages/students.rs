@@ -51,7 +51,7 @@ pub fn StudentsPage() -> impl IntoView {
     });
 
     view! {
-        <Title text="Santri — PPM AFM" />
+        <Title text="Santri — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Santri" />
@@ -270,16 +270,16 @@ fn StudentList(
                                     <p class="text-body-md font-semibold text-on-background truncate">{s.name}</p>
                                     <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5">
                                         <span class="text-body-sm text-on-surface-variant">{nis_label}</span>
-                                        // Satu chip PER kelas (biasanya dua: satu golongan Bacaan
+                                        // Satu chip PER kelas (biasanya dua: satu jenjang Bacaan
                                         // + satu Makna, migrasi 16) — dulu cuma satu class_name
                                         // ditampilkan (LIMIT 1), sekarang tampil semua.
                                         {classes
                                             .into_iter()
                                             .map(|c| {
-                                                let label = if c.golongan.is_empty() {
+                                                let label = if c.jenjang.is_empty() {
                                                     c.name
                                                 } else {
-                                                    format!("{} • {}", c.golongan, c.name)
+                                                    format!("{} • {}", c.jenjang, c.name)
                                                 };
                                                 view! {
                                                     <span class="ppm-chip-sm bg-secondary-container/60 text-primary">

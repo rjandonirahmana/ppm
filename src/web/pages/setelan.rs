@@ -81,7 +81,7 @@ pub fn SetelanPage() -> impl IntoView {
     };
 
     view! {
-        <Title text="Setelan — PPM AFM" />
+        <Title text="Setelan — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Setelan" subtitle="Konfigurasi global aplikasi" back_href="/staf" />

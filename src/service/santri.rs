@@ -134,6 +134,12 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
             let (status_label, status_kind) =
                 permit_stage(&p.pamong_status, &p.guru_status, p.require_pamong);
             PermitItem {
+                id: p.id,
+                diajukan_oleh: if p.oleh_ortu {
+                    format!("Diajukan orang tua — {}", p.requester_name)
+                } else {
+                    String::new()
+                },
                 kind_label: permit_kind_label(&p.kind).into(),
                 range_label: fmt_range(p.start_date, p.end_date),
                 class_label: p.class_name.unwrap_or_default(),
@@ -161,15 +167,28 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
 /// rentang izin (lihat `service::permits::split_permit_per_wali`). Satu ajuan
 /// bisa menghasilkan beberapa baris izin yang jalan sendiri-sendiri.
 #[allow(clippy::too_many_arguments)]
-pub async fn submit_permit(
-    pool: &Pool,
-    user_id: i64,
-    requested_by: i64,
-    kind: &str,
+/// Validasi & normalisasi isi pengajuan izin.
+///
+/// DIPAKAI BERSAMA oleh pengajuan baru dan penyuntingan (service::permits::
+/// update_permit). Aturan yang ditulis dua kali cepat atau lambat berbeda —
+/// dan yang berbeda di sini berarti izin bisa disunting jadi bentuk yang tak
+/// akan pernah lolos bila diajukan dari awal.
+///
+/// Return `(kind, start, end, jam, reason)` yang sudah bersih.
+pub(crate) fn validasi_izin<'a>(
+    kind: &'a str,
     start: &str,
     end: &str,
+    jam_mulai: &str,
+    jam_selesai: &str,
     reason: &str,
-) -> Result<Vec<super::permits::PermitSplit>> {
+) -> Result<(
+    &'a str,
+    NaiveDate,
+    Option<NaiveDate>,
+    Option<(chrono::NaiveTime, chrono::NaiveTime)>,
+    String,
+)> {
     if !matches!(kind, "sick" | "leave" | "keperluan") {
         bail_user!("Jenis izin tidak valid.");
     }
@@ -184,16 +203,158 @@ pub async fn submit_permit(
             Err(_) => bail_user!("Tanggal selesai tidak valid."),
         },
     };
+    // Izin per JAM: keduanya diisi atau keduanya kosong. Satu ujung saja tak
+    // bisa dibandingkan dengan jam jadwal mana pun.
+    let jam = match (jam_mulai.trim(), jam_selesai.trim()) {
+        ("", "") => None,
+        (a, b) if a.is_empty() || b.is_empty() => {
+            bail_user!("Isi jam mulai DAN jam selesai, atau kosongkan keduanya untuk izin sehari penuh.")
+        }
+        (a, b) => {
+            let (Ok(ja), Ok(jb)) = (
+                chrono::NaiveTime::parse_from_str(a, "%H:%M"),
+                chrono::NaiveTime::parse_from_str(b, "%H:%M"),
+            ) else {
+                bail_user!("Jam izin tidak valid (format 24 jam, mis. 09:00).");
+            };
+            if jb <= ja {
+                bail_user!("Jam selesai harus setelah jam mulai.");
+            }
+            Some((ja, jb))
+        }
+    };
     let reason = reason.trim();
     if reason.chars().count() < 5 {
         bail_user!("Tuliskan alasan izin (minimal 5 karakter).");
     }
-    let reason: String = reason.chars().take(500).collect();
+    Ok((kind, start_date, end_date, jam, reason.chars().take(500).collect()))
+}
+
+pub async fn submit_permit(
+    pool: &Pool,
+    user_id: i64,
+    requested_by: i64,
+    kind: &str,
+    start: &str,
+    end: &str,
+    // "HH:MM" keduanya, atau keduanya kosong = izin sehari penuh (migrasi 66).
+    jam_mulai: &str,
+    jam_selesai: &str,
+    reason: &str,
+) -> Result<Vec<super::permits::PermitSplit>> {
+    let (kind, start_date, end_date, jam, reason) =
+        validasi_izin(kind, start, end, jam_mulai, jam_selesai, reason)?;
 
     super::permits::split_permit_per_wali(
-        pool, user_id, requested_by, kind, start_date, end_date, &reason,
+        pool, user_id, requested_by, kind, start_date, end_date, jam, &reason,
     )
     .await
+}
+
+/// Kelas apa saja yang akan terlewat bila izin ini diajukan — dihitung SEBELUM
+/// pengajuan dibuat.
+///
+/// Memakai jalur yang sama persis dengan `submit_permit` (repo::affected_classes
+/// + saringan recurrence), jadi angka yang dilihat santri tak bisa berbeda dari
+/// yang nanti benar-benar terjadi. Input tak lengkap/tak valid → pratinjau
+/// kosong, bukan galat: ini dipanggil sambil orang mengetik.
+pub async fn pratinjau_izin(
+    pool: &Pool,
+    user_id: i64,
+    start: &str,
+    end: &str,
+    jam_mulai: &str,
+    jam_selesai: &str,
+) -> Result<crate::models::PratinjauIzin> {
+    let kosong = crate::models::PratinjauIzin::default();
+    let Ok(start_date) = NaiveDate::parse_from_str(start.trim(), "%Y-%m-%d") else {
+        return Ok(kosong);
+    };
+    let range_end = match end.trim() {
+        "" => start_date,
+        s => match NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+            Ok(d) if d >= start_date => d,
+            _ => return Ok(kosong),
+        },
+    };
+    let jam = match (jam_mulai.trim(), jam_selesai.trim()) {
+        ("", "") => None,
+        (a, b) => {
+            let (Ok(ja), Ok(jb)) = (
+                chrono::NaiveTime::parse_from_str(a, "%H:%M"),
+                chrono::NaiveTime::parse_from_str(b, "%H:%M"),
+            ) else {
+                return Ok(kosong);
+            };
+            if jb <= ja {
+                return Ok(kosong);
+            }
+            Some((ja, jb))
+        }
+    };
+
+    let affected = repo::affected_classes(pool, user_id, start_date, range_end, jam).await?;
+
+    // Satu kelas bisa punya beberapa jadwal; sesinya dijumlahkan, kelasnya
+    // tetap satu baris. Urutan kemunculan pertama dipertahankan supaya daftar
+    // tak berubah-ubah tiap kali diketik.
+    let mut urut: Vec<i64> = Vec::new();
+    let mut per_kelas: std::collections::HashMap<i64, crate::models::PratinjauKelas> =
+        std::collections::HashMap::new();
+    let mut wali: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    let mut total = 0i64;
+
+    for c in &affected {
+        let habis = c.sched_end.map_or(range_end, |e| e.min(range_end));
+        let mulai = start_date.max(c.sched_start);
+        if mulai > habis {
+            continue;
+        }
+        let n = super::kelas::dates_in_range(
+            &c.recurrence_type,
+            c.sched_start,
+            &super::kelas::parse_dates(&c.custom_dates),
+            mulai,
+            habis,
+        )
+        .len() as i64;
+        if n == 0 {
+            continue;
+        }
+        total += n;
+        if let Some(w) = c.wali_kelas_id {
+            wali.insert(w);
+        }
+        let e = per_kelas.entry(c.class_id).or_insert_with(|| {
+            urut.push(c.class_id);
+            crate::models::PratinjauKelas {
+                nama: c.class_name.clone(),
+                kategori: String::new(),
+                wali: c.wali_name.clone().unwrap_or_default(),
+                sesi: 0,
+            }
+        });
+        e.sesi += n;
+    }
+
+    let kategori = repo::kategori_kelas(pool, &urut).await.unwrap_or_default();
+    let kelas = urut
+        .into_iter()
+        .filter_map(|id| {
+            per_kelas.remove(&id).map(|mut k| {
+                if let Some(cat) = kategori.get(&id) {
+                    k.kategori = crate::models::kategori_label(cat).to_string();
+                }
+                k
+            })
+        })
+        .collect();
+
+    Ok(crate::models::PratinjauIzin {
+        kelas,
+        total_sesi: total,
+        total_wali: wali.len() as i64,
+    })
 }
 
 /// Data profil pengguna.

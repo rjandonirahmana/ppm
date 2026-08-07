@@ -16,7 +16,36 @@ use crate::models::{
 use crate::repository as repo;
 
 /// Tanggal-tanggal yang cocok pola recurrence dalam rentang [from, to] inklusif.
-fn dates_in_range(rec: &str, start_date: NaiveDate, from: NaiveDate, to: NaiveDate) -> Vec<NaiveDate> {
+///
+/// SATU-SATUNYA penafsiran daily/weekly/monthly/once di aplikasi ini. Dipakai
+/// materialisasi sesi DAN penentuan kelas terdampak izin — dua tempat yang
+/// dulu punya pendapat berbeda tentang "kelas ini berlangsung hari itu?".
+pub(crate) fn dates_in_range(
+    rec: &str,
+    start_date: NaiveDate,
+    custom: &[NaiveDate],
+    from: NaiveDate,
+    to: NaiveDate,
+) -> Vec<NaiveDate> {
+    // 'custom' = daftar tanggal manual, bukan pola. Dulu cabang ini
+    // mengembalikan KOSONG dengan alasan "sudah dimaterialisasi saat
+    // buat/ubah" — benar untuk pembuatan sesi, tapi salah besar untuk
+    // pertanyaan "kelas ini berlangsung tidak di rentang izin?".
+    //
+    // Akibatnya di produksi: SELURUH jadwal KBM memakai recurrence custom, jadi
+    // tiap izin melewatkan seluruh kelas KBM dan hanya menampilkan piket &
+    // sholat — kelas terpenting santri justru yang hilang dari daftar.
+    if rec == "custom" {
+        let mut d: Vec<NaiveDate> = custom
+            .iter()
+            .copied()
+            .filter(|d| *d >= from && *d <= to && *d >= start_date)
+            .collect();
+        d.sort_unstable();
+        d.dedup();
+        return d;
+    }
+
     let mut dates = Vec::new();
     let mut d = from;
     while d <= to {
@@ -26,9 +55,6 @@ fn dates_in_range(rec: &str, start_date: NaiveDate, from: NaiveDate, to: NaiveDa
                 "weekly" => d.weekday() == start_date.weekday(),
                 "monthly" => d.day() == start_date.day(),
                 "once" => d == start_date,
-                // 'custom' = daftar tanggal manual → dimaterialisasi LANGSUNG dari
-                // custom_dates saat buat/ubah (bukan lewat pola), jadi tak cocok
-                // apa pun di sini.
                 _ => false,
             };
             if hit {
@@ -43,6 +69,13 @@ fn dates_in_range(rec: &str, start_date: NaiveDate, from: NaiveDate, to: NaiveDa
     dates
 }
 
+/// Ubah daftar tanggal "YYYY-MM-DD" jadi `NaiveDate`; yang tak terbaca dibuang.
+pub(crate) fn parse_dates(raw: &[String]) -> Vec<NaiveDate> {
+    raw.iter()
+        .filter_map(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+        .collect()
+}
+
 /// Auto-materialisasi sesi MENDATANG (hari ini s/d 7 hari ke depan) dari semua
 /// jadwal aktif kelas — idempotent (insert_sessions melewati duplikat). Dipanggil
 /// saat BUAT jadwal (bukan tiap buka halaman) agar sesi minggu ini siap diisi.
@@ -54,7 +87,7 @@ async fn ensure_upcoming_sessions(pool: &Pool, class_id: i64) -> Result<()> {
         // JANGAN materialisasi melewati end_date jadwal (BUG lama: selalu +7 hari
         // → sesi di luar rentang dibuat ULANG tepat setelah update_schedule).
         let to = end_date.map_or(horizon, |ed| horizon.min(ed));
-        let dates = dates_in_range(&rec, start_date, from, to);
+        let dates = dates_in_range(&rec, start_date, &[], from, to);
         let title = if title.trim().is_empty() {
             "Sesi Kelas".to_string()
         } else {
@@ -75,7 +108,7 @@ pub async fn ensure_upcoming_all(pool: &Pool) -> Result<i64> {
     for (class_id, sid, title, rec, start_date, end_date) in repo::active_schedules_all(pool).await? {
         let from = today.max(start_date);
         let to = end_date.map_or(horizon, |ed| horizon.min(ed));
-        let dates = dates_in_range(&rec, start_date, from, to);
+        let dates = dates_in_range(&rec, start_date, &[], from, to);
         let title = if title.trim().is_empty() { "Sesi Kelas".to_string() } else { title };
         total += repo::insert_sessions(pool, class_id, sid, &title, &dates).await.unwrap_or(0);
     }
@@ -511,7 +544,11 @@ fn weekly_of(rec: &str) -> i64 {
 
 /// Daftar kelas + statistik untuk halaman /kelas.
 pub async fn kelas_list(pool: &Pool, role: &str) -> Result<KelasData> {
-    let (totals, classes) = tokio::join!(repo::class_totals(pool), repo::list_classes(pool));
+    let (totals, classes, teachers) = tokio::join!(
+        repo::class_totals(pool),
+        repo::list_classes(pool),
+        repo::teacher_options(pool),
+    );
     let (total_kelas, total_santri) = totals?;
     let items = classes?
         .into_iter()
@@ -520,10 +557,11 @@ pub async fn kelas_list(pool: &Pool, role: &str) -> Result<KelasData> {
             name: c.name,
             description: c.description,
             category: c.category.unwrap_or_default(),
-            golongan: c.golongan.unwrap_or_default(),
+            jenjang: c.jenjang.unwrap_or_default(),
             teacher: c.teacher,
             member_count: c.member_count,
             schedule_count: c.schedule_count,
+            wali_kelas: c.wali_kelas.unwrap_or_default(),
         })
         .collect();
     Ok(KelasData {
@@ -532,11 +570,20 @@ pub async fn kelas_list(pool: &Pool, role: &str) -> Result<KelasData> {
         total_kelas,
         total_santri,
         items,
+        teacher_options: teachers?
+            .into_iter()
+            .map(|(id, name)| TeacherOption { id, name })
+            .collect(),
     })
 }
 
 /// Detail satu kelas (anggota, jadwal, sesi, kategori, opsi form, statistik).
-pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<KelasDetail> {
+pub async fn kelas_detail(
+    pool: &Pool,
+    role: &str,
+    user_id: i64,
+    class_id: i64,
+) -> Result<KelasDetail> {
     let Some(ci) = repo::class_info(pool, class_id).await? else {
         bail_user!("Kelas tidak ditemukan.");
     };
@@ -547,13 +594,11 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
     // kelas) di main.rs. Halaman detail = murni baca (5 query paralel).
     // Sesi yang DITAMPILKAN hanya MULAI hari ini ke depan (yang lewat dibuang).
     let today = Utc::now().with_timezone(&wib()).date_naive();
-    let (members, scheds, sessions, teachers, cats, golongans, curriculum, books, rooms, pamongs) = tokio::join!(
+    let (members, scheds, sessions, teachers, curriculum, books, rooms, pamongs) = tokio::join!(
         repo::class_members(pool, class_id),
         repo::class_schedules(pool, class_id),
         repo::sessions_of_class(pool, class_id, today, 50),
         repo::teacher_options(pool),
-        repo::distinct_categories(pool),
-        repo::distinct_golongan(pool),
         repo::class_curriculum(pool, class_id),
         repo::list_books(pool),
         repo::device_options(pool),
@@ -762,14 +807,14 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
         name: ci.name,
         description: ci.description,
         category: ci.category.unwrap_or_default(),
-        category_options: cats?,
-        golongan: ci.golongan.unwrap_or_default(),
-        golongan_options: golongans?,
+        jenjang: ci.jenjang.unwrap_or_default(),
         wali_kelas_id: ci.wali_kelas_id.unwrap_or(0),
         wali_kelas_name: ci.wali_kelas_name.unwrap_or_default(),
         require_pamong: ci.require_pamong,
         verify_mode: ci.verify_mode.clone(),
         can_manage: crate::models::role_satisfies(role, &["admin"]),
+        can_manage_jadwal: crate::models::role_satisfies(role, &["admin"])
+            || ci.pamong_id == Some(user_id),
         pamong_id: ci.pamong_id.unwrap_or(0),
         pamong_name: ci.pamong_name.unwrap_or_default(),
         pamong_options,
@@ -786,12 +831,33 @@ pub async fn kelas_detail(pool: &Pool, role: &str, class_id: i64) -> Result<Kela
     })
 }
 
-fn norm_category(category: &str) -> Option<String> {
-    let c = category.trim();
-    if c.is_empty() {
-        None
-    } else {
-        Some(c.to_string())
+use crate::models::JENJANG;
+
+/// Validasi pasangan kategori + jenjang (migrasi 65).
+///
+/// Kategori ada TIGA: `kbm` (kelas belajar-mengajar, berjenjang), `bacaan`
+/// (Bacaan Al-Quran — berdiri sendiri, tak berjenjang), dan `non_kbm` (piket,
+/// apel, sholat, totalan). Dulu kolom ini teks bebas dan di produksi berisi
+/// enam nilai yang mencampur jenis kegiatan dengan jenjang; dari situlah
+/// gerbang rekaman suara dan pemilihan "kelas akademik" jadi tebak-tebakan.
+///
+/// Return `(category, jenjang)` yang sudah dinormalkan.
+fn norm_kelas(category: &str, jenjang: &str) -> Result<(String, Option<String>)> {
+    let cat = category.trim().to_lowercase();
+    let jen = jenjang.trim().to_lowercase();
+    match cat.as_str() {
+        "kbm" => {
+            if !JENJANG.iter().any(|(k, _)| *k == jen) {
+                let daftar: Vec<&str> = JENJANG.iter().map(|(_, l)| *l).collect();
+                bail_user!("Kelas KBM wajib punya jenjang: {}.", daftar.join(", "));
+            }
+            Ok((cat, Some(jen)))
+        }
+        // Jenjang yang terlanjur terisi dibuang, bukan ditolak: mengganti kelas
+        // KBM jadi Bacaan/non-KBM adalah tindakan yang sah, dan memaksa orang
+        // mengosongkan dropdown lebih dulu cuma menambah langkah.
+        "bacaan" | "non_kbm" => Ok((cat, None)),
+        _ => bail_user!("Jenis kelas harus KBM, Bacaan, atau Non-KBM."),
     }
 }
 
@@ -799,21 +865,29 @@ pub async fn create_class(
     pool: &Pool,
     name: &str,
     category: &str,
-    golongan: &str,
+    jenjang: &str,
+    wali_kelas_id: i64,
     description: &str,
 ) -> Result<i64> {
     let name = name.trim();
     if name.is_empty() {
         bail_user!("Nama kelas wajib diisi.");
     }
-    repo::create_class(
-        pool,
-        name,
-        norm_category(category).as_deref(),
-        norm_category(golongan).as_deref(),
-        description.trim(),
-    )
-    .await
+    let (cat, jen) = norm_kelas(category, jenjang)?;
+    // Kelas KBM WAJIB punya wali sejak lahir. Bukan sekadar kelengkapan data:
+    // wali kelas KBM adalah satu-satunya penyetuju izin santrinya, jadi kelas
+    // KBM tanpa wali berarti izin santrinya menggantung tanpa tujuan sampai
+    // ada yang sadar dan mengisinya belakangan.
+    let wali = if cat == "kbm" {
+        if wali_kelas_id <= 0 {
+            bail_user!("Kelas KBM wajib punya wali kelas — pilih gurunya dulu.");
+        }
+        Some(wali_kelas_id)
+    } else {
+        // Wali hanya ada di KBM (migrasi 65); yang terlanjur terpilih diabaikan.
+        None
+    };
+    repo::create_class(pool, name, Some(&cat), jen.as_deref(), wali, description.trim()).await
 }
 
 pub async fn update_class(
@@ -821,21 +895,23 @@ pub async fn update_class(
     class_id: i64,
     name: &str,
     category: &str,
-    golongan: &str,
+    jenjang: &str,
 ) -> Result<()> {
     let name = name.trim();
     if name.is_empty() {
         bail_user!("Nama kelas wajib diisi.");
     }
-    if !repo::update_class(
-        pool,
-        class_id,
-        name,
-        norm_category(category).as_deref(),
-        norm_category(golongan).as_deref(),
-    )
-    .await?
-    {
+    let (cat, jen) = norm_kelas(category, jenjang)?;
+    // Berpindah JADI kelas KBM sementara walinya kosong sama saja dengan
+    // membuat kelas KBM tanpa wali lewat pintu belakang — izin santrinya
+    // langsung tak punya penyetuju. Suruh isi walinya dulu.
+    if cat == "kbm" && !repo::kelas_punya_wali(pool, class_id).await? {
+        bail_user!(
+            "Kelas KBM wajib punya wali kelas. Tetapkan wali kelasnya dulu di panel \
+             \"Wali Kelas & Verifikasi\", baru ubah jenisnya jadi KBM."
+        );
+    }
+    if !repo::update_class(pool, class_id, name, Some(&cat), jen.as_deref()).await? {
         bail_user!("Kelas tidak ditemukan.");
     }
     Ok(())
@@ -868,7 +944,27 @@ pub async fn set_class_staff(
     if matches!(verify_mode, "dua_tahap" | "pamong") && pamong_id <= 0 {
         bail_user!("Mode ini membutuhkan pamong kelas. Pilih pamongnya dulu.");
     }
-    let wali = (wali_kelas_id > 0).then_some(wali_kelas_id);
+    // WALI KELAS hanya di KBM (migrasi 65). Di kelas lain petugasnya pamong
+    // saja — dialah yang menunjuk guru tiap sesi dan menyetujui absensi bila
+    // kelasnya dua langkah. Aturan ini yang menjaga perizinan tetap sederhana:
+    // satu santri, satu kelas KBM, satu wali yang perlu menyetujui izinnya.
+    let kbm = repo::kelas_adalah_kbm(pool, class_id).await?;
+    if wali_kelas_id > 0 && !kbm {
+        bail_user!(
+            "Wali kelas hanya untuk kelas KBM. Kelas ini cukup punya pamong — \
+             pamonglah yang menunjuk guru tiap sesi."
+        );
+    }
+    // Wali KBM tak boleh DIKOSONGKAN, bukan cuma wajib saat dibuat. Tanpa ini
+    // aturan "wajib" bisa dilanggar semenit setelah kelasnya jadi, dan izin
+    // santrinya langsung kehilangan penyetuju.
+    if kbm && wali_kelas_id <= 0 {
+        bail_user!(
+            "Kelas KBM wajib punya wali kelas. Pilih guru penggantinya — \
+             wali kelas inilah yang menyetujui izin santri kelas ini."
+        );
+    }
+    let wali = (wali_kelas_id > 0 && kbm).then_some(wali_kelas_id);
     let pamong = (pamong_id > 0).then_some(pamong_id);
     if !repo::set_class_staff(pool, class_id, wali, pamong, verify_mode).await? {
         bail_user!("Kelas tidak ditemukan.");
@@ -1084,7 +1180,7 @@ pub async fn update_schedule(
         custom.iter().cloned().filter(|d| *d >= today).collect()
     } else {
         let upper = ed.unwrap_or(today + Duration::days(400));
-        dates_in_range(&rec, sd, today.max(sd), upper)
+        dates_in_range(&rec, sd, &[], today.max(sd), upper)
     };
     match repo::delete_future_sessions_not_in(pool, schedule_id, today, &valid).await {
         Ok(n) => tracing::info!(schedule_id, valid = valid.len(), "sync sesi: {n} sesi mendatang dihapus (di luar rentang/pola)"),
@@ -1133,7 +1229,7 @@ pub async fn generate_month_sessions(
         .and_then(|d| d.pred_opt())
         .unwrap_or(first);
 
-    let dates = dates_in_range(&rec, start_date, first, last);
+    let dates = dates_in_range(&rec, start_date, &[], first, last);
     let title = if title.trim().is_empty() {
         "Sesi Kelas".to_string()
     } else {
@@ -1246,10 +1342,37 @@ pub async fn set_session_actual_detail(pool: &Pool, session_id: i64, detail: &st
 /// Tambah santri ke KELAS. Keanggotaan berlaku untuk SEMUA jadwal kelas itu
 /// (migrasi 61) — tak ada lagi penempatan per-jadwal.
 pub async fn add_member(pool: &Pool, class_id: i64, student_id: i64) -> Result<()> {
+    tolak_kbm_ganda(pool, class_id, &[student_id]).await?;
     if !repo::add_member(pool, class_id, student_id).await? {
         bail_user!("Santri sudah terdaftar di kelas ini.");
     }
     Ok(())
+}
+
+/// Tolak lebih awal santri yang sudah punya kelas KBM lain — dengan menyebut
+/// kelas mana.
+///
+/// Aturannya ditegakkan trigger `trg_satu_kelas_kbm` (migrasi 65); ini bukan
+/// penggantinya melainkan penerjemahnya. Tanpa ini yang sampai ke layar adalah
+/// galat unique-violation mentah yang tak menjelaskan apa pun, dan pada
+/// penambahan massal SATU santri bermasalah menggagalkan seluruh kiriman tanpa
+/// memberi tahu yang mana.
+async fn tolak_kbm_ganda(pool: &Pool, class_id: i64, student_ids: &[i64]) -> Result<()> {
+    let bentrok = repo::santri_dengan_kbm_lain(pool, class_id, student_ids).await?;
+    let Some((nama, kelas)) = bentrok.first() else {
+        return Ok(());
+    };
+    let sisa = bentrok.len() - 1;
+    if sisa > 0 {
+        bail_user!(
+            "{nama} sudah di kelas KBM \"{kelas}\" (dan {sisa} santri lain juga sudah punya \
+             kelas KBM). Satu santri hanya boleh satu kelas KBM — keluarkan dulu dari kelas lamanya."
+        );
+    }
+    bail_user!(
+        "{nama} sudah terdaftar di kelas KBM \"{kelas}\". Satu santri hanya boleh satu kelas \
+         KBM — keluarkan dulu dari kelas lamanya."
+    );
 }
 
 /// Tambah BANYAK santri ke kelas sekaligus. Return jumlah BARU ditambahkan.
@@ -1262,6 +1385,7 @@ pub async fn add_members(
     if ids.is_empty() {
         bail_user!("Pilih minimal satu santri.");
     }
+    tolak_kbm_ganda(pool, class_id, &ids).await?;
     repo::add_members(pool, class_id, &ids).await
 }
 
@@ -1330,7 +1454,7 @@ pub async fn students_data(pool: &Pool, user: &SessionUser) -> Result<StudentsDa
                 classes: r
                     .classes
                     .into_iter()
-                    .map(|c| StudentClassTag { golongan: c.golongan, name: c.name })
+                    .map(|c| StudentClassTag { jenjang: c.jenjang, name: c.name })
                     .collect(),
                 points: r.points,
                 id: r.user_id,
@@ -1538,7 +1662,7 @@ mod tests {
 /// pemetaannya dipakai bersama alih-alih ditulis dua kali.
 ///
 /// Query per-kelas (kurikulum/jadwal/anggota) sengaja dibiarkan berurutan:
-/// seorang santri lazimnya ikut 2–3 kelas (satu per golongan), jadi jumlah
+/// seorang santri lazimnya ikut 2–3 kelas (satu per jenjang), jadi jumlah
 /// query tetap kecil dan menukarnya dengan satu query raksasa ber-JOIN ganda
 /// justru lebih sulit dibaca tanpa keuntungan nyata.
 pub async fn kelas_saya(
@@ -1676,7 +1800,7 @@ pub async fn kelas_saya(
             name: k.name,
             peran_saya: peran_saya.to_string(),
             category: k.category.unwrap_or_default(),
-            golongan: k.golongan.unwrap_or_default(),
+            jenjang: k.jenjang.unwrap_or_default(),
             wali_kelas: k.wali_kelas.unwrap_or_default(),
             pamong: k.pamong.unwrap_or_default(),
             curriculum,
@@ -1686,4 +1810,50 @@ pub async fn kelas_saya(
     }
 
     Ok(crate::models::KelasSayaData { sebagai_staf, items })
+}
+
+#[cfg(test)]
+mod tests_recurrence {
+    use super::dates_in_range;
+    use chrono::NaiveDate;
+
+    fn d(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    /// REGRESI: jadwal 'custom' pernah dianggap tak pernah jatuh di rentang
+    /// mana pun. Seluruh jadwal KBM di produksi memakai custom, jadi setiap
+    /// izin melewatkan kelas KBM santri dan hanya menampilkan piket & sholat.
+    #[test]
+    fn custom_memakai_daftar_tanggalnya() {
+        let custom = vec![d("2026-08-05"), d("2026-08-07"), d("2026-08-20")];
+        let hit = dates_in_range("custom", d("2026-07-01"), &custom, d("2026-08-06"), d("2026-08-13"));
+        assert_eq!(hit, vec![d("2026-08-07")], "hanya tanggal di dalam rentang");
+
+        // Tanpa daftar tanggal tak ada yang bisa cocok — dan itu memang benar.
+        assert!(dates_in_range("custom", d("2026-07-01"), &[], d("2026-08-06"), d("2026-08-13")).is_empty());
+    }
+
+    /// Tanggal manual sebelum jadwalnya mulai tak dihitung.
+    #[test]
+    fn custom_hormati_start_date() {
+        let custom = vec![d("2026-06-30"), d("2026-07-02")];
+        let hit = dates_in_range("custom", d("2026-07-01"), &custom, d("2026-06-01"), d("2026-07-31"));
+        assert_eq!(hit, vec![d("2026-07-02")]);
+    }
+
+    #[test]
+    fn pola_lain_tetap_seperti_semula() {
+        // daily: tiap hari dalam rentang.
+        assert_eq!(dates_in_range("daily", d("2026-08-01"), &[], d("2026-08-05"), d("2026-08-07")).len(), 3);
+        // weekly: hari yang sama dengan start_date (2026-08-06 = Kamis).
+        let w = dates_in_range("weekly", d("2026-08-06"), &[], d("2026-08-06"), d("2026-08-20"));
+        assert_eq!(w, vec![d("2026-08-06"), d("2026-08-13"), d("2026-08-20")]);
+        // once: hanya tanggal itu.
+        assert_eq!(dates_in_range("once", d("2026-08-10"), &[], d("2026-08-01"), d("2026-08-31")), vec![d("2026-08-10")]);
+        // monthly: tanggal yang sama tiap bulan.
+        assert_eq!(dates_in_range("monthly", d("2026-06-15"), &[], d("2026-08-01"), d("2026-09-30")).len(), 2);
+        // pola tak dikenal → kosong.
+        assert!(dates_in_range("entah", d("2026-08-01"), &[], d("2026-08-01"), d("2026-08-31")).is_empty());
+    }
 }

@@ -357,10 +357,29 @@ mod wasm {
                 continue;
             };
             let url = format!("/api/live-audio/{session_id}/chunk?seq={seq}");
-            let ok = match gloo_net::http::Request::post(&url).body(blob.clone()) {
-                Ok(req) => matches!(req.send().await, Ok(r) if r.ok()),
-                Err(_) => false,
+            // Status HTTP dibedakan, bukan sekadar ok/tidak. Server kini bisa
+            // menolak secara PERMANEN — sesi sudah berakhir (410), bukan hak
+            // pengirim (403), atau urutan potongan tak nyambung setelah proses
+            // server restart (409). Semuanya percuma diulang; versi lama
+            // menganggap semua kegagalan sebagai "jaringan putus" dan mengulang
+            // selamanya tiap 2 detik sambil menampilkan pesan yang keliru.
+            let hasil = match gloo_net::http::Request::post(&url).body(blob.clone()) {
+                Ok(req) => req.send().await.ok().map(|r| r.status()),
+                Err(_) => None,
             };
+            let ok = matches!(hasil, Some(200..=299));
+            if let Some(code @ (403 | 409 | 410)) = hasil {
+                let pesan = match code {
+                    403 => "Anda bukan petugas siaran sesi ini.",
+                    410 => "Sesi sudah ditutup — siaran dihentikan.",
+                    _ => "Sambungan siaran terputus di server. Mulai siaran lagi \
+                          untuk melanjutkan (rekaman sebelumnya tetap tersimpan).",
+                };
+                let _ = err.try_set(Some(pesan.into()));
+                let _ = queued.try_set(0);
+                queue.borrow_mut().clear();
+                break;
+            }
             if ok {
                 let _ = sent.try_update(|n| *n += 1);
                 let _ = queued.try_set(queue.borrow().len());

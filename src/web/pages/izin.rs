@@ -6,8 +6,8 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 
 use crate::models::IzinData;
-use crate::web::api::{izin_data, submit_permit_action};
-use crate::web::components::{DeviceFrame, NotifBell};
+use crate::web::api::{izin_data, pratinjau_izin, submit_permit_action};
+use crate::web::components::{DeviceFrame, NotifBell, SheetIzin};
 
 #[component]
 pub fn IzinPage() -> impl IntoView {
@@ -29,10 +29,16 @@ pub fn IzinPage() -> impl IntoView {
     let kind = RwSignal::new("sick".to_string());
     let start = RwSignal::new(String::new());
     let end = RwSignal::new(String::new());
+    // Kosong = izin SEHARI PENUH (migrasi 66). Diisi = hanya kelas yang jamnya
+    // bersinggungan yang dianggap terlewat.
+    let jam_mulai = RwSignal::new(String::new());
+    let jam_selesai = RwSignal::new(String::new());
     let reason = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let error = RwSignal::new(Option::<String>::None);
     let success = RwSignal::new(false);
+    // Izin yang sedang dibuka detailnya (None = sheet tertutup).
+    let detail = RwSignal::new(Option::<i64>::None);
 
     let on_submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -45,13 +51,17 @@ pub fn IzinPage() -> impl IntoView {
         let k = kind.get_untracked();
         let s = start.get_untracked();
         let e = end.get_untracked();
+        let jm = jam_mulai.get_untracked();
+        let js = jam_selesai.get_untracked();
         let r = reason.get_untracked();
         leptos::task::spawn_local(async move {
-            match submit_permit_action(k, s, e, r).await {
+            match submit_permit_action(k, s, e, jm, js, r).await {
                 Ok(_) => {
                     success.set(true);
                     start.set(String::new());
                     end.set(String::new());
+                    jam_mulai.set(String::new());
+                    jam_selesai.set(String::new());
                     reason.set(String::new());
                     data.refetch();
                 }
@@ -66,7 +76,7 @@ pub fn IzinPage() -> impl IntoView {
     };
 
     view! {
-        <Title text="Ajukan Perizinan — PPM AFM" />
+        <Title text="Ajukan Perizinan — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 // ── Header dgn poin ────────────────────────────────────────
@@ -142,8 +152,27 @@ pub fn IzinPage() -> impl IntoView {
                                                                 </p>
                                                             }
                                                         });
+                                                    let pid = p.id;
+                                                    let pengaju = (!p.diajukan_oleh.is_empty())
+                                                        .then(|| {
+                                                            view! {
+                                                                <p class="text-[11px] text-info flex items-center gap-1 mt-0.5">
+                                                                    <span class="material-symbols-outlined text-[13px]">
+                                                                        "family_restroom"
+                                                                    </span>
+                                                                    {p.diajukan_oleh.clone()}
+                                                                </p>
+                                                            }
+                                                        });
                                                     view! {
-                                                        <div class="ppm-card p-4 flex items-center gap-3">
+                                                        // Seluruh kartu jadi tombol: detail & sunting
+                                                        // ada di baliknya, dan target sentuh sebesar
+                                                        // kartu jauh lebih mudah dikenai daripada
+                                                        // ikon kecil di sudut.
+                                                        <button
+                                                            class="ppm-card p-4 flex items-center gap-3 w-full text-left press card-hover"
+                                                            on:click=move |_| detail.set(Some(pid))
+                                                        >
                                                             <div class="w-11 h-11 rounded-xl bg-info/10 text-info flex items-center justify-center shrink-0">
                                                                 <span class="material-symbols-outlined">"medical_services"</span>
                                                             </div>
@@ -155,9 +184,13 @@ pub fn IzinPage() -> impl IntoView {
                                                                     {p.range_label}
                                                                 </p>
                                                                 {kelas}
+                                                                {pengaju}
                                                             </div>
                                                             <span class=badge>{p.status_label}</span>
-                                                        </div>
+                                                            <span class="material-symbols-outlined text-on-surface-variant text-[18px] shrink-0">
+                                                                "chevron_right"
+                                                            </span>
+                                                        </button>
                                                     }
                                                 })
                                                 .collect_view()}
@@ -236,6 +269,39 @@ pub fn IzinPage() -> impl IntoView {
                             />
                         </div>
 
+                        // Jam — opsional. Dikosongkan = izin sehari penuh
+                        // (perilaku lama). Diisi = hanya kelas yang jamnya
+                        // bersinggungan yang terlewat, jadi santri yang keluar
+                        // dua jam tak kehilangan kehadiran seharian.
+                        <div class="space-y-2">
+                            <label class="text-label-md text-on-surface-variant">
+                                "Jam (kosongkan bila izin sehari penuh)"
+                            </label>
+                            <div class="grid grid-cols-2 gap-3">
+                                <input
+                                    type="time"
+                                    aria-label="Jam mulai"
+                                    class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-body-md text-on-surface"
+                                    prop:value=move || jam_mulai.get()
+                                    on:input=move |ev| jam_mulai.set(event_target_value(&ev))
+                                />
+                                <input
+                                    type="time"
+                                    aria-label="Jam selesai"
+                                    class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-body-md text-on-surface"
+                                    prop:value=move || jam_selesai.get()
+                                    on:input=move |ev| jam_selesai.set(event_target_value(&ev))
+                                />
+                            </div>
+                        </div>
+
+                        <PratinjauDampak
+                            start=start
+                            end=end
+                            jam_mulai=jam_mulai
+                            jam_selesai=jam_selesai
+                        />
+
                         // Alasan
                         <div class="space-y-2">
                             <label class="text-label-md text-on-surface-variant">"Alasan Perizinan"</label>
@@ -269,6 +335,20 @@ pub fn IzinPage() -> impl IntoView {
                     </form>
                     </div>
                 </div>
+
+                {move || {
+                    detail
+                        .get()
+                        .map(|pid| {
+                            view! {
+                                <SheetIzin
+                                    permit_id=pid
+                                    on_close=move || detail.set(None)
+                                    on_saved=move || data.refetch()
+                                />
+                            }
+                        })
+                }}
 
             </div>
         </DeviceFrame>
@@ -351,5 +431,127 @@ fn KindButton(
             <span class="material-symbols-outlined">{icon}</span>
             {label}
         </button>
+    }
+}
+
+/// Dampak izin sebelum diajukan: kelas apa saja yang terlewat, berapa sesi, dan
+/// ke berapa wali kelas pengajuannya akan dipecah.
+///
+/// Dihitung SERVER dengan jalur yang sama dengan pengajuan sungguhan, bukan
+/// ditaksir di klien — angka yang berbeda dari kenyataan lebih buruk daripada
+/// tak ada angka sama sekali. Menunggu 400 ms setelah ketikan terakhir supaya
+/// mengubah tanggal tak menembakkan satu request per penekanan tombol.
+#[component]
+fn PratinjauDampak(
+    start: RwSignal<String>,
+    end: RwSignal<String>,
+    jam_mulai: RwSignal<String>,
+    jam_selesai: RwSignal<String>,
+) -> impl IntoView {
+    let kunci = RwSignal::new((String::new(), String::new(), String::new(), String::new()));
+
+    // Debounce: sinyal `kunci` baru diperbarui setelah ketikan berhenti.
+    Effect::new(move |_| {
+        let baru = (start.get(), end.get(), jam_mulai.get(), jam_selesai.get());
+        #[cfg(target_arch = "wasm32")]
+        {
+            leptos::task::spawn_local(async move {
+                gloo_timers::future::TimeoutFuture::new(400).await;
+                let sekarang = (
+                    start.get_untracked(),
+                    end.get_untracked(),
+                    jam_mulai.get_untracked(),
+                    jam_selesai.get_untracked(),
+                );
+                // Masih sama setelah jeda = ketikan sudah berhenti.
+                if sekarang == baru {
+                    kunci.set(baru);
+                }
+            });
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        kunci.set(baru);
+    });
+
+    let pratinjau = Resource::new(
+        move || kunci.get(),
+        |(s, e, jm, js)| async move {
+            if s.is_empty() {
+                return Ok(crate::models::PratinjauIzin::default());
+            }
+            pratinjau_izin(s, e, jm, js).await
+        },
+    );
+
+    view! {
+        <Suspense fallback=|| ()>
+            {move || {
+                let d = pratinjau.get().and_then(|r| r.ok()).unwrap_or_default();
+                if d.kelas.is_empty() {
+                    return ().into_any();
+                }
+                // Ringkasan didahulukan sebagai ANGKA BESAR: yang perlu
+                // disadari santri sebelum menekan kirim adalah "berapa banyak",
+                // bukan daftar nama kelas. Kelas KBM ditandai supaya jelas
+                // bahwa yang terlewat bukan cuma piket dan sholat.
+                let n_kelas = d.kelas.len();
+                view! {
+                    <div class="rounded-2xl border border-warning/40 bg-warning/5 overflow-hidden anim-in">
+                        <div class="flex items-center gap-3 px-4 py-3 bg-warning/10">
+                            <span class="material-symbols-outlined text-warning">"event_busy"</span>
+                            <div class="min-w-0">
+                                <p class="text-body-md font-bold text-on-background leading-tight">
+                                    {format!("{} sesi akan terlewat", d.total_sesi)}
+                                </p>
+                                <p class="text-[11px] text-on-surface-variant">
+                                    {format!(
+                                        "di {} kelas · diajukan ke {} wali kelas",
+                                        n_kelas,
+                                        d.total_wali.max(1),
+                                    )}
+                                </p>
+                            </div>
+                        </div>
+                        <div class="divide-y divide-outline-variant/40">
+                            {d.kelas
+                                .into_iter()
+                                .map(|k| {
+                                    let kbm = k.kategori == "KBM";
+                                    let chip = if kbm {
+                                        "ppm-chip bg-primary text-on-primary shrink-0"
+                                    } else {
+                                        "ppm-chip bg-surface-container-highest text-on-surface-variant shrink-0"
+                                    };
+                                    let wali = if k.wali.is_empty() {
+                                        "Tanpa wali kelas — diputuskan dewan guru".to_string()
+                                    } else {
+                                        format!("Wali: {}", k.wali)
+                                    };
+                                    view! {
+                                        <div class="flex items-center gap-3 px-4 py-2.5">
+                                            <div class="min-w-0 flex-1">
+                                                <div class="flex items-center gap-1.5 flex-wrap">
+                                                    <span class="text-body-sm font-semibold text-on-background truncate">
+                                                        {k.nama}
+                                                    </span>
+                                                    <span class=chip>{k.kategori}</span>
+                                                </div>
+                                                <p class="text-[11px] text-on-surface-variant truncate">
+                                                    {wali}
+                                                </p>
+                                            </div>
+                                            <span class="text-body-sm font-bold text-warning shrink-0">
+                                                {format!("{} sesi", k.sesi)}
+                                            </span>
+                                        </div>
+                                    }
+                                })
+                                .collect_view()}
+                        </div>
+                    </div>
+                }
+                    .into_any()
+            }}
+        </Suspense>
     }
 }

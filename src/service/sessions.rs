@@ -277,6 +277,7 @@ pub async fn detail_for(
             .map(|(id, name)| crate::models::TeacherOption { id, name })
             .collect(),
         category: d.category.clone().filter(|c| !c.is_empty()).unwrap_or_else(|| "-".into()),
+        class_category: d.class_category.clone(),
         start_blocked_reason: start_window_reason(d.session_date, d.start_time, d.end_time),
         book_id: d.book_id,
         book_title: d.book_title,

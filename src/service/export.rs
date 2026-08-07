@@ -35,7 +35,7 @@ pub struct ReportDoc {
 
 pub fn admin_doc(d: &LaporanAdminData, outside: &[OutsideRow], generated_label: String) -> ReportDoc {
     ReportDoc {
-        title: "Laporan Institusi — PPM AFM".into(),
+        title: "Laporan Institusi — AFM SMART".into(),
         subtitle: "Ringkasan performa akademik & administratif institusi".into(),
         generated_label,
         stats: vec![
@@ -86,7 +86,7 @@ pub fn admin_doc(d: &LaporanAdminData, outside: &[OutsideRow], generated_label: 
 pub fn guru_doc(d: &AnalisisData, extra: &LaporanGuruExtra, generated_label: String) -> ReportDoc {
     let scope = if d.is_dewan { "Seluruh pesantren" } else { "Kelas yang diampu" };
     ReportDoc {
-        title: "Laporan Kelas Akademik — PPM AFM".into(),
+        title: "Laporan Kelas Akademik — AFM SMART".into(),
         subtitle: format!("Cakupan: {scope}"),
         generated_label,
         stats: vec![
@@ -146,7 +146,7 @@ pub fn ortu_doc(d: &LaporanOrtuData, generated_label: String) -> ReportDoc {
 
 pub fn santri_doc(d: &LaporanSantriData, generated_label: String) -> ReportDoc {
     ReportDoc {
-        title: "Rapor Pribadi Santri — PPM AFM".into(),
+        title: "Rapor Pribadi Santri — AFM SMART".into(),
         subtitle: String::new(),
         generated_label,
         stats: vec![
@@ -394,7 +394,7 @@ mod tests {
 
     fn sample_doc() -> ReportDoc {
         ReportDoc {
-            title: "Laporan Uji — PPM AFM".into(),
+            title: "Laporan Uji — AFM SMART".into(),
             subtitle: "Contoh subjudul".into(),
             generated_label: "23 Jul 2026, 10:00 WIB".into(),
             stats: vec![("Rata-rata Kehadiran", "92%".into()), ("Total Santri", "150".into())],

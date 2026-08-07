@@ -60,7 +60,7 @@ pub fn SantriDashboardPage() -> impl IntoView {
     });
 
     view! {
-        <Title text="Beranda Santri — PPM AFM" />
+        <Title text="Beranda Santri — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <Suspense fallback=|| {
@@ -90,9 +90,9 @@ pub fn SantriDashboardPage() -> impl IntoView {
                 <button
                     class="ppm-fab fixed bottom-24 right-5 w-14 h-14 spiritual-gradient rounded-2xl flex items-center justify-center text-on-primary shadow-lg shadow-primary/30 z-20"
                     on:click=move |_| show_qr.set(true)
-                    aria-label="Tampilkan QR absensi"
+                    aria-label="Cara absensi gerbang"
                 >
-                    <span class="material-symbols-outlined text-3xl">"qr_code_2"</span>
+                    <span class="material-symbols-outlined text-3xl">"nfc"</span>
                 </button>
 
                 // ── Bottom-sheet QR absensi ─────────────────────────────────
@@ -112,30 +112,37 @@ pub fn SantriDashboardPage() -> impl IntoView {
                                     // hiasan: dipindai pasti gagal, dan santri baru tahu
                                     // setelah berdiri di depan gerbang. Diganti keterangan
                                     // jujur + cara yang benar-benar berlaku sekarang.
-                                    <div class="mt-4 flex flex-col items-center text-center gap-3">
-                                        <span class="w-16 h-16 rounded-2xl bg-surface-container flex items-center justify-center">
-                                            <span class="material-symbols-outlined text-[32px] text-on-surface-variant">
-                                                "qr_code_2"
+                                    // Dibatasi lebarnya + rata kiri di layar
+                                    // lebar. Sheet desktop selebar 40rem, dan
+                                    // isi sependek ini bila dipusatkan hanya
+                                    // menghasilkan segumpal teks kecil yang
+                                    // mengambang di tengah kotak besar.
+                                    <div class="mt-4 md:max-w-md md:mx-auto">
+                                        <div class="flex flex-col items-center text-center gap-3 md:flex-row md:items-start md:text-left md:gap-4">
+                                            <span class="w-16 h-16 shrink-0 rounded-2xl bg-secondary-container flex items-center justify-center">
+                                                <span class="material-symbols-outlined text-[32px] text-primary">
+                                                    "nfc"
+                                                </span>
                                             </span>
-                                        </span>
-                                        <div>
-                                            <p class="text-body-md font-semibold text-on-background">
-                                                "QR absensi belum tersedia"
-                                            </p>
-                                            <p class="text-body-sm text-on-surface-variant mt-1">
-                                                "Absensi gerbang sekarang memakai KARTU RFID. Tempelkan kartumu ke pemindai di gerbang."
-                                            </p>
+                                            <div class="min-w-0">
+                                                <p class="text-body-md font-semibold text-on-background">
+                                                    "Absensi pakai kartu RFID"
+                                                </p>
+                                                <p class="text-body-sm text-on-surface-variant mt-1">
+                                                    "Tempelkan kartumu ke pemindai di gerbang. QR per-santri belum tersedia."
+                                                </p>
+                                            </div>
                                         </div>
-                                        <p class="text-[11px] text-on-surface-variant/70">
+                                        <p class="text-[11px] text-on-surface-variant/70 mt-4 text-center md:text-left">
                                             "Kartu hilang atau belum punya? Hubungi pengelola."
                                         </p>
+                                        <button
+                                            class="w-full mt-5 py-3.5 bg-primary text-on-primary rounded-xl font-semibold press"
+                                            on:click=move |_| show_qr.set(false)
+                                        >
+                                            "Tutup"
+                                        </button>
                                     </div>
-                                    <button
-                                        class="w-full mt-5 py-3.5 bg-primary text-on-primary rounded-xl font-semibold press"
-                                        on:click=move |_| show_qr.set(false)
-                                    >
-                                        "Tutup"
-                                    </button>
                                 </Sheet>
                             }
                         })

@@ -47,7 +47,7 @@ pub fn KontrolPenggunaPage() -> impl IntoView {
     });
 
     view! {
-        <Title text="User Control — PPM AFM" />
+        <Title text="User Control — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="User Control" subtitle="Administrasi akun & keamanan" back_href="/staf" />

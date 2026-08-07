@@ -64,7 +64,7 @@ pub fn KelasDetailPage() -> impl IntoView {
     let tab = RwSignal::new("santri".to_string());
 
     view! {
-        <Title text="Detail Kelas — PPM AFM" />
+        <Title text="Detail Kelas — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Detail Kelas" back_href="/kelas" />
@@ -111,15 +111,13 @@ fn DetailBody(
     let sched_count = d.schedules.len();
     let sesi_count = d.sessions.len();
     let category = d.category.clone();
-    let cat_opts = StoredValue::new(d.category_options.clone());
-    let golongan = d.golongan.clone();
-    let gol_opts = StoredValue::new(d.golongan_options.clone());
+    let jenjang = d.jenjang.clone();
 
-    // Mode edit hero (Edit Detail Kelas: nama + kategori + golongan).
+    // Mode edit hero (Edit Detail Kelas: nama + kategori + jenjang).
     let editing = RwSignal::new(false);
     let name_v = RwSignal::new(d.name.clone());
     let cat_v = RwSignal::new(d.category.clone());
-    let gol_v = RwSignal::new(d.golongan.clone());
+    let gol_v = RwSignal::new(d.jenjang.clone());
     let busy = RwSignal::new(false);
     let err = RwSignal::new(Option::<String>::None);
     let save = move |ev: leptos::ev::SubmitEvent| {
@@ -174,41 +172,41 @@ fn DetailBody(
                                 />
                             </div>
                             <div class="space-y-1">
-                                <label class="text-[11px] font-bold tracking-wider opacity-80">"KATEGORI KELAS"</label>
-                                <input
-                                    type="text"
-                                    list="kategori-detail"
-                                    class="w-full bg-white/15 border-0 rounded-lg px-3 py-2.5 text-body-md text-on-primary placeholder-white/50"
-                                    placeholder="mis. Lambatan — ketik baru bila belum ada"
+                                <label class="text-[11px] font-bold tracking-wider opacity-80">"JENIS KELAS"</label>
+                                // Dropdown tertutup — lihat alasannya di
+                                // pages/kelas.rs (form buat kelas).
+                                <select
+                                    class="w-full bg-white/15 border-0 rounded-lg px-3 py-2.5 text-body-md text-on-primary"
                                     prop:value=move || cat_v.get()
-                                    on:input=move |ev| cat_v.set(event_target_value(&ev))
-                                />
-                                <datalist id="kategori-detail">
-                                    {cat_opts
-                                        .get_value()
-                                        .into_iter()
-                                        .map(|c| view! { <option value=c></option> })
+                                    on:change=move |ev| cat_v.set(event_target_value(&ev))
+                                >
+                                    {crate::models::KATEGORI_KELAS
+                                        .iter()
+                                        .map(|(k, l)| view! { <option value=*k>{*l}</option> })
                                         .collect_view()}
-                                </datalist>
+                                </select>
                             </div>
-                            <div class="space-y-1">
-                                <label class="text-[11px] font-bold tracking-wider opacity-80">"GOLONGAN"</label>
-                                <input
-                                    type="text"
-                                    list="golongan-detail"
-                                    class="w-full bg-white/15 border-0 rounded-lg px-3 py-2.5 text-body-md text-on-primary placeholder-white/50"
-                                    placeholder="mis. Bacaan/Makna — ketik baru bila belum ada"
-                                    prop:value=move || gol_v.get()
-                                    on:input=move |ev| gol_v.set(event_target_value(&ev))
-                                />
-                                <datalist id="golongan-detail">
-                                    {gol_opts
-                                        .get_value()
-                                        .into_iter()
-                                        .map(|g| view! { <option value=g></option> })
-                                        .collect_view()}
-                                </datalist>
-                            </div>
+                            <Show when=move || cat_v.get() == "kbm">
+                                <div class="space-y-1">
+                                    <label class="text-[11px] font-bold tracking-wider opacity-80">
+                                        "JENJANG"
+                                    </label>
+                                    <select
+                                        class="w-full bg-white/15 border-0 rounded-lg px-3 py-2.5 text-body-md text-on-primary"
+                                        prop:value=move || gol_v.get()
+                                        on:change=move |ev| gol_v.set(event_target_value(&ev))
+                                    >
+                                        <option value="">"— pilih jenjang —"</option>
+                                        {crate::models::JENJANG
+                                            .iter()
+                                            .map(|(k, l)| view! { <option value=*k>{*l}</option> })
+                                            .collect_view()}
+                                    </select>
+                                    <p class="text-[11px] opacity-70">
+                                        "Santri naik jenjang setelah kurikulumnya tuntas."
+                                    </p>
+                                </div>
+                            </Show>
                             <div class="grid grid-cols-2 gap-2 pt-1">
                                 <button
                                     type="button"
@@ -230,27 +228,22 @@ fn DetailBody(
                         .into_any()
                 } else {
                     let category = category.clone();
-                    let golongan = golongan.clone();
+                    let jenjang = jenjang.clone();
                     view! {
                         <div class="flex items-start justify-between gap-3">
                             <div class="min-w-0">
                                 <div class="flex flex-wrap gap-1.5 mb-1">
-                                    {(!golongan.is_empty())
+                                    {(!jenjang.is_empty())
                                         .then(|| {
                                             view! {
                                                 <span class="inline-block px-2.5 py-0.5 rounded-full bg-primary-fixed text-primary text-[10px] font-bold tracking-wider uppercase">
-                                                    {golongan}
+                                                    {crate::models::jenjang_label(&jenjang)}
                                                 </span>
                                             }
                                         })}
-                                    {(!category.is_empty())
-                                        .then(|| {
-                                            view! {
-                                                <span class="inline-block px-2.5 py-0.5 rounded-full bg-white/20 text-[10px] font-bold tracking-wider uppercase">
-                                                    {category}
-                                                </span>
-                                            }
-                                        })}
+                                    <span class="inline-block px-2.5 py-0.5 rounded-full bg-white/20 text-[10px] font-bold tracking-wider uppercase">
+                                        {crate::models::kategori_label(&category)}
+                                    </span>
                                 </div>
                                 <h2 class="text-headline-sm font-bold">{name_v.get()}</h2>
                             </div>
@@ -349,7 +342,10 @@ fn WaliKelasCard(
 ) -> impl IntoView {
     let teacher_opts = StoredValue::new(d.teacher_options.clone());
     let pamong_opts = StoredValue::new(d.pamong_options.clone());
-    let wali = RwSignal::new(d.wali_kelas_id);
+    // Wali kelas HANYA di KBM (migrasi 65). Di kelas Bacaan/non-KBM bidangnya
+    // tak ditampilkan sama sekali — bukan ditampilkan lalu ditolak server.
+    let kbm = d.category == "kbm";
+    let wali = RwSignal::new(if kbm { d.wali_kelas_id } else { 0 });
     let pamong = RwSignal::new(d.pamong_id);
     let mode = RwSignal::new(d.verify_mode.clone());
     let can_manage = d.can_manage;
@@ -381,7 +377,9 @@ fn WaliKelasCard(
         <div class="ppm-card p-4 space-y-3 anim-in">
             <div class="flex items-center gap-2">
                 <span class="material-symbols-outlined text-primary">"badge"</span>
-                <h3 class="text-body-lg font-bold text-on-background">"Wali Kelas & Verifikasi"</h3>
+                <h3 class="text-body-lg font-bold text-on-background">
+                    {if kbm { "Wali Kelas & Verifikasi" } else { "Pamong & Verifikasi" }}
+                </h3>
                 // Penanda TERKUNCI, bukan tombol yang diam-diam gagal: pemirsa
                 // langsung tahu ini bukan wewenangnya, bukan aplikasi yang rusak.
                 {(!can_manage)
@@ -395,35 +393,53 @@ fn WaliKelasCard(
                     })}
             </div>
             <p class="text-body-sm text-on-surface-variant">
-                {if can_manage {
-                    "Wali kelas menyetujui izin/sakit/keluar santri kelas ini. Mode verifikasi menentukan siapa yang mengesahkan absensi."
-                } else {
+                {if !can_manage {
                     "Hanya admin/ketua yang boleh mengubah bagian ini. Ditampilkan agar Anda tahu siapa petugas kelas dan bagaimana absensinya diverifikasi."
+                } else if kbm {
+                    "Wali kelas menyetujui izin santri kelas ini — satu santri satu kelas KBM, jadi satu izin cukup. Mode verifikasi menentukan siapa yang mengesahkan absensi."
+                } else {
+                    "Kelas ini tak punya wali kelas; petugasnya pamong — ia menunjuk guru tiap sesi dan mengesahkan absensi bila kelasnya dua langkah. Perizinan santri tetap lewat wali kelas KBM-nya."
                 }}
             </p>
-
-            <label class="space-y-1 block">
-                <span class="text-[11px] font-bold tracking-wider text-on-surface-variant">"WALI KELAS"</span>
-                <select
-                    class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface cursor-pointer"
-                    prop:disabled=!can_manage
-                    on:change=move |ev| wali.set(event_target_value(&ev).parse().unwrap_or(0))
-                >
-                    <option value="0" selected=move || wali.get() == 0>"— Belum ada wali kelas"</option>
-                    {teacher_opts
-                        .get_value()
-                        .into_iter()
-                        .map(|t| {
-                            let tid = t.id;
-                            view! {
-                                <option value=t.id.to_string() selected=move || wali.get() == tid>
-                                    {t.name}
+            // Hanya kelas KBM yang punya wali. Di kelas lain bidang ini tak
+            // dirender sama sekali — menampilkannya lalu ditolak server hanya
+            // membuat orang mengira aplikasinya rusak.
+            {kbm
+                .then(|| {
+                    view! {
+                        <label class="space-y-1 block">
+                            <span class="text-[11px] font-bold tracking-wider text-on-surface-variant">
+                                "WALI KELAS"
+                            </span>
+                            <select
+                                class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface cursor-pointer"
+                                prop:disabled=!can_manage
+                                on:change=move |ev| {
+                                    wali.set(event_target_value(&ev).parse().unwrap_or(0))
+                                }
+                            >
+                                <option value="0" selected=move || wali.get() == 0>
+                                    "— Belum ada wali kelas"
                                 </option>
-                            }
-                        })
-                        .collect_view()}
-                </select>
-            </label>
+                                {teacher_opts
+                                    .get_value()
+                                    .into_iter()
+                                    .map(|t| {
+                                        let tid = t.id;
+                                        view! {
+                                            <option
+                                                value=t.id.to_string()
+                                                selected=move || wali.get() == tid
+                                            >
+                                                {t.name}
+                                            </option>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </select>
+                        </label>
+                    }
+                })}
 
             <label class="space-y-1 block">
                 <span class="text-[11px] font-bold tracking-wider text-on-surface-variant">"PAMONG KELAS"</span>

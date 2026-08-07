@@ -201,7 +201,7 @@ pub async fn forgot_password(
     // sandi barunya tak pernah sampai. Lebih baik reset gagal diam-diam dan
     // bisa dicoba lagi daripada seseorang kehilangan akses.
     let msg = format!(
-        "🔑 *Reset Password PPM AFM*\nPassword baru Anda: *{new_pw}*\n\nMasuk dengan nomor HP + password ini, lalu segera ganti password di menu Profil."
+        "🔑 *Reset Password AFM SMART*\nPassword baru Anda: *{new_pw}*\n\nMasuk dengan nomor HP + password ini, lalu segera ganti password di menu Profil."
     );
     if let Err(e) = super::registration::send_wa_text(http, waha, &phone, &msg).await {
         tracing::warn!("forgot_password: WA gagal ke {phone} — sandi TIDAK diubah: {e}");

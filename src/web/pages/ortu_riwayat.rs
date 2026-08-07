@@ -48,7 +48,7 @@ pub fn OrtuRiwayatPage() -> impl IntoView {
     });
 
     view! {
-        <Title text="Riwayat Kehadiran Anak — PPM AFM" />
+        <Title text="Riwayat Kehadiran Anak — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Riwayat Kehadiran" />

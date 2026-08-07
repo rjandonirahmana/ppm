@@ -45,7 +45,7 @@ fn AnalisisPage(title: &'static str) -> impl IntoView {
     });
 
     view! {
-        <Title text=format!("{title} — PPM AFM") />
+        <Title text=format!("{title} — AFM SMART") />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title=title subtitle="Portal Administrasi" />
