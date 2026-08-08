@@ -14,6 +14,7 @@ use leptos_router::hooks::use_query_map;
 
 use crate::models::{BookProgressItem, PendingAtt, StudentRowItem};
 use crate::web::api::{
+    angkatan_tersedia_data, students_page_data,
     decide_pamong, decide_verify, student_book_progress_data,
     student_book_progress_for_viewer, students_data,
 };
@@ -39,6 +40,12 @@ pub fn StudentsPage() -> impl IntoView {
     // "list" | "verify"
     let tab = RwSignal::new("list".to_string());
     let query = RwSignal::new(String::new());
+    // Penyaring angkatan. Kosong = semua. Disaring DI KLIEN bersama pencarian:
+    // seluruh daftar (maks 300) memang sudah ada di memori, jadi menyaringnya
+    // tak perlu perjalanan baru ke server.
+    let angkatan = RwSignal::new(String::new());
+    // Daftar tahun angkatan — dibaca sekali, tak bergantung penyaring mana pun.
+    let angkatan_ada = Resource::new(|| (), |_| async move { angkatan_tersedia_data().await });
     let busy_id = RwSignal::new(Option::<i64>::None);
     // Santri yang panel "Progres Buku"-nya terbuka di tab Daftar Santri.
     // Dibuka otomatis bila datang dari tab Akademik /kelas (?student=id).
@@ -61,8 +68,12 @@ pub fn StudentsPage() -> impl IntoView {
                 // memuat; filter jalan begitu resource selesai. Prominent di
                 // mobile (dulu cuma muncul di desktop lewat kondisi md:).
                 // Disembunyikan saat tab Verifikasi aktif (tak relevan di sana).
-                <div class="px-5 pt-5 md:max-w-md" class:hidden=move || tab.get() == "verify">
-                    <div class="relative">
+                // Cari + saring angkatan sebaris di desktop; bertumpuk di ponsel.
+                <div
+                    class="px-5 pt-5 flex flex-col sm:flex-row sm:items-center gap-2 md:max-w-2xl"
+                    class:hidden=move || tab.get() == "verify"
+                >
+                    <div class="relative flex-1 min-w-0">
                         <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">
                             "search"
                         </span>
@@ -74,6 +85,48 @@ pub fn StudentsPage() -> impl IntoView {
                             on:input=move |ev| query.set(event_target_value(&ev))
                         />
                     </div>
+                    // Pilihan angkatan diambil dari SERVER (`SELECT DISTINCT
+                    // entry_year`), bukan disimpulkan dari daftar yang tampil.
+                    //
+                    // Sejak daftarnya dipaginasi, yang ada di layar cuma sepuluh
+                    // baris pertama — menyusun pilihan dari situ hanya
+                    // menawarkan angkatan yang kebetulan sudah termuat, dan
+                    // angkatan lain tak pernah bisa dipilih sama sekali.
+                    //
+                    // Dibungkus <Suspense>: membaca resource di luar
+                    // Suspense/Transition memicu hydration-mismatch (Leptos
+                    // memperingatkannya di log) dan membuang optimasi streaming.
+                    <Suspense fallback=|| {
+                        view! {
+                            <select class="sm:w-48 shrink-0 bg-surface-container border-0 rounded-xl px-3 py-3 text-body-sm text-on-surface">
+                                <option value="">"Semua angkatan"</option>
+                            </select>
+                        }
+                    }>
+                        {move || {
+                            let tahun = angkatan_ada.get().and_then(|r| r.ok()).unwrap_or_default();
+                            view! {
+                                <select
+                                    class="sm:w-48 shrink-0 bg-surface-container border-0 rounded-xl px-3 py-3 text-body-sm text-on-surface"
+                                    on:change=move |ev| angkatan.set(event_target_value(&ev))
+                                >
+                                    <option value="">"Semua angkatan"</option>
+                                    {tahun
+                                        .into_iter()
+                                        .map(|t| {
+                                            let v = t.to_string();
+                                            let v2 = v.clone();
+                                            view! {
+                                                <option value=v.clone() selected=move || angkatan.get() == v2>
+                                                    {format!("Angkatan {t}")}
+                                                </option>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </select>
+                            }
+                        }}
+                    </Suspense>
                 </div>
 
                 <div class="px-5 pt-4 space-y-4">
@@ -158,6 +211,7 @@ pub fn StudentsPage() -> impl IntoView {
                                                             students=students.get_value()
                                                             total=total
                                                             query=query
+                                                            angkatan=angkatan
                                                             expanded=expanded
                                                         />
                                                     }
@@ -202,42 +256,169 @@ fn TabBtn(tab: RwSignal<String>, value: &'static str, label: &'static str, badge
     }
 }
 
+/// Sama dengan `service::kelas::STUDENTS_PER_PAGE`. Klien perlu tahu untuk
+/// menyimpulkan "sudah halaman terakhir" dari jumlah baris yang datang.
+const PER_HALAMAN: i64 = 10;
+
+#[allow(clippy::too_many_arguments)]
 #[component]
 fn StudentList(
+    /// HALAMAN PERTAMA dari server. Sisanya menyusul saat digulir.
     students: Vec<StudentRowItem>,
+    /// Jumlah SEBENARNYA santri yang cocok — dari `COUNT(*)`, bukan panjang
+    /// daftar yang kebetulan sudah termuat.
     total: usize,
     query: RwSignal<String>,
+    /// Penyaring angkatan (kosong = semua). Dimiliki halaman supaya kotak cari
+    /// dan pemilih angkatan bisa berdiri berdampingan di satu bilah.
+    angkatan: RwSignal<String>,
     expanded: RwSignal<Option<i64>>,
 ) -> impl IntoView {
-    let students = StoredValue::new(students);
-    let shown = Memo::new(move |_| {
-        let q = query.get().to_lowercase();
-        students
-            .get_value()
-            .into_iter()
-            .filter(|s| q.is_empty() || s.name.to_lowercase().contains(&q) || s.nis.contains(&q))
-            .count()
+    // ── Daftar yang BERTAMBAH ────────────────────────────────────────────────
+    // `baris` menampung yang sudah termuat; `jumlah` adalah COUNT(*) dari
+    // server untuk kombinasi penyaring saat ini. Keduanya diganti seluruhnya
+    // tiap penyaring berubah — bukan disaring dari yang sudah ada, karena yang
+    // sudah ada baru sepotong.
+    let baris = RwSignal::new(students);
+    let jumlah = RwSignal::new(total as i64);
+    let memuat = RwSignal::new(false);
+    let habis = RwSignal::new(false);
+
+    // Ambil satu halaman. `offset` 0 = ganti seluruh daftar (penyaring berubah),
+    // selain itu ditambahkan di belakang.
+    // Dipanggil HANYA dari jalur wasm (penundaan ketikan & sentinel gulir);
+    // di build server keduanya tak ada, jadi fungsinya menganggur di sana.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
+    let ambil = move |offset: i64| {
+        if memuat.get_untracked() {
+            return;
+        }
+        memuat.set(true);
+        let q = query.get_untracked();
+        let ang = angkatan.get_untracked().parse::<i32>().unwrap_or(0);
+        leptos::task::spawn_local(async move {
+            match students_page_data(q, ang, offset).await {
+                Ok((rows, total)) => {
+                    let n = rows.len();
+                    jumlah.set(total);
+                    // Halaman yang datang lebih pendek dari jatahnya = sudah
+                    // baris terakhir. Menunggu halaman KOSONG berarti satu
+                    // permintaan sia-sia di setiap daftar.
+                    habis.set((n as i64) < PER_HALAMAN);
+                    if offset == 0 {
+                        baris.set(rows);
+                    } else {
+                        baris.update(|v| v.extend(rows));
+                    }
+                }
+                Err(_) => habis.set(true),
+            }
+            memuat.set(false);
+        });
+    };
+
+    // Penyaring berubah → mulai lagi dari awal. Ditunda 300 ms supaya mengetik
+    // "Ahmad" tak menembakkan lima permintaan.
+    let sentinel: NodeRef<leptos::html::Div> = NodeRef::new();
+    // Observer dipasang SEKALI setelah sentinelnya ada di DOM.
+    #[cfg(target_arch = "wasm32")]
+    Effect::new(move |sudah: Option<bool>| {
+        if sudah == Some(true) {
+            return true;
+        }
+        let Some(el) = sentinel.get() else { return false };
+        use wasm_bindgen::closure::Closure;
+        use wasm_bindgen::JsCast;
+        let cb = Closure::<dyn FnMut(js_sys::Array)>::new(move |entries: js_sys::Array| {
+            let terlihat = entries.iter().any(|e| {
+                e.dyn_into::<web_sys::IntersectionObserverEntry>()
+                    .map(|e| e.is_intersecting())
+                    .unwrap_or(false)
+            });
+            // Berhenti bertanya kalau daftarnya sudah habis atau satu
+            // permintaan masih berjalan — sentinel tetap terlihat selama
+            // pemuatan, dan tanpa penjagaan ini ia menembakkan permintaan
+            // beruntun untuk offset yang sama.
+            if terlihat && !habis.get_untracked() && !memuat.get_untracked() {
+                ambil(baris.get_untracked().len() as i64);
+            }
+        });
+        let opts = web_sys::IntersectionObserverInit::new();
+        opts.set_root_margin("400px");
+        if let Ok(obs) = web_sys::IntersectionObserver::new_with_options(
+            cb.as_ref().unchecked_ref(),
+            &opts,
+        ) {
+            obs.observe(&el);
+            // Closure & observer sengaja dibocorkan: keduanya harus hidup
+            // selama halaman terbuka, dan halaman ini tak pernah di-mount
+            // ulang tanpa memuat ulang datanya.
+            cb.forget();
+            std::mem::forget(obs);
+        }
+        true
     });
+
+    // Pegangan timer penundaan ketikan. Hanya terpakai di jalur wasm — di
+    // build server tak ada `setTimeout` yang perlu dibatalkan.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
+    let tunda = StoredValue::new(0_i32);
+    Effect::new(move |sebelum: Option<(String, String)>| {
+        let kunci = (query.get(), angkatan.get());
+        if sebelum.as_ref() == Some(&kunci) {
+            return kunci;
+        }
+        if sebelum.is_some() {
+            #[cfg(target_arch = "wasm32")]
+            {
+                use wasm_bindgen::closure::Closure;
+                use wasm_bindgen::JsCast;
+                if let Some(w) = web_sys::window() {
+                    if tunda.get_value() != 0 {
+                        w.clear_timeout_with_handle(tunda.get_value());
+                    }
+                    let cb = Closure::once_into_js(move || {
+                        habis.set(false);
+                        ambil(0);
+                    });
+                    if let Ok(h) = w.set_timeout_with_callback_and_timeout_and_arguments_0(
+                        cb.unchecked_ref(),
+                        300,
+                    ) {
+                        tunda.set_value(h);
+                    }
+                }
+            }
+        }
+        kunci
+    });
+
     view! {
         <p class="text-body-sm text-on-surface-variant">
             {move || {
-                let n = shown.get();
-                if query.get().is_empty() {
-                    format!("Total {total} santri terdaftar")
+                let dimuat = baris.get().len();
+                let n = jumlah.get();
+                if query.get().is_empty() && angkatan.get().is_empty() {
+                    // Menyebut KEDUANYA: berapa yang terlihat dan berapa
+                    // seluruhnya. Versi lama cuma menulis "Total 300" —
+                    // angka batas pengambilan yang dipajang sebagai jumlah
+                    // santri, sementara 200 sisanya tak disebut sama sekali.
+                    if (dimuat as i64) < n {
+                        format!("Menampilkan {dimuat} dari {n} santri")
+                    } else {
+                        format!("Total {n} santri terdaftar")
+                    }
+                } else if (dimuat as i64) < n {
+                    format!("Menampilkan {dimuat} dari {n} santri cocok")
                 } else {
-                    format!("{n} dari {total} santri cocok")
+                    format!("{n} santri cocok")
                 }
             }}
         </p>
         // Daftar ala TABEL mockup: satu kartu, baris ber-divider + hover.
         <div class="ppm-card divide-y divide-outline-variant/40 overflow-hidden stagger">
             {move || {
-                let q = query.get().to_lowercase();
-                let list: Vec<_> = students
-                    .get_value()
-                    .into_iter()
-                    .filter(|s| q.is_empty() || s.name.to_lowercase().contains(&q) || s.nis.contains(&q))
-                    .collect();
+                let list = baris.get();
                 if list.is_empty() {
                     return view! {
                         <div class="p-8 text-center text-body-sm text-on-surface-variant">
@@ -293,7 +474,7 @@ fn StudentList(
                                 {(!ang.is_empty())
                                     .then(|| {
                                         view! {
-                                            <span class="hidden sm:inline-block ppm-chip-sm bg-secondary-container text-primary shrink-0">
+                                            <span class="ppm-chip-sm bg-secondary-container text-primary shrink-0">
                                                 "Angkatan " {ang}
                                             </span>
                                         }
@@ -331,6 +512,28 @@ fn StudentList(
                     .into_any()
             }}
         </div>
+
+        // ── Sentinel gulir-tak-berujung ──────────────────────────────────────
+        // Kotak setinggi 1px di DASAR daftar. Begitu ia masuk viewport
+        // (ditambah margin 400px, jadi pemuatan mulai SEBELUM pengguna
+        // benar-benar mentok), halaman berikutnya diambil.
+        //
+        // IntersectionObserver, bukan listener `scroll`: yang terakhir menyala
+        // puluhan kali per detik dan harus di-throttle sendiri, sementara yang
+        // ini diam selama sentinelnya tak terlihat.
+        <div node_ref=sentinel class="h-px"></div>
+
+        <Show when=move || memuat.get()>
+            <p class="py-4 text-center text-body-sm text-on-surface-variant flex items-center justify-center gap-2">
+                <span class="material-symbols-outlined text-[18px] pulse-dot">"sync"</span>
+                "Memuat…"
+            </p>
+        </Show>
+        <Show when=move || habis.get() && (baris.get().len() > 20)>
+            <p class="py-4 text-center text-[11px] text-on-surface-variant/70">
+                "Semua santri sudah ditampilkan."
+            </p>
+        </Show>
     }
 }
 

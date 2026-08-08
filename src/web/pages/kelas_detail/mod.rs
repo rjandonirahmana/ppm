@@ -112,6 +112,17 @@ fn DetailBody(
     let sesi_count = d.sessions.len();
     let category = d.category.clone();
     let jenjang = d.jenjang.clone();
+    // Hanya kelas KBM yang punya kurikulum berjenjang (migrasi 65).
+    let ada_kurikulum = category == "kbm";
+    // `tab` bertahan saat berpindah antar kelas. Kalau ia tertinggal di
+    // "kurikulum" lalu kelas non-KBM dibuka, isinya memang jatuh ke Santri
+    // (guard di bawah) — tapi tak ada satu pun tab yang tersorot, dan halaman
+    // tampak seperti gagal memuat. Dikembalikan ke Santri.
+    Effect::new(move |_| {
+        if !ada_kurikulum && tab.get() == "kurikulum" {
+            tab.set("santri".to_string());
+        }
+    });
 
     // Mode edit hero (Edit Detail Kelas: nama + kategori + jenjang).
     let editing = RwSignal::new(false);
@@ -288,11 +299,16 @@ fn DetailBody(
         <WaliKelasCard class_id=class_id d=d.clone() refetch=refetch />
 
         // ── Tab ─────────────────────────────────────────────────────────────
+        // KURIKULUM hanya untuk kelas KBM. Kurikulum itu daftar kitab berjenjang
+        // yang harus dituntaskan sebelum santri naik jenjang — dan hanya kelas
+        // KBM yang berjenjang (migrasi 65). Pada kelas piket, apel, atau sholat
+        // tabnya selalu kosong, dan tab kosong yang permanen mengajari orang
+        // untuk berhenti membuka tab.
         <div class="flex gap-1 bg-surface-container rounded-xl p-1">
             <TabBtn tab=tab value="santri" label="Santri" />
             <TabBtn tab=tab value="jadwal" label="Jadwal" />
             <TabBtn tab=tab value="sesi" label="Sesi" />
-            <TabBtn tab=tab value="kurikulum" label="Kurikulum" />
+            {ada_kurikulum.then(|| view! { <TabBtn tab=tab value="kurikulum" label="Kurikulum" /> })}
         </div>
 
         // ── Konten tab ──────────────────────────────────────────────────────
@@ -304,7 +320,11 @@ fn DetailBody(
                 "sesi" => {
                     view! { <SesiTab class_id=class_id d=d.clone() refetch=refetch /> }.into_any()
                 }
-                "kurikulum" => {
+                // Dijaga di sini juga, bukan cuma di bilah tab: `tab` bisa
+                // tertinggal di "kurikulum" saat pengguna berpindah dari kelas
+                // KBM ke kelas non-KBM — tabnya lenyap, tapi isinya tetap
+                // terpasang.
+                "kurikulum" if ada_kurikulum => {
                     view! { <KurikulumTab class_id=class_id d=d.clone() refetch=refetch /> }
                         .into_any()
                 }

@@ -555,8 +555,30 @@ pub struct SessionAttRaw {
     /// Id baris absensi — dibutuhkan untuk KOREKSI (migrasi 51). None = belum
     /// ada barisnya, jadi tak ada yang bisa dikoreksi.
     pub att_id: Option<i64>,
+    /// Masih anggota kelas ini? `false` = pernah tercatat hadir di sesi ini
+    /// tapi sekarang sudah tidak terdaftar (mis. dipindah ke kelas KBM lain).
+    pub masih_anggota: bool,
 }
 
+/// Daftar absensi satu sesi.
+///
+/// Isinya GABUNGAN dua himpunan:
+///   1. peserta kelas SEKARANG — termasuk yang belum punya catatan absensi
+///      (mereka yang perlu ditandai);
+///   2. siapa pun yang SUDAH punya baris absensi di sesi ini, meski kini bukan
+///      anggota lagi.
+///
+/// Bagian kedua ada karena keanggotaan kelas menyimpan KEADAAN SEKARANG, bukan
+/// riwayat. Versi lama menyusun daftarnya semata-mata dari peserta sekarang,
+/// jadi santri yang dipindah ke kelas KBM lain lenyap dari seluruh sesi
+/// lampau kelas ini — padahal baris absensinya masih utuh di database
+/// (`attendances` tak punya FK ke `class_participants`, jadi tak ada yang
+/// terhapus). Yang hilang cuma tampilannya, dan bagi guru yang membukanya itu
+/// tak bisa dibedakan dari data yang benar-benar lenyap.
+///
+/// FULL OUTER JOIN dipakai supaya kedua sisi utuh tanpa menulis query dua kali:
+/// peserta tanpa absensi tetap muncul (sisi kiri), dan absensi tanpa
+/// keanggotaan juga (sisi kanan).
 pub async fn session_attendance(
     pool: &Pool,
     session_id: i64,
@@ -565,11 +587,24 @@ pub async fn session_attendance(
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT u.id, u.full_name, u.nis, a.status, a.scanned_at, a.id \
+            // `attendances` DISARING KE SESI INI DI DALAM SUBQUERY, bukan di
+            // klausa ON. Pada FULL OUTER JOIN, syarat di ON hanya menentukan
+            // mana yang BERPASANGAN — baris sisi kanan yang tak memenuhinya
+            // TETAP ikut keluar dengan sisi kiri NULL. Menaruh
+            // `a.class_session_id = $1` di ON berarti setiap baris absensi dari
+            // SELURUH tabel (jutaan, semua sesi) ikut terbawa sebagai baris tak
+            // berpasangan, lalu lolos JOIN ke users. Di subquery, yang masuk
+            // join memang cuma absensi sesi ini.
+            "SELECT u.id, u.full_name, u.nis, a.status, a.scanned_at, a.id, \
+                    (cp.user_id IS NOT NULL) AS masih_anggota \
              FROM (SELECT DISTINCT user_id FROM class_participants WHERE class_id = $2) cp \
-             JOIN users u ON u.id = cp.user_id AND u.role IN ('santri', 'santri_finance') \
-             LEFT JOIN attendances a ON a.user_id = u.id AND a.class_session_id = $1 \
-             ORDER BY u.full_name",
+             FULL OUTER JOIN ( \
+                 SELECT user_id, status, scanned_at, id FROM attendances \
+                  WHERE class_session_id = $1 \
+             ) a ON a.user_id = cp.user_id \
+             JOIN users u ON u.id = COALESCE(cp.user_id, a.user_id) \
+                         AND u.role IN ('santri', 'santri_finance') \
+             ORDER BY (cp.user_id IS NULL), u.full_name",
             &[&session_id, &class_id],
         )
         .await
@@ -583,6 +618,7 @@ pub async fn session_attendance(
             status: r.get(3),
             scanned_at: r.get(4),
             att_id: r.get(5),
+            masih_anggota: r.get(6),
         })
         .collect())
 }

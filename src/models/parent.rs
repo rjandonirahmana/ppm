@@ -12,6 +12,18 @@ pub struct StudentSearchItem {
     pub name: String,
     pub nis: String,
     pub class_name: String,
+    /// Kelas KBM santri ini saat ini, bila ada.
+    ///
+    /// Dipisah dari `class_name` (yang berisi kelas mana pun) karena inilah
+    /// yang menentukan apakah ia BOLEH ditambahkan ke kelas KBM lain: satu
+    /// santri hanya boleh satu kelas KBM, dijaga trigger `trg_satu_kelas_kbm`
+    /// (migrasi 65). Tanpa keterangan ini, pengelola baru tahu setelah
+    /// penambahannya ditolak database.
+    #[serde(default)]
+    pub kbm_class: Option<String>,
+    /// Tahun masuk PPM — dipakai penyaring angkatan di pemilih anggota kelas.
+    #[serde(default)]
+    pub entry_year: Option<i16>,
 }
 
 /// Chip pemilih anak.

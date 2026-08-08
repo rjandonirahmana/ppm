@@ -712,6 +712,73 @@ pub async fn activate_user(pool: &Pool, user_id: i64, saldo_awal: i32) -> Result
     Ok((true, row.is_some()))
 }
 
+/// Aktifkan BANYAK user sekaligus; santri yang belum punya catatan poin ikut
+/// diberi saldo awal. Return `(jumlah_aktif, jumlah_dapat_saldo)`.
+///
+/// Set-based, bukan memanggil `activate_user` dalam loop: mengaktifkan satu
+/// angkatan berarti puluhan user, dan versi loop menghasilkan puluhan
+/// transaksi yang bisa putus di tengah — sebagian aktif, sebagian tidak, tanpa
+/// ada yang tahu di mana berhentinya. Di sini keduanya satu transaksi.
+///
+/// Syarat saldo awal SAMA dengan versi satuannya: "belum punya point_logs",
+/// bukan "belum aktif" — lihat [`activate_user`] untuk alasannya.
+pub async fn activate_users(
+    pool: &Pool,
+    user_ids: &[i64],
+    saldo_awal: i32,
+) -> Result<(i64, i64)> {
+    if user_ids.is_empty() {
+        return Ok((0, 0));
+    }
+    let mut c = pool.get().await?;
+    let tx = c.transaction().await.context("activate_users tx")?;
+    let rows = tx
+        .query(
+            "UPDATE users SET is_active = TRUE, updated_at = NOW() \
+              WHERE id = ANY($1::bigint[]) AND is_active = FALSE \
+             RETURNING id",
+            &[&user_ids],
+        )
+        .await
+        .context("activate_users")?;
+    let aktif: Vec<i64> = rows.iter().map(|r| r.get(0)).collect();
+    if aktif.is_empty() {
+        tx.rollback().await.ok();
+        return Ok((0, 0));
+    }
+    let saldo = tx
+        .execute(
+            "INSERT INTO point_logs (user_id, delta, reason, category) \
+             SELECT u.id, $2, 'Saldo awal santri', 'other' \
+               FROM users u \
+              WHERE u.id = ANY($1::bigint[]) \
+                AND u.role IN ('santri', 'santri_finance') \
+                AND NOT EXISTS (SELECT 1 FROM point_logs pl WHERE pl.user_id = u.id)",
+            &[&aktif, &saldo_awal],
+        )
+        .await
+        .context("activate_users saldo awal")?;
+    tx.commit().await.context("activate_users commit")?;
+    Ok((aktif.len() as i64, saldo as i64))
+}
+
+/// Nonaktifkan BANYAK user sekaligus. Return jumlah yang berubah.
+pub async fn deactivate_users(pool: &Pool, user_ids: &[i64]) -> Result<i64> {
+    if user_ids.is_empty() {
+        return Ok(0);
+    }
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE users SET is_active = FALSE, updated_at = NOW() \
+              WHERE id = ANY($1::bigint[]) AND is_active = TRUE",
+            &[&user_ids],
+        )
+        .await
+        .context("deactivate_users")?;
+    Ok(n as i64)
+}
+
 /// Ubah detail profil satu user (halaman manajemen).
 ///
 /// Kolom teks kosong disimpan sebagai NULL, bukan string kosong: `nis` dan

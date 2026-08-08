@@ -481,6 +481,15 @@ pub struct StudentsData {
     /// "tahap1" (pamong) | "tahap2" (dewan guru) | "none".
     pub verify_stage: String,
     pub students: Vec<StudentRowItem>,
+    /// Jumlah SEBENARNYA santri aktif di database.
+    ///
+    /// Dipisah dari `students.len()`: daftarnya dibatasi (lihat
+    /// `service::kelas::students_data`), dan sebelumnya halaman memajang
+    /// panjang daftar itu sebagai "Total N santri terdaftar" — pada pondok
+    /// dengan 500 santri, layar menulis "Total 300" dengan yakin sementara 200
+    /// sisanya tak disebut sama sekali.
+    #[serde(default)]
+    pub total_santri: i64,
     /// Antrean verifikasi sesuai peran (kosong bila tak ada tahap).
     pub pending: Vec<super::attendance::PendingAtt>,
     pub verified_today: i64,

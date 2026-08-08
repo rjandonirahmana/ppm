@@ -106,6 +106,18 @@ pub struct SessionAttRow {
     /// Id baris absensi — untuk tombol koreksi. None = belum ada catatan, jadi
     /// yang berlaku tombol "tandai hadir", bukan koreksi.
     pub att_id: Option<i64>,
+    /// `false` = punya catatan absensi di sesi ini tapi SUDAH BUKAN anggota
+    /// kelasnya (mis. dipindah ke kelas KBM lain). Barisnya tetap ditampilkan
+    /// supaya riwayat sesi lampau tak tampak berlubang, tapi diberi tanda —
+    /// dan koreksinya memang tak lagi bisa dilakukan dari sini (pagar
+    /// keanggotaan di `repository::correct_attendance`).
+    #[serde(default = "benar")]
+    pub masih_anggota: bool,
+}
+
+/// Default `masih_anggota` untuk payload lama yang belum memuat medan ini.
+fn benar() -> bool {
+    true
 }
 
 /// Satu pesan chat sesi.

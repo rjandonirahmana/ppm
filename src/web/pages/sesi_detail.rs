@@ -316,7 +316,12 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                 match tab.get().as_str() {
                     "kelola" => {
                         view! {
-                            <div class="md:max-w-md space-y-3">
+                            // `.ppm-masonry`: satu kolom di ponsel, DUA kolom
+                            // seimbang di desktop. Tab ini berisi empat kartu
+                            // mandiri (pengajar/pamong, materi target, kitab,
+                            // catatan) yang sebelumnya bertumpuk di kolom
+                            // `md:max-w-md` dengan separuh layar kanan kosong.
+                            <div class="ppm-masonry">
                             // ── Kelola sesi: mulai/akhiri + pengajar ──────
                             <div class="ppm-card p-4 anim-in">
                                 <label class="text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
@@ -1091,6 +1096,11 @@ fn AbsensiVerifikasiPanel(
                     .into_iter()
                     .map(|r| {
                         let uid = r.user_id;
+                        // Sudah pindah kelas, tapi PERNAH tercatat di sesi ini.
+                        // Barisnya tetap ditampilkan supaya riwayat sesi lampau
+                        // tak berlubang; koreksinya memang tak bisa lagi dari
+                        // sini (pagar keanggotaan di repository).
+                        let bukan_anggota = !r.masih_anggota;
                         let jam_awal = r.time_label.split_whitespace().next().unwrap_or("").to_string();
                         let inisial = r.name.chars().next().unwrap_or('S').to_string().to_uppercase();
                         let nis = if r.nis.is_empty() { "-".to_string() } else { r.nis.clone() };
@@ -1111,8 +1121,19 @@ fn AbsensiVerifikasiPanel(
                                 <div class="min-w-0 flex-1">
                                     <p class="text-body-sm font-semibold text-on-background truncate">{r.name}</p>
                                     <p class="text-[11px] text-on-surface-variant">{nis}</p>
+                                    {bukan_anggota
+                                        .then(|| {
+                                            view! {
+                                                <span class="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant text-[10px] font-semibold">
+                                                    <span class="material-symbols-outlined text-[13px]">
+                                                        "swap_horiz"
+                                                    </span>
+                                                    "Sudah pindah kelas"
+                                                </span>
+                                            }
+                                        })}
                                 </div>
-                                {if can_correct {
+                                {if can_correct && !bukan_anggota {
                                     view! {
                                         <input
                                             type="time"

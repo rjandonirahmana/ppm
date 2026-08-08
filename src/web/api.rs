@@ -1280,10 +1280,15 @@ pub async fn add_member_action(class_id: i64, student_id: i64) -> Result<(), Ser
 pub async fn add_members_action(
     class_id: i64,
     student_ids: Vec<i64>,
+    /// `true` = pengelola sadar sebagian santri punya kelas KBM lain dan
+    /// memilih MEMINDAHKAN mereka. Lihat `service::kelas::add_members`.
+    pindahkan: bool,
 ) -> Result<i64, ServerFnError> {
     require_pamong_kelas(class_id).await?;
     let state = app_state().await?;
-    crate::service::kelas::add_members(&state.pool, class_id, student_ids).await.map_err(err)
+    crate::service::kelas::add_members(&state.pool, class_id, student_ids, pindahkan)
+        .await
+        .map_err(err)
 }
 
 /// Ubah jadwal.
@@ -1403,10 +1408,13 @@ pub async fn set_session_libur_action(session_id: i64, libur: bool) -> Result<()
 pub async fn staff_search_students(
     q: String,
     class_id: i64,
+    /// 0 = semua angkatan.
+    angkatan: i32,
 ) -> Result<Vec<StudentSearchItem>, ServerFnError> {
     require_roles(KELAS_ROLES).await?;
     let state = app_state().await?;
-    crate::service::kelas::search_students(&state.pool, &q, class_id)
+    let angkatan = (angkatan > 0).then_some(angkatan as i16);
+    crate::service::kelas::search_students(&state.pool, &q, class_id, angkatan)
         .await
         .map_err(err)
 }
@@ -1847,12 +1855,33 @@ pub async fn my_bills_data() -> Result<Vec<crate::models::BillItem>, ServerFnErr
     crate::repository::list_for_user(&state.pool, sess.id).await.map_err(err)
 }
 
+/// Satu HALAMAN daftar santri (gulir-tak-berujung /students).
+///
+/// Pencarian & penyaring angkatan ikut ke server karena daftarnya dipaginasi:
+/// menyaring di klien hanya menyaring potongan yang kebetulan sudah termuat,
+/// dan santri yang cocok di halaman berikutnya tak pernah muncul.
+#[server(StudentsPageData, "/api-fn")]
+pub async fn students_page_data(
+    q: String,
+    /// 0 = semua angkatan.
+    angkatan: i32,
+    offset: i64,
+) -> Result<(Vec<crate::models::StudentRowItem>, i64), ServerFnError> {
+    require_roles(KELAS_ROLES).await?;
+    let state = app_state().await?;
+    let angkatan = (angkatan > 0).then_some(angkatan as i16);
+    crate::service::kelas::students_page(&state.pool, &q, angkatan, offset.max(0))
+        .await
+        .map_err(err)
+}
+
 /// Cari santri untuk membuat tagihan (admin/ketua) — nama/NIS.
 #[server(FinanceSearchStudents, "/api-fn")]
 pub async fn finance_student_search(q: String) -> Result<Vec<StudentSearchItem>, ServerFnError> {
     require_roles(BILL_ADMIN_ROLES).await?;
     let state = app_state().await?;
-    crate::service::kelas::search_students(&state.pool, &q, 0)
+    // class_id 0 = tak mengecualikan kelas mana pun; tanpa penyaring angkatan.
+    crate::service::kelas::search_students(&state.pool, &q, 0, None)
         .await
         .map_err(err)
 }
@@ -2388,7 +2417,11 @@ pub async fn managed_users_data(
 /// Tahun angkatan yang tersedia — mengisi dropdown penyaring.
 #[server(AngkatanTersedia, "/api-fn")]
 pub async fn angkatan_tersedia_data() -> Result<Vec<i16>, ServerFnError> {
-    require_roles(USER_MANAGE_ROLES).await?;
+    // Dipakai DUA halaman: manajemen user (admin/ketua) dan pemilih anggota
+    // kelas (juga dewan guru & pamong). Isinya cuma daftar tahun — tak ada
+    // identitas siapa pun di dalamnya — jadi gerbangnya digabung alih-alih
+    // menggandakan server fn yang query-nya sama persis.
+    require_roles(&["admin", "ketua", "dewan_guru", "teacher", "supervisor"]).await?;
     let state = app_state().await?;
     crate::repository::angkatan_tersedia(&state.pool).await.map_err(err)
 }
@@ -2429,6 +2462,43 @@ pub async fn set_user_active_action(
     } else {
         crate::repository::set_active(&state.pool, user_id, false).await.map_err(err)?;
         Ok("User dinonaktifkan.".into())
+    }
+}
+
+/// Aktifkan/nonaktifkan BANYAK user sekaligus. Balas pesan siap tampil.
+#[server(SetUsersActive, "/api-fn")]
+pub async fn set_users_active_action(
+    user_ids: Vec<i64>,
+    active: bool,
+) -> Result<String, ServerFnError> {
+    let sess = require_roles(USER_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    // Akun sendiri disaring, bukan menggagalkan seluruh permintaan: pada aksi
+    // massal, ikut tercentangnya diri sendiri itu wajar dan tak seharusnya
+    // membatalkan puluhan yang lain.
+    let ids: Vec<i64> = user_ids
+        .into_iter()
+        .filter(|&id| active || id != sess.id)
+        .collect();
+    if ids.is_empty() {
+        return Ok("Tak ada yang diproses.".into());
+    }
+    if active {
+        let (n, saldo) = crate::repository::activate_users(
+            &state.pool,
+            &ids,
+            crate::models::SEMESTER_START_POINTS,
+        )
+        .await
+        .map_err(err)?;
+        Ok(if saldo > 0 {
+            format!("{n} user diaktifkan — {saldo} santri mendapat saldo awal.")
+        } else {
+            format!("{n} user diaktifkan.")
+        })
+    } else {
+        let n = crate::repository::deactivate_users(&state.pool, &ids).await.map_err(err)?;
+        Ok(format!("{n} user dinonaktifkan."))
     }
 }
 

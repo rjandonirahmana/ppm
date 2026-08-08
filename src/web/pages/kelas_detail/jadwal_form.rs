@@ -268,14 +268,12 @@ pub(super) fn BuatJadwalForm(
                         prop:value=move || title.get()
                         on:input=move |ev| title.set(event_target_value(&ev))
                     />
-                    <input
-                        type="text"
-                        list="kategori-detail"
-                        class=field
-                        placeholder="Kategori (mis. Pengajian/Sholat) — kosongkan = ikut kategori kelas"
-                        prop:value=move || category.get()
-                        on:input=move |ev| category.set(event_target_value(&ev))
-                    />
+                    // KATEGORI per-jadwal DIHAPUS dari form. Kategori efektif
+                    // sebuah sesi = COALESCE(jadwal.category, kelas.category), dan
+                    // kelasnya sudah menyatakan kategorinya sejak dibuat —
+                    // menanyakannya lagi per jadwal cuma mengundang dua jawaban
+                    // yang berbeda untuk hal yang sama. Nilainya dikirim kosong,
+                    // jadi selalu ikut kelas.
                     <label class="space-y-1 block">
                         <span class="text-label-md text-on-surface-variant">
                             "Ruang = perangkat RFID (opsional — daftarkan dulu di User Control)"
@@ -295,26 +293,17 @@ pub(super) fn BuatJadwalForm(
                                 .collect_view()}
                         </select>
                     </label>
-                    // Jenis kegiatan (PRD): menentukan PRESET poin default bila
-                    // input poin di bawah dikosongkan (KBM/Non-KBM/Piket/Apel).
-                    <label class="space-y-1 block">
-                        <span class="text-label-md text-on-surface-variant">"Jenis kegiatan (preset poin PRD)"</span>
-                        <select
-                            class=field
-                            on:change=move |ev| activity.set(event_target_value(&ev))
-                        >
-                            <option value="">"— (Lain / default 10·0·15)"</option>
-                            {crate::models::ACTIVITY_TYPES
-                                .iter()
-                                .map(|(k, label)| view! { <option value=*k>{*label}</option> })
-                                .collect_view()}
-                        </select>
-                    </label>
+                    // JENIS KEGIATAN DIHAPUS dari form — TAPI nilainya tidak
+                    // hilang: server menurunkannya dari KATEGORI KELAS (kbm →
+                    // kbm, non_kbm → non_kbm). Kelas sudah menyatakannya, jadi
+                    // menanyakan lagi hanya membuka peluang keduanya berbeda —
+                    // dan yang menentukan preset poin justru yang di jadwal.
+                    // Lihat `service::kelas` (jenis_dari_kategori_kelas).
                     // Poin: SEMUA angka positif. Tepat waktu DITAMBAH; telat/alpa/
                     // izin DIKURANGI. Kosong = preset jenis kegiatan di atas.
                     <div class="rounded-xl bg-surface-container/60 p-3 space-y-2">
                         <p class="text-[11px] font-bold tracking-wider text-on-surface-variant">
-                            "POIN KEHADIRAN (kosong = ikut preset jenis kegiatan)"
+                            "POIN KEHADIRAN (kosong = ikut preset kategori kelas)"
                         </p>
                         <label class="space-y-1 block">
                             <span class="text-label-md text-on-surface-variant">
@@ -329,19 +318,10 @@ pub(super) fn BuatJadwalForm(
                                 on:input=move |ev| present_point.set(event_target_value(&ev))
                             />
                         </label>
-                        <label class="space-y-1 block">
-                            <span class="text-label-md text-on-surface-variant">
-                                "Potongan jika izin (biasa) — dikurangi (Sakit/Cuti = 0)"
-                            </span>
-                            <input
-                                type="number"
-                                min="0"
-                                class=field
-                                placeholder="preset"
-                                prop:value=move || izin_point.get()
-                                on:input=move |ev| izin_point.set(event_target_value(&ev))
-                            />
-                        </label>
+                        // POTONGAN IZIN DIHAPUS: izin TIDAK memotong poin sama
+                        // sekali (lihat DELTA_SQL). Santri yang mengurus izinnya
+                        // dengan benar tak dihukum seperti yang menghilang tanpa
+                        // kabar — kolomnya pun tak lagi dibaca siapa pun.
                         <label class="space-y-1 block">
                             <span class="text-label-md text-on-surface-variant">
                                 "Potongan jika telat — dikurangi (kosong = default 0)"

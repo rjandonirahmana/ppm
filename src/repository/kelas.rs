@@ -412,6 +412,9 @@ pub struct StudentBoardRow {
     pub user_id: i64,
     pub name: String,
     pub nis: Option<String>,
+    /// Tahun masuk PPM. Dibaca dari kolomnya, bukan ditebak dari NIS — NIS
+    /// resmi pondok diawali "5000", bukan tahun.
+    pub entry_year: Option<i16>,
     pub points: i32,
     /// SEMUA kelas yang diikuti santri (biasanya satu per jenjang — satu
     /// Bacaan + satu Makna) — beda dari `points_board` yang cuma ambil SATU
@@ -422,13 +425,60 @@ pub struct StudentBoardRow {
 /// Papan santri UTUH (dipakai halaman Students) — tak seperti `points_board`,
 /// mengambil SEMUA kelas tiap santri (bukan LIMIT 1) agar santri yang ikut
 /// kelas Bacaan SEKALIGUS Makna tetap tampil keduanya di UI.
-pub async fn students_with_classes(pool: &Pool, limit: i64) -> Result<Vec<StudentBoardRow>> {
+/// Jumlah santri aktif yang COCOK dengan penyaring — dipakai halaman Students
+/// supaya angka yang dipajang bukan sekadar "berapa yang sudah termuat".
+///
+/// Halaman lama menulis "Total 300 santri terdaftar" padahal 300 itu batas
+/// pengambilannya, bukan jumlah santri; pada pondok berisi 500, dua ratus
+/// sisanya tak pernah disebut.
+pub async fn count_students(pool: &Pool, q: &str, angkatan: Option<i16>) -> Result<i64> {
     let c = pool.get().await?;
+    let qt = q.trim();
+    let pola = format!("%{qt}%");
+    let row = c
+        .query_one(
+            "SELECT COUNT(*) FROM users \
+              WHERE role IN ('santri', 'santri_finance') AND is_active = TRUE \
+                AND ($1 = '' OR full_name ILIKE $2 OR COALESCE(nis, '') ILIKE $2) \
+                AND ($3::int2 IS NULL OR entry_year = $3)",
+            &[&qt, &pola, &angkatan],
+        )
+        .await
+        .context("count_students")?;
+    Ok(row.get(0))
+}
+
+/// Satu HALAMAN papan santri: saring nama/NIS + angkatan, lalu `LIMIT/OFFSET`.
+///
+/// Penyaringan pindah ke SERVER sejak daftarnya dipaginasi. Selama seluruh
+/// santri termuat sekaligus, menyaring di klien memang cukup — tapi begitu
+/// hanya sepotong yang ada di memori, filter klien cuma menyaring potongan itu
+/// dan santri yang cocok di halaman berikutnya tak pernah muncul.
+///
+/// Urutannya `points DESC, full_name, id`: dua tie-breaker terakhir WAJIB ada.
+/// Ratusan santri berbagi nilai poin yang sama (semuanya mulai dari 300), dan
+/// `ORDER BY points DESC` saja tak menentukan urutan di antara mereka —
+/// Postgres boleh mengembalikannya berbeda tiap query, sehingga baris yang
+/// sama bisa muncul dua kali di halaman berbeda sementara yang lain terlewat.
+pub async fn students_page(
+    pool: &Pool,
+    q: &str,
+    angkatan: Option<i16>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<StudentBoardRow>> {
+    let c = pool.get().await?;
+    let qt = q.trim();
+    let pola = format!("%{qt}%");
     let students = c
         .query(
-            "SELECT id, full_name, nis, points FROM users \
-             WHERE role IN ('santri', 'santri_finance') AND is_active = TRUE ORDER BY points DESC LIMIT $1",
-            &[&limit],
+            "SELECT id, full_name, nis, points, entry_year FROM users \
+             WHERE role IN ('santri', 'santri_finance') AND is_active = TRUE \
+               AND ($1 = '' OR full_name ILIKE $2 OR COALESCE(nis, '') ILIKE $2) \
+               AND ($3::int2 IS NULL OR entry_year = $3) \
+             ORDER BY points DESC, full_name, id \
+             LIMIT $4 OFFSET $5",
+            &[&qt, &pola, &angkatan, &limit, &offset],
         )
         .await
         .context("students_with_classes: students")?;
@@ -462,6 +512,7 @@ pub async fn students_with_classes(pool: &Pool, limit: i64) -> Result<Vec<Studen
                 name: r.get(1),
                 nis: r.get(2),
                 points: r.get(3),
+                entry_year: r.get(4),
             }
         })
         .collect())
@@ -831,14 +882,21 @@ pub async fn pamong_options(pool: &Pool) -> Result<Vec<(i64, String)>> {
 }
 
 /// Santri anggota kelas (unik).
+/// Anggota kelas: (id, nama, NIS, tahun angkatan).
+///
+/// `entry_year` ikut dibawa — dulu angkatan ditebak dari empat digit awal NIS
+/// (`service::kelas::angkatan_from_nis`), dan itu berhenti bekerja begitu NIS
+/// resmi pondok dipakai: `500032760078240001` diawali "5000", bukan tahun, jadi
+/// angkatannya kosong untuk SEMUA santri. Kolomnya sendiri sudah terisi sejak
+/// impor daftar induk (migrasi 74) — tinggal dibaca.
 pub async fn class_members(
     pool: &Pool,
     class_id: i64,
-) -> Result<Vec<(i64, String, Option<String>)>> {
+) -> Result<Vec<(i64, String, Option<String>, Option<i16>)>> {
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT DISTINCT u.id, u.full_name, u.nis \
+            "SELECT DISTINCT u.id, u.full_name, u.nis, u.entry_year \
              FROM class_participants cp JOIN users u ON u.id = cp.user_id \
              WHERE cp.class_id = $1 AND u.role IN ('santri', 'santri_finance') ORDER BY u.full_name",
             &[&class_id],
@@ -847,7 +905,7 @@ pub async fn class_members(
         .context("class_members")?;
     Ok(rows
         .into_iter()
-        .map(|r| (r.get(0), r.get(1), r.get(2)))
+        .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3)))
         .collect())
 }
 
@@ -1127,18 +1185,61 @@ pub async fn add_member(
     Ok(n > 0)
 }
 
+/// Keluarkan santri dari kelas KBM LAIN — prasyarat memindahkan mereka ke
+/// kelas KBM baru.
+///
+/// Satu santri hanya boleh satu kelas KBM, dijaga trigger `trg_satu_kelas_kbm`
+/// (migrasi 65). Tanpa langkah ini, menambahkan santri yang sudah punya kelas
+/// KBM akan DITOLAK database dengan `unique_violation` — dan pengelola cuma
+/// melihat penambahan yang gagal tanpa tahu sebabnya.
+///
+/// Hanya menyentuh keanggotaan KBM: kelas non-KBM (piket, apel, sholat) tak
+/// terbatas jumlahnya dan tak boleh ikut terhapus. Riwayat kehadiran juga aman
+/// — `attendances` menunjuk ke sesi, bukan ke baris keanggotaan.
+///
+/// Tak melakukan apa pun bila `class_id` bukan kelas KBM.
+pub async fn keluarkan_dari_kbm_lain(
+    tx: &deadpool_postgres::Transaction<'_>,
+    class_id: i64,
+    user_ids: &[i64],
+) -> Result<u64> {
+    let n = tx
+        .execute(
+            "DELETE FROM class_participants cp \
+              USING classes c \
+              WHERE c.id = cp.class_id \
+                AND c.category = 'kbm' \
+                AND cp.user_id = ANY($2::bigint[]) \
+                AND cp.class_id <> $1 \
+                AND EXISTS (SELECT 1 FROM classes t \
+                             WHERE t.id = $1 AND t.category = 'kbm')",
+            &[&class_id, &user_ids],
+        )
+        .await
+        .context("keluarkan_dari_kbm_lain")?;
+    Ok(n)
+}
+
 /// Tambah BANYAK santri ke KELAS sekali jalan. Set-based via unnest;
 /// ON CONFLICT skip yang sudah terdaftar. Return jumlah BARU.
 pub async fn add_members(
     pool: &Pool,
     class_id: i64,
     user_ids: &[i64],
+    pindahkan: bool,
 ) -> Result<i64> {
     if user_ids.is_empty() {
         return Ok(0);
     }
-    let c = pool.get().await?;
-    let n = c
+    let mut c = pool.get().await?;
+    let tx = c.transaction().await.context("add_members tx")?;
+    // Pemindahan dan penambahan HARUS satu transaksi: kalau keanggotaan KBM
+    // lama terhapus lalu penambahannya gagal, santri berakhir tanpa kelas KBM
+    // sama sekali — lebih buruk daripada penambahan yang sekadar ditolak.
+    if pindahkan {
+        keluarkan_dari_kbm_lain(&tx, class_id, user_ids).await?;
+    }
+    let n = tx
         .execute(
             // Disaring lewat users: id yang bukan santri aktif dijatuhkan
             // (alasan sama dengan add_member).
@@ -1151,6 +1252,7 @@ pub async fn add_members(
         )
         .await
         .context("add_members")?;
+    tx.commit().await.context("add_members commit")?;
     Ok(n as i64)
 }
 
@@ -1662,38 +1764,94 @@ pub async fn students_not_in_class(
     pool: &Pool,
     class_id: i64,
     q: &str,
+    angkatan: Option<i16>,
     limit: i64,
-) -> Result<Vec<super::parents::StudentRow>> {
+) -> Result<Vec<CalonSantri>> {
     let c = pool.get().await?;
     let qt = q.trim();
     let pattern = format!("%{}%", qt);
     let rows = c
         .query(
-            "SELECT u.id, u.full_name, u.nis, cl.name \
+            // `kbm.name` DIPISAH dari `cl.name`: yang pertama menentukan boleh
+            // tidaknya santri masuk kelas KBM lain (trigger migrasi 65), yang
+            // kedua sekadar kelas mana saja sebagai keterangan. Menyatukan
+            // keduanya membuat santri yang cuma ikut piket tampak seperti sudah
+            // punya kelas KBM.
+            "SELECT u.id, u.full_name, u.nis, cl.name, kbm.name, u.entry_year \
              FROM users u \
              LEFT JOIN classes cl ON cl.id = ( \
                  SELECT cp.class_id FROM class_participants cp \
                  WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
+             ) \
+             LEFT JOIN classes kbm ON kbm.id = ( \
+                 SELECT cp.class_id FROM class_participants cp \
+                 JOIN classes c2 ON c2.id = cp.class_id \
+                 WHERE cp.user_id = u.id AND c2.category = 'kbm' LIMIT 1 \
              ) \
              WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
                AND u.id NOT IN ( \
                    SELECT cp2.user_id FROM class_participants cp2 WHERE cp2.class_id = $1 \
                ) \
                AND ($2 = '' OR u.full_name ILIKE $3 OR u.nis = $2) \
+               AND ($5::int2 IS NULL OR u.entry_year = $5) \
              ORDER BY u.full_name LIMIT $4",
-            &[&class_id, &qt, &pattern, &limit],
+            &[&class_id, &qt, &pattern, &limit, &angkatan],
         )
         .await
         .context("students_not_in_class")?;
     Ok(rows
         .into_iter()
-        .map(|r| super::parents::StudentRow {
+        .map(|r| CalonSantri {
             id: r.get(0),
             full_name: r.get(1),
             nis: r.get(2),
             class_name: r.get(3),
+            kbm_class: r.get(4),
+            entry_year: r.get(5),
         })
         .collect())
+}
+
+/// Satu calon anggota kelas di pemilih "Tambah Santri".
+pub struct CalonSantri {
+    pub id: i64,
+    pub full_name: String,
+    pub nis: Option<String>,
+    /// Kelas mana pun yang ia ikuti — sekadar keterangan.
+    pub class_name: Option<String>,
+    /// Kelas KBM-nya bila sudah punya; penentu apakah ia harus DIPINDAH.
+    pub kbm_class: Option<String>,
+    pub entry_year: Option<i16>,
+}
+
+/// Kategori sebuah kelas (`kbm` | `non_kbm` | `bacaan`), atau None bila kelasnya
+/// tak ada. Dipakai menurunkan jenis kegiatan jadwal — lihat
+/// `service::kelas::jenis_dari_kategori_kelas`.
+pub async fn class_category(pool: &Pool, class_id: i64) -> Result<Option<String>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt("SELECT category FROM classes WHERE id = $1", &[&class_id])
+        .await
+        .context("class_category")?;
+    Ok(row.and_then(|r| r.get::<_, Option<String>>(0)))
+}
+
+/// Kategori kelas PEMILIK sebuah jadwal. `update_schedule` hanya memegang
+/// `schedule_id`, jadi kelasnya dicari lewat jadwalnya.
+pub async fn class_category_by_schedule(
+    pool: &Pool,
+    schedule_id: i64,
+) -> Result<Option<String>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(
+            "SELECT c.category FROM class_schedules s \
+              JOIN classes c ON c.id = s.class_id WHERE s.id = $1",
+            &[&schedule_id],
+        )
+        .await
+        .context("class_category_by_schedule")?;
+    Ok(row.and_then(|r| r.get::<_, Option<String>>(0)))
 }
 
 /// Jadwal aktif sebuah kelas untuk auto-generate sesi mendatang.

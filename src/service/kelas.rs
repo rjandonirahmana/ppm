@@ -164,6 +164,29 @@ fn parse_point_magnitude(s: &str, field: &str) -> Result<Option<i16>> {
 
 /// Jenis kegiatan PRD valid → Some(kanonik); selain itu (termasuk kosong) → None
 /// (legacy preset). Menentukan preset poin default (models::category_points).
+/// Jenis kegiatan yang diturunkan dari KATEGORI KELAS.
+///
+/// Form jadwal tak lagi menanyakan "jenis kegiatan" — kelasnya sudah
+/// menyatakan kategorinya sejak dibuat, dan menanyakan lagi per jadwal cuma
+/// membuka peluang keduanya berbeda untuk hal yang sama.
+///
+/// Ini BUKAN sekadar menyembunyikan field: `class_schedules.activity_type`
+/// yang menentukan preset poin PRD (`cat_default_points`). Membiarkannya NULL
+/// akan menjatuhkan setiap jadwal baru ke preset "lain" (10·0·15) — jadwal KBM
+/// yang seharusnya 4·1·10 diam-diam berubah bobotnya, dan tak ada satu pun
+/// layar yang memperlihatkan perubahan itu.
+///
+/// `bacaan` sengaja tak dipetakan: ia kategori KELAS (Bacaan Al-Quran), bukan
+/// jenis kegiatan berpreset di PRD. Jatuh ke preset "lain", sama seperti
+/// sebelumnya bila jenisnya dikosongkan.
+pub(crate) fn jenis_dari_kategori_kelas(kategori: Option<&str>) -> Option<String> {
+    match kategori?.trim() {
+        "kbm" => Some("kbm".to_string()),
+        "non_kbm" => Some("non_kbm".to_string()),
+        _ => None,
+    }
+}
+
 fn normalize_activity_type(s: &str) -> Option<String> {
     let s = s.trim();
     crate::models::ACTIVITY_TYPES
@@ -517,6 +540,24 @@ fn session_status(status: &str) -> (&'static str, &'static str) {
 /// dan mengambil empat aksara pertamanya begitu saja menghasilkan label seperti
 /// "1290" yang dipajang di samping nama santri seolah-olah itu angkatannya.
 /// Satu-satunya definisi angkatan di seluruh kode ada di sini.
+/// Angkatan yang DITAMPILKAN: `users.entry_year` bila ada, kalau tidak baru
+/// ditebak dari NIS.
+///
+/// Urutannya penting. Tebakan-dari-NIS lahir ketika angkatan memang tak punya
+/// kolom sendiri, dan ia berhenti bekerja begitu NIS resmi pondok dipakai:
+/// `500032760078240001` diawali "5000" — bukan tahun — sehingga angkatan
+/// KOSONG untuk setiap santri hasil impor. Sejak migrasi 74, `entry_year`
+/// terisi dari daftar induk dan itulah jawaban yang sebenarnya.
+///
+/// Tebakan NIS dipertahankan sebagai cadangan untuk baris lama yang
+/// `entry_year`-nya belum terisi — bukan sebagai sumber utama.
+pub(crate) fn angkatan_tampil(entry_year: Option<i16>, nis: &str) -> String {
+    match entry_year {
+        Some(t) if (1900..=2100).contains(&(t as i32)) => t.to_string(),
+        _ => angkatan_from_nis(nis),
+    }
+}
+
 pub(crate) fn angkatan_from_nis(nis: &str) -> String {
     let head: String = nis.chars().take(4).collect();
     match head.parse::<i32>() {
@@ -611,10 +652,10 @@ pub async fn kelas_detail(
 
     let members = members?
         .into_iter()
-        .map(|(id, name, nis)| {
+        .map(|(id, name, nis, tahun)| {
             let nis = nis.unwrap_or_default();
             MemberItem {
-                angkatan: angkatan_from_nis(&nis),
+                angkatan: angkatan_tampil(tahun, &nis),
                 nis: if nis.is_empty() { "-".into() } else { nis },
                 id,
                 name,
@@ -1068,7 +1109,15 @@ pub async fn create_schedule(
     let ip = wajib_point_magnitude(izin_points, "izin")?;
     // Jenis kegiatan menentukan preset poin & apakah sesi boleh direkam —
     // dibiarkan kosong berarti jatuh ke preset "legacy" tanpa ada yang memilih.
-    let atype = normalize_activity_type(activity_type);
+    // Form tak lagi mengirim jenis kegiatan; diturunkan dari kategori kelas.
+    // `normalize_activity_type` tetap didahulukan supaya pemanggil lama (atau
+    // server fn yang dipanggil langsung) masih bisa menyetelnya eksplisit.
+    let atype = match normalize_activity_type(activity_type) {
+        Some(t) => Some(t),
+        None => jenis_dari_kategori_kelas(
+            repo::class_category(pool, class_id).await?.as_deref(),
+        ),
+    };
     if atype.is_none() {
         bail_user!("Pilih jenis kegiatan (KBM/Non-KBM/Piket/Apel) untuk jadwal ini.");
     }
@@ -1148,7 +1197,15 @@ pub async fn update_schedule(
     let lp = parse_point_magnitude(late_points, "telat")?;
     let ap = parse_point_magnitude(absent_points, "alpa")?;
     let ip = parse_point_magnitude(izin_points, "izin")?;
-    let atype = normalize_activity_type(activity_type);
+    // Form tak lagi mengirim jenis kegiatan; diturunkan dari kategori kelas.
+    // `normalize_activity_type` tetap didahulukan supaya pemanggil lama (atau
+    // server fn yang dipanggil langsung) masih bisa menyetelnya eksplisit.
+    let atype = match normalize_activity_type(activity_type) {
+        Some(t) => Some(t),
+        None => jenis_dari_kategori_kelas(
+            repo::class_category_by_schedule(pool, schedule_id).await?.as_deref(),
+        ),
+    };
     let room = (room_id > 0).then_some(room_id);
     // Dropdown sudah tak menawarkannya, tapi server fn bisa dipanggil langsung
     // dengan id apa pun — tolak di sini juga. Jadwal beruang gerbang utama
@@ -1380,13 +1437,21 @@ pub async fn add_members(
     pool: &Pool,
     class_id: i64,
     student_ids: Vec<i64>,
+    pindahkan: bool,
 ) -> Result<i64> {
     let ids: Vec<i64> = student_ids.into_iter().filter(|&x| x > 0).collect();
     if ids.is_empty() {
         bail_user!("Pilih minimal satu santri.");
     }
-    tolak_kbm_ganda(pool, class_id, &ids).await?;
-    repo::add_members(pool, class_id, &ids).await
+    // `pindahkan` = pengelola SUDAH diberi tahu bahwa sebagian santri punya
+    // kelas KBM lain, dan memilih memindahkannya. Tanpa penegasan itu, jalur
+    // ini tetap MENOLAK dengan pesan yang menyebut nama & kelas lamanya —
+    // memindahkan santri antar kelas KBM mengubah wali kelas, rute perizinan,
+    // dan rapornya, jadi tak boleh terjadi karena satu klik yang tak disengaja.
+    if !pindahkan {
+        tolak_kbm_ganda(pool, class_id, &ids).await?;
+    }
+    repo::add_members(pool, class_id, &ids, pindahkan).await
 }
 
 pub async fn remove_member(pool: &Pool, class_id: i64, student_id: i64) -> Result<()> {
@@ -1399,12 +1464,26 @@ pub async fn remove_member(pool: &Pool, class_id: i64, student_id: i64) -> Resul
 /// Cari santri untuk ditambahkan ke `class_id`. MENGECUALIKAN santri yang sudah
 /// jadi anggota kelas itu (tak perlu ditambah lagi). Query pendek/kosong →
 /// daftar DEFAULT supaya form tak kosong sebelum mengetik.
-pub async fn search_students(pool: &Pool, q: &str, class_id: i64) -> Result<Vec<StudentSearchItem>> {
-    // 100, bukan 20. Batas lama membuat "centang semua" menyesatkan: pada
-    // daftar induk 512 santri, mencari "a" mengembalikan 20 baris sementara
-    // yang cocok ratusan — dan pengelola mengira sudah memilih semuanya.
-    // Halaman pemilih ini memang dimaksudkan untuk memilih banyak sekaligus.
-    Ok(repo::students_not_in_class(pool, class_id, q, 100)
+pub async fn search_students(
+    pool: &Pool,
+    q: &str,
+    class_id: i64,
+    angkatan: Option<i16>,
+) -> Result<Vec<StudentSearchItem>> {
+    // Batasnya BERGANTUNG apakah pengelola sudah menyempitkan pencarian.
+    //
+    // Tanpa kata kunci maupun angkatan, daftar ini cuma "beberapa nama supaya
+    // formnya tak kosong" — 512 santri hasil impor akan menenggelamkan
+    // halamannya, dan "centang semua" di daftar sebesar itu adalah kecelakaan
+    // yang menunggu terjadi. Sepuluh cukup untuk memperlihatkan bentuknya.
+    //
+    // Begitu ada kriteria (kata kunci ATAU angkatan), tampilkan SEMUA yang
+    // cocok sampai 100 — di sanalah "centang semua" jadi berguna: satu
+    // angkatan sekaligus. Batas 100 tetap ada sebagai pagar, dan bila mentok
+    // pemilih diberi tahu (lihat AddMemberForm).
+    let disaring = !q.trim().is_empty() || angkatan.is_some();
+    let limit = if disaring { 100 } else { 10 };
+    Ok(repo::students_not_in_class(pool, class_id, q, angkatan, limit)
         .await?
         .into_iter()
         .map(|s| StudentSearchItem {
@@ -1412,6 +1491,8 @@ pub async fn search_students(pool: &Pool, q: &str, class_id: i64) -> Result<Vec<
             name: s.full_name,
             nis: s.nis.unwrap_or_else(|| "-".into()),
             class_name: s.class_name.unwrap_or_else(|| "-".into()),
+            kbm_class: s.kbm_class,
+            entry_year: s.entry_year,
         })
         .collect())
 }
@@ -1445,27 +1526,51 @@ pub async fn set_session_libur(pool: &Pool, session_id: i64, libur: bool) -> Res
 
 /// Payload halaman Students: daftar santri + antrean verifikasi sesuai peran
 /// (pamong → tahap 1, dewan guru → tahap 2, admin → tahap 2, guru → tanpa antrean).
+/// Berapa santri per halaman pada gulir-tak-berujung.
+///
+/// Sepuluh: muatan pertama halaman tetap ringan pada pondok berisi 500+ santri,
+/// dan sisanya menyusul saat digulir. Sentinel-nya diberi margin 400px (lihat
+/// pages/students.rs), jadi halaman berikutnya sudah mulai diambil sebelum
+/// pengguna benar-benar mentok — ukuran kecil tak berarti terasa tersendat.
+pub const STUDENTS_PER_PAGE: i64 = 10;
+
+/// Satu halaman daftar santri + jumlah TOTAL yang cocok dengan penyaringnya.
+pub async fn students_page(
+    pool: &Pool,
+    q: &str,
+    angkatan: Option<i16>,
+    offset: i64,
+) -> Result<(Vec<StudentRowItem>, i64)> {
+    let (board, total) = tokio::join!(
+        repo::students_page(pool, q, angkatan, STUDENTS_PER_PAGE, offset.max(0)),
+        repo::count_students(pool, q, angkatan),
+    );
+    Ok((board?.into_iter().map(baris_santri).collect(), total?))
+}
+
+/// Satu baris papan santri → payload layar. Dipakai muatan pertama DAN
+/// halaman-halaman berikutnya, supaya keduanya mustahil berbeda bentuk.
+fn baris_santri(r: repo::StudentBoardRow) -> StudentRowItem {
+    let nis = r.nis.unwrap_or_default();
+    StudentRowItem {
+        initial: initial_of(&r.name),
+        angkatan: angkatan_tampil(r.entry_year, &nis),
+        nis: if nis.is_empty() { "-".into() } else { nis },
+        classes: r
+            .classes
+            .into_iter()
+            .map(|c| StudentClassTag { jenjang: c.jenjang, name: c.name })
+            .collect(),
+        points: r.points,
+        id: r.user_id,
+        name: r.name,
+    }
+}
+
 pub async fn students_data(pool: &Pool, user: &SessionUser) -> Result<StudentsData> {
-    let board = repo::students_with_classes(pool, 300).await?;
-    let students = board
-        .into_iter()
-        .map(|r| {
-            let nis = r.nis.unwrap_or_default();
-            StudentRowItem {
-                initial: initial_of(&r.name),
-                angkatan: angkatan_from_nis(&nis),
-                nis: if nis.is_empty() { "-".into() } else { nis },
-                classes: r
-                    .classes
-                    .into_iter()
-                    .map(|c| StudentClassTag { jenjang: c.jenjang, name: c.name })
-                    .collect(),
-                points: r.points,
-                id: r.user_id,
-                name: r.name,
-            }
-        })
-        .collect();
+    // HALAMAN PERTAMA saja — sisanya diambil saat pengguna menggulir sampai
+    // dasar daftar (lihat `students_page`).
+    let (students, total_santri) = students_page(pool, "", None, 0).await?;
 
     let (verify_stage, pending_rows, verified_today) = match user.role.as_str() {
         // Pamong bertugas → tahap 1 (hanya sesi yang ia tugaskan, migrasi 33).
@@ -1506,6 +1611,7 @@ pub async fn students_data(pool: &Pool, user: &SessionUser) -> Result<StudentsDa
         .collect();
 
     Ok(StudentsData {
+        total_santri,
         role: user.role.clone(),
         verify_stage: verify_stage.to_string(),
         students,
@@ -1628,6 +1734,36 @@ pub async fn delete_curriculum(pool: &Pool, id: i64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    /// Jenis kegiatan diturunkan dari kategori kelas sejak form-nya dihapus.
+    /// Kalau pemetaan ini salah, preset poin PRD berubah diam-diam: jadwal KBM
+    /// yang seharusnya 4·1·10 jatuh ke 10·0·15 tanpa satu pun layar yang
+    /// memperlihatkannya.
+    #[test]
+    fn jenis_diturunkan_dari_kategori_kelas() {
+        assert_eq!(jenis_dari_kategori_kelas(Some("kbm")).as_deref(), Some("kbm"));
+        assert_eq!(jenis_dari_kategori_kelas(Some("non_kbm")).as_deref(), Some("non_kbm"));
+        assert_eq!(jenis_dari_kategori_kelas(Some("  kbm ")).as_deref(), Some("kbm"));
+        // `bacaan` kategori KELAS, bukan jenis kegiatan berpreset PRD → legacy.
+        assert_eq!(jenis_dari_kategori_kelas(Some("bacaan")), None);
+        assert_eq!(jenis_dari_kategori_kelas(Some("")), None);
+        assert_eq!(jenis_dari_kategori_kelas(None), None);
+    }
+
+    /// `entry_year` menang atas tebakan NIS. Kalau urutannya terbalik, seluruh
+    /// santri hasil impor kehilangan angkatannya di layar — NIS resmi pondok
+    /// diawali "5000", yang bukan tahun.
+    #[test]
+    fn angkatan_utamakan_entry_year() {
+        assert_eq!(angkatan_tampil(Some(2024), "500032760078240001"), "2024");
+        // Tanpa entry_year → cadangan tebakan NIS.
+        assert_eq!(angkatan_tampil(None, "2023001"), "2023");
+        // NIS resmi pondok TIDAK bisa ditebak — itulah sebabnya kolomnya ada.
+        assert_eq!(angkatan_tampil(None, "500032760078240001"), "");
+        // Tahun tak masuk akal diabaikan, bukan dipajang.
+        assert_eq!(angkatan_tampil(Some(12), "2023001"), "2023");
+    }
 
     #[test]
     fn normalize_activity_type_valid_saja() {
@@ -1781,10 +1917,10 @@ pub async fn kelas_saya(
 
         let members = members?
             .into_iter()
-            .map(|(id, name, nis)| {
+            .map(|(id, name, nis, tahun)| {
                 let nis = nis.unwrap_or_default();
                 MemberItem {
-                    angkatan: angkatan_from_nis(&nis),
+                    angkatan: angkatan_tampil(tahun, &nis),
                     id,
                     name,
                     nis,

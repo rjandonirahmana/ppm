@@ -18,7 +18,7 @@ use leptos_meta::Title;
 use crate::models::{ManagedUser, ProfilEdit};
 use crate::web::api::{
     angkatan_tersedia_data, change_user_role_action, managed_users_data, set_user_active_action,
-    update_managed_user_action,
+    set_users_active_action, update_managed_user_action,
 };
 use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader, Sheet};
 
@@ -85,6 +85,92 @@ pub fn ManajemenUserPage() -> impl IntoView {
     let msg = RwSignal::new(Option::<(bool, String)>::None);
     let busy = RwSignal::new(false);
     let editing: RwSignal<Option<ManagedUser>> = RwSignal::new(None);
+
+    // ── Pilihan untuk aksi massal ────────────────────────────────────────────
+    // Dikosongkan tiap penyaring berubah: id yang tercentang lalu tak lagi
+    // terlihat karena filter bergeser adalah jebakan — pengelola menekan
+    // "Aktifkan 40" sambil melihat 5 baris di layar.
+    let dipilih = RwSignal::new(Vec::<i64>::new());
+    Effect::new(move |_| {
+        let _ = (status.get(), peran.get(), angkatan.get(), cari_kirim.get());
+        dipilih.set(Vec::new());
+    });
+    let toggle_pilih = move |id: i64| {
+        dipilih.update(|v| {
+            if let Some(i) = v.iter().position(|&x| x == id) {
+                v.remove(i);
+            } else {
+                v.push(id);
+            }
+        });
+    };
+    let id_tampil = move || {
+        data.get()
+            .and_then(|r| r.ok())
+            .map(|v| v.into_iter().map(|u| u.id).collect::<Vec<i64>>())
+            .unwrap_or_default()
+    };
+    let semua_tercentang = move || {
+        let t = id_tampil();
+        !t.is_empty() && {
+            let d = dipilih.get();
+            t.iter().all(|id| d.contains(id))
+        }
+    };
+    let toggle_semua = move |_: leptos::ev::MouseEvent| {
+        let t = id_tampil();
+        if t.is_empty() {
+            return;
+        }
+        let hapus = semua_tercentang();
+        dipilih.set(if hapus { Vec::new() } else { t });
+    };
+
+    // Aksi massal. Menonaktifkan selalu dikonfirmasi — ia mencabut orang dari
+    // kelas, papan poin, dan statistik sekaligus.
+    let massal = move |aktifkan: bool| {
+        if busy.get_untracked() {
+            return;
+        }
+        let ids = dipilih.get_untracked();
+        if ids.is_empty() {
+            return;
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let n = ids.len();
+            let pesan = if aktifkan {
+                format!(
+                    "Aktifkan {n} user? Santri yang belum punya riwayat poin akan \
+                     mendapat saldo awal {} poin.",
+                    crate::models::SEMESTER_START_POINTS
+                )
+            } else {
+                format!(
+                    "Nonaktifkan {n} user? Mereka akan hilang dari kelas, papan poin, \
+                     dan statistik."
+                )
+            };
+            let ok = web_sys::window()
+                .and_then(|w| w.confirm_with_message(&pesan).ok())
+                .unwrap_or(false);
+            if !ok {
+                return;
+            }
+        }
+        busy.set(true);
+        leptos::task::spawn_local(async move {
+            match set_users_active_action(ids, aktifkan).await {
+                Ok(pesan) => {
+                    msg.set(Some((true, pesan)));
+                    dipilih.set(Vec::new());
+                    data.refetch();
+                }
+                Err(e) => msg.set(Some((false, e.to_string()))),
+            }
+            busy.set(false);
+        });
+    };
 
     let ubah_status = move |u: ManagedUser| {
         if busy.get_untracked() {
@@ -235,6 +321,37 @@ pub fn ManajemenUserPage() -> impl IntoView {
                             })
                     }}
 
+                    // ── Bilah aksi massal ────────────────────────────────
+                    // Hanya muncul saat ada yang tercentang: bilah yang selalu
+                    // ada dengan tombol mati hanya menambah kebisingan.
+                    <Show when=move || !dipilih.get().is_empty()>
+                        <div class="ppm-card p-3 flex flex-wrap items-center gap-2 anim-in">
+                            <span class="text-body-sm font-semibold text-on-background flex-1 min-w-0">
+                                {move || format!("{} dipilih", dipilih.get().len())}
+                            </span>
+                            <button
+                                class="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-body-sm font-semibold press cursor-pointer disabled:opacity-50"
+                                prop:disabled=move || busy.get()
+                                on:click=move |_| massal(true)
+                            >
+                                "Aktifkan"
+                            </button>
+                            <button
+                                class="px-3 py-1.5 rounded-lg border border-error/40 text-error text-body-sm font-semibold cursor-pointer disabled:opacity-50"
+                                prop:disabled=move || busy.get()
+                                on:click=move |_| massal(false)
+                            >
+                                "Nonaktifkan"
+                            </button>
+                            <button
+                                class="px-3 py-1.5 rounded-lg text-on-surface-variant text-body-sm font-semibold cursor-pointer"
+                                on:click=move |_| dipilih.set(Vec::new())
+                            >
+                                "Batal"
+                            </button>
+                        </div>
+                    </Show>
+
                     <Suspense fallback=|| {
                         view! {
                             <div class="space-y-3 animate-pulse">
@@ -261,13 +378,27 @@ pub fn ManajemenUserPage() -> impl IntoView {
                                     Ok(list) => {
                                         let n = list.len();
                                         view! {
-                                            <p class="text-body-sm text-on-surface-variant">
-                                                {if n >= 500 {
-                                                    format!("Menampilkan {n} teratas — persempit dengan pencarian.")
-                                                } else {
-                                                    format!("{n} pengguna")
-                                                }}
-                                            </p>
+                                            <div class="flex items-center justify-between gap-2">
+                                                <p class="text-body-sm text-on-surface-variant min-w-0">
+                                                    {if n >= 500 {
+                                                        format!("Menampilkan {n} teratas — persempit dengan pencarian.")
+                                                    } else {
+                                                        format!("{n} pengguna")
+                                                    }}
+                                                </p>
+                                                <button
+                                                    class="px-3 py-1.5 rounded-lg border border-outline-variant text-[11px] font-semibold text-on-surface hover:border-primary hover:text-primary transition-colors cursor-pointer shrink-0 whitespace-nowrap"
+                                                    on:click=toggle_semua
+                                                >
+                                                    {move || {
+                                                        if semua_tercentang() {
+                                                            "Hapus centang".to_string()
+                                                        } else {
+                                                            format!("Centang semua ({n})")
+                                                        }
+                                                    }}
+                                                </button>
+                                            </div>
                                             <div class="space-y-3 md:grid md:grid-cols-2 md:gap-3 md:space-y-0">
                                                 {list
                                                     .into_iter()
@@ -278,10 +409,13 @@ pub fn ManajemenUserPage() -> impl IntoView {
                                                         // dipanggil berkali-kali). StoredValue sendiri Copy,
                                                         // isinya diambil saat dipanggil.
                                                         let simpan = StoredValue::new(u.clone());
+                                                        let uid = u.id;
                                                         view! {
                                                             <BarisUser
                                                                 u=u
                                                                 busy=busy
+                                                                tercentang=Signal::derive(move || dipilih.get().contains(&uid))
+                                                                on_centang=move || toggle_pilih(uid)
                                                                 on_edit=move || editing.set(Some(simpan.get_value()))
                                                                 on_toggle=move || ubah_status(simpan.get_value())
                                                             />
@@ -328,6 +462,8 @@ pub fn ManajemenUserPage() -> impl IntoView {
 fn BarisUser(
     u: ManagedUser,
     busy: RwSignal<bool>,
+    tercentang: Signal<bool>,
+    on_centang: impl Fn() + Copy + Send + 'static,
     on_edit: impl Fn() + Copy + Send + 'static,
     on_toggle: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
@@ -347,6 +483,15 @@ fn BarisUser(
 
     view! {
         <div class="ppm-card p-4 flex gap-3">
+            // Centang untuk aksi massal. Di luar <label> pembungkus baris agar
+            // menekan nama/tombol tak ikut mencentang.
+            <input
+                type="checkbox"
+                class="w-5 h-5 accent-primary cursor-pointer shrink-0 mt-0.5"
+                prop:checked=move || tercentang.get()
+                on:change=move |_| on_centang()
+                aria-label="Pilih untuk aksi massal"
+            />
             <span class=if aktif {
                 "w-11 h-11 ppm-tile shrink-0"
             } else {

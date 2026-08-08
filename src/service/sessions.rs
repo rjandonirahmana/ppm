@@ -162,6 +162,10 @@ pub async fn detail_for(
         .into_iter()
         .map(|r| {
             let (label, kind) = att_display(r.status.as_deref());
+            // Yang sudah bukan anggota TETAP dihitung hadir bila memang hadir:
+            // ia sungguh mengikuti sesi itu, dan mengeluarkannya dari hitungan
+            // akan mengubah persentase kehadiran sesi lampau setiap kali ada
+            // santri pindah kelas.
             if matches!(kind, "present" | "late") {
                 hadir += 1;
             }
@@ -176,6 +180,7 @@ pub async fn detail_for(
                     .map(|t| format!("{} WIB", t.with_timezone(&wib_tz).format("%H:%M")))
                     .unwrap_or_default(),
                 att_id: r.att_id,
+                masih_anggota: r.masih_anggota,
             }
         })
         .collect();

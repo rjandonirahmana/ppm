@@ -708,10 +708,27 @@ pub async fn verified_today(pool: &Pool) -> Result<i64> {
 /// migrasi 7 mengunci `status` ke enam nilai. Di bawah ini `absent` ditulis
 /// eksplisit dan `ELSE` dikembalikan ke 0 — status yang belum dikenal tak
 /// seharusnya diam-diam kena potongan terbesar.
+///
+/// ── IZIN TIDAK MEMOTONG POIN ─────────────────────────────────────────────────
+/// `permit` sekarang bernilai 0, bukan `-izin_points`. Ini MEMPERBAIKI
+/// pertentangan yang sudah ada, bukan mengubah aturan sepihak:
+/// `models::point_rule` — yang dipakai menampilkan aturan poin ke santri —
+/// sejak dulu menyatakan `"permit" | "sick" => 0`, sementara mesin SQL di sini
+/// memotong sesuai preset PRD (KBM −3, Non-KBM −2, Apel −5). Jadi aplikasi
+/// menjanjikan satu hal ke santri dan melakukan hal lain ke saldonya.
+///
+/// Yang menang adalah yang dijanjikan: santri yang MENGURUS izinnya dengan
+/// benar tak seharusnya dihukum sama seperti yang menghilang tanpa kabar —
+/// itulah gunanya membedakan `permit` dari `absent`.
+///
+/// Akibatnya kolom `class_schedules.izin_points` tak lagi dibaca siapa pun.
+/// Kolomnya SENGAJA dibiarkan (pola expand/contract, lihat migrasi 70): biner
+/// lama yang masih berjalan tetap boleh menulisinya tanpa galat. Buang di
+/// migrasi berikutnya setelah rilis ini benar-benar hidup.
 const DELTA_SQL: &str = "CASE \
      WHEN att.status = 'present' THEN COALESCE(sch.present_points, cat_default_points(COALESCE(sch.activity_type,'other'),'present'))::int \
      WHEN att.status = 'late' THEN -COALESCE(sch.late_points, cat_default_points(COALESCE(sch.activity_type,'other'),'late'))::int \
-     WHEN att.status = 'permit' THEN -COALESCE(sch.izin_points, cat_default_points(COALESCE(sch.activity_type,'other'),'izin'))::int \
+     WHEN att.status = 'permit' THEN 0 \
      WHEN att.status = 'absent' THEN -COALESCE(sch.absent_points, cat_default_points(COALESCE(sch.activity_type,'other'),'absent'))::int \
      ELSE 0 \
    END";

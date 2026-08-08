@@ -27,6 +27,10 @@ pub async fn search_students(pool: &Pool, q: &str) -> Result<Vec<StudentSearchIt
             name: s.full_name,
             nis: s.nis.unwrap_or_else(|| "-".into()),
             class_name: s.class_name.unwrap_or_else(|| "-".into()),
+            // Pencarian sisi ORANG TUA tak berurusan dengan kelas KBM
+            // maupun penyaring angkatan.
+            kbm_class: None,
+            entry_year: None,
         })
         .collect())
 }

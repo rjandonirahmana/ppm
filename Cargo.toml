@@ -112,6 +112,12 @@ web-sys = { version = "0.3", features = [
     "HtmlImageElement",
     # Focus trap Sheet (web/components.rs): query_selector_all → NodeList.
     "NodeList",
+    # Gulir-tak-berujung daftar santri (pages/students.rs): sentinel di dasar
+    # daftar diamati IntersectionObserver. Dipilih ketimbang listener `scroll`
+    # karena tak perlu di-throttle sendiri dan tak ikut jalan saat halaman diam.
+    "IntersectionObserver",
+    "IntersectionObserverEntry",
+    "IntersectionObserverInit",
 ] }
 
 # ── Server-only deps (bukan wasm32) ────────────────────────────────────────────

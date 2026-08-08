@@ -49,14 +49,31 @@ pub(super) fn JadwalTab(
     };
     view! {
         <div class="space-y-3 stagger">
-            <div class="md:max-w-md">
+            // DUA KOLOM di desktop: form pembuat jadwal di kiri (lengket saat
+            // menggulir), statistik + daftar jadwal di kanan. Sebelumnya form
+            // dibatasi `md:max-w-md` dengan sisi kanannya KOSONG SAMA SEKALI —
+            // dan daftar jadwal terdorong jauh ke bawah lipatan, padahal
+            // keduanya dipakai bergantian: buat jadwal, lalu periksa hasilnya.
+            //
+            // `items-start` supaya kolom kiri tak ikut meregang setinggi daftar.
+            // Hanya BARIS ATAS yang dua kolom: pembuat jadwal di kiri,
+            // statistik di kanan. Daftar jadwal di bawahnya memakai lebar
+            // PENUH.
+            //
+            // Versi sebelumnya menaruh daftar di kolom kanan juga — dan karena
+            // form pembuat jadwal biasanya masih berupa satu tombol, seluruh
+            // sisi kiri di bawah tombol itu menganga kosong sepanjang daftar.
+            // Membagi kolom hanya berguna bila KEDUA sisi memang berisi.
+            <div class="md:flex md:items-start md:gap-4">
+            <div class="md:w-80 md:shrink-0">
                 <AdminOnly can_manage=can_manage apa="membuat atau mengubah jadwal kelas" siapa="admin, ketua, atau pamong kelas ini">
                     <BuatJadwalForm class_id=class_id room_options=room_opts refetch=refetch />
                 </AdminOnly>
             </div>
 
+            <div class="md:flex-1 md:min-w-0 mt-3 md:mt-0">
             // ── Statistik jadwal (mockup Jadwal Kelas) ──────────────────────
-            <div class="grid grid-cols-3 gap-2 md:max-w-xl">
+            <div class="grid grid-cols-3 gap-2">
                 <div class="ppm-card p-3 text-center">
                     <span class="material-symbols-outlined text-primary">"calendar_month"</span>
                     <p class="text-headline-sm font-bold text-on-background" data-count=weekly.to_string()>
@@ -76,6 +93,9 @@ pub(super) fn JadwalTab(
                     <p class="text-body-md font-bold text-on-background mt-2">{status}</p>
                     <p class="text-[10px] text-on-surface-variant tracking-wide">"Rutinitas"</p>
                 </div>
+            </div>
+
+            </div>
             </div>
 
             <h3 class="text-body-lg font-bold text-on-background pt-1">"Jadwal Terdaftar"</h3>
@@ -219,8 +239,16 @@ fn JadwalCard(
         "w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface";
     view! {
         <div class="ppm-card p-4 card-hover anim-in ppm-accent">
-            <div class="flex items-center justify-between gap-2">
-                <p class="text-body-md font-bold text-on-background truncate">{title_ro}</p>
+            // Judul BOLEH MEMBUNGKUS, bukan dipotong. Dengan `truncate`, "KBM
+            // Ngaji Subuh Putra" tampil sebagai "KBM …" — chip kategori dan
+            // tombol sunting di sebelahnya merebut lebar lebih dulu karena
+            // keduanya `shrink-0`, dan yang mengalah selalu judulnya. Nama
+            // jadwal adalah satu-satunya cara membedakan kartu di daftar; itu
+            // yang paling tak boleh hilang.
+            <div class="flex items-start justify-between gap-2">
+                <p class="text-body-md font-bold text-on-background min-w-0 break-words">
+                    {title_ro}
+                </p>
                 <div class="flex items-center gap-2 shrink-0">
                     {(!category_ro.is_empty())
                         .then(|| {
@@ -274,14 +302,8 @@ fn JadwalCard(
                                 prop:value=move || e_title.get()
                                 on:input=move |ev| e_title.set(event_target_value(&ev))
                             />
-                            <input
-                                type="text"
-                                list="kategori-detail"
-                                class=field
-                                placeholder="Kategori (mis. Pengajian/Sholat) — kosongkan = ikut kategori kelas"
-                                prop:value=move || e_cat.get()
-                                on:input=move |ev| e_cat.set(event_target_value(&ev))
-                            />
+                            // KATEGORI per-jadwal dihapus — selalu ikut kategori
+                            // kelas. Alasan sama dengan form buat jadwal.
                             <label class="space-y-1 block">
                                 <span class="text-[11px] text-on-surface-variant">"Ruang (perangkat RFID)"</span>
                                 <select
@@ -306,29 +328,9 @@ fn JadwalCard(
                                         .collect_view()}
                                 </select>
                             </label>
-                            // Jenis kegiatan PRD (preset poin).
-                            <label class="space-y-1 block">
-                                <span class="text-[11px] text-on-surface-variant">"Jenis kegiatan (preset poin PRD)"</span>
-                                <select
-                                    class=field
-                                    on:change=move |ev| e_activity.set(event_target_value(&ev))
-                                >
-                                    <option value="" selected=move || e_activity.get().is_empty()>
-                                        "— (Lain / default)"
-                                    </option>
-                                    {crate::models::ACTIVITY_TYPES
-                                        .iter()
-                                        .map(|(k, label)| {
-                                            let k2 = *k;
-                                            view! {
-                                                <option value=*k selected=move || e_activity.get() == k2>
-                                                    {*label}
-                                                </option>
-                                            }
-                                        })
-                                        .collect_view()}
-                                </select>
-                            </label>
+                            // JENIS KEGIATAN dihapus — server menurunkannya dari
+                            // kategori kelas, lihat
+                            // `service::kelas::jenis_dari_kategori_kelas`.
                             // Poin kehadiran: semua positif (tepat waktu ditambah,
                             // telat/alpa/izin dikurangi). Kosong = preset kegiatan.
                             <label class="space-y-1 block">
@@ -344,19 +346,8 @@ fn JadwalCard(
                                     on:input=move |ev| e_present.set(event_target_value(&ev))
                                 />
                             </label>
-                            <label class="space-y-1 block">
-                                <span class="text-[11px] text-on-surface-variant">
-                                    "Potongan jika izin — dikurangi (Sakit/Cuti = 0)"
-                                </span>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    class=field
-                                    placeholder="preset"
-                                    prop:value=move || e_izin.get()
-                                    on:input=move |ev| e_izin.set(event_target_value(&ev))
-                                />
-                            </label>
+                            // POTONGAN IZIN dihapus — izin tidak memotong poin
+                            // sama sekali (DELTA_SQL: permit → 0).
                             <label class="space-y-1 block">
                                 <span class="text-[11px] text-on-surface-variant">
                                     "Potongan jika telat — dikurangi (kosong = 0)"

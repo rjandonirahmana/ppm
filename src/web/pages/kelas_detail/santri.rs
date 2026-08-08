@@ -6,7 +6,8 @@ use crate::models::{
     BookProgressItem, KelasDetail, StudentSearchItem,
 };
 use crate::web::api::{
-    add_members_action, remove_member_action, staff_search_students, student_book_progress_for_viewer,
+    add_members_action, angkatan_tersedia_data, remove_member_action, staff_search_students,
+    student_book_progress_for_viewer,
 };
 use crate::web::components::AdminOnly;
 use crate::web::components::{BookProgressDetail, EmptyState, Sheet};
@@ -23,6 +24,11 @@ pub(super) fn SantriTab(
     // saja (wali kelas tetap tidak). Flag-nya dihitung server — lihat
     // KelasDetail::can_manage_jadwal.
     let can_manage = d.can_manage_jadwal;
+    // Kelas KBM punya aturan yang tak berlaku di kelas lain: satu santri hanya
+    // boleh satu (trigger migrasi 65). Pemilih santri perlu tahu ini supaya
+    // bisa memperingatkan SEBELUM penambahannya ditolak database.
+    let kelas_kbm = d.category == "kbm";
+    let nama_kelas = d.name.clone();
     let members = StoredValue::new(d.members.clone());
     let total = d.members.len();
     let query = RwSignal::new(String::new());
@@ -59,13 +65,22 @@ pub(super) fn SantriTab(
                 "Total " <b class="text-on-background">{total}</b> " santri dalam kelas ini"
             </p>
 
-            // Tambah santri + cari (md:max-w-md — form/input tunggal, bukan
-            // grid; daftar anggota di bawah TETAP full-width via grid).
-            <div class="space-y-3 md:max-w-md">
+            // DUA KOLOM di desktop: form tambah + pencarian di kiri, daftar
+            // anggota di kanan. Sebelumnya form dibatasi `md:max-w-md` dan
+            // daftar diletakkan DI BAWAHNYA — pada layar lebar itu menyisakan
+            // separuh layar kosong di sebelah kanan form, sementara daftar
+            // anggota terdorong jauh ke bawah lipatan. Padahal keduanya dipakai
+            // bergantian: mencari santri, menambahkannya, lalu memastikan ia
+            // muncul di daftar.
+            //
+            // `items-start` supaya kolom kiri tak ikut meregang setinggi daftar
+            // anggota yang bisa jauh lebih panjang.
+            <div class="md:grid md:grid-cols-12 md:gap-5 md:items-start space-y-3 md:space-y-0">
+            <div class="space-y-3 md:col-span-5 md:sticky md:top-4">
             // Santri masuk KELAS (migrasi 61), bukan jadwal — jadi tak perlu
             // lagi menunggu ada jadwal sebelum anggota bisa ditambahkan.
             <AdminOnly can_manage=can_manage apa="menambah atau mengeluarkan santri dari kelas" siapa="admin, ketua, atau pamong kelas ini">
-                <AddMemberForm class_id=class_id refetch=refetch />
+                <AddMemberForm class_id=class_id kelas_kbm=kelas_kbm nama_kelas=nama_kelas.clone() refetch=refetch />
             </AdminOnly>
 
             // Cari peserta (filter klien)
@@ -88,7 +103,8 @@ pub(super) fn SantriTab(
                 })}
             </div>
 
-            // Daftar anggota
+            // Daftar anggota — kolom kanan di desktop.
+            <div class="md:col-span-7">
             {move || {
                 let q = query.get().to_lowercase();
                 let list: Vec<_> = members
@@ -118,10 +134,13 @@ pub(super) fn SantriTab(
                         let sid = m.id;
                         let name = m.name.clone();
                         let initial = name.chars().next().unwrap_or('S').to_string();
+                        // Tiga keterangan yang membedakan santri: nama (di
+                        // atas), NIS, dan angkatan. Nama saja tak cukup — pada
+                        // daftar induk ada 90 nama yang muncul lebih dari sekali.
                         let meta = format!("NIS: {}", m.nis);
                         let ang = m.angkatan.clone();
                         view! {
-                            <div class="ppm-card p-3 flex items-center gap-3 card-hover anim-in ppm-accent">
+                            <div class="ppm-card p-3 flex items-start gap-3 card-hover anim-in ppm-accent">
                                 <div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold shrink-0">
                                     {initial}
                                 </div>
@@ -174,6 +193,8 @@ pub(super) fn SantriTab(
                 }
                     .into_any()
             }}
+            </div>
+            </div>
 
             // ── Bottom-sheet detail progres materi ─────────────────────────────
             {move || {
@@ -219,13 +240,22 @@ pub(super) fn SantriTab(
 #[component]
 fn AddMemberForm(
     class_id: i64,
+    /// Kelas tujuan berkategori KBM? Menentukan apakah santri yang sudah punya
+    /// kelas KBM harus DIPINDAH, bukan sekadar ditambah.
+    kelas_kbm: bool,
+    #[prop(into)] nama_kelas: String,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
     let q = RwSignal::new(String::new());
+    // 0 = semua angkatan.
+    let angkatan = RwSignal::new(0_i32);
+    let angkatan_ada = Resource::new(|| (), |_| async move { angkatan_tersedia_data().await });
     let results = RwSignal::new(Vec::<StudentSearchItem>::new());
     let selected = RwSignal::new(Vec::<i64>::new());
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
+    // Nama kelas dipakai di dalam closure konfirmasi.
+    let nama_kelas = StoredValue::new(nama_kelas);
     let toggle = move |id: i64| {
         selected.update(|v| {
             if let Some(pos) = v.iter().position(|&x| x == id) {
@@ -280,9 +310,12 @@ fn AddMemberForm(
     // santri), agar daftar tampil tanpa harus mengetik.
     let do_search = move || {
         let query = q.get_untracked();
+        let ang = angkatan.get_untracked();
         leptos::task::spawn_local(async move {
             // class_id → server mengecualikan santri yang sudah di kelas ini.
-            if let Ok(r) = staff_search_students(query, class_id).await {
+            // Tanpa kata kunci & angkatan, server hanya mengirim 10 nama —
+            // lihat `service::kelas::search_students`.
+            if let Ok(r) = staff_search_students(query, class_id, ang).await {
                 results.set(r);
             }
         });
@@ -295,6 +328,23 @@ fn AddMemberForm(
         }
     });
 
+    // Santri TERPILIH yang sudah punya kelas KBM lain — merekalah yang akan
+    // DIPINDAH, bukan sekadar ditambah. Dihitung dari hasil yang tampil; yang
+    // dipilih dari pencarian lain tak lagi ada di `results`, jadi angka ini
+    // bisa lebih kecil dari kenyataan — server tetap yang menegakkan aturannya.
+    let perlu_pindah = move || -> Vec<(String, String)> {
+        if !kelas_kbm {
+            return Vec::new();
+        }
+        let dipilih = selected.get();
+        results
+            .get()
+            .into_iter()
+            .filter(|s| dipilih.contains(&s.id))
+            .filter_map(|s| s.kbm_class.clone().map(|k| (s.name.clone(), k)))
+            .collect()
+    };
+
     let add_selected = move |_| {
         if busy.get_untracked() {
             return;
@@ -303,10 +353,45 @@ fn AddMemberForm(
         if ids.is_empty() {
             return;
         }
+        let pindah = perlu_pindah();
+        let pindahkan = !pindah.is_empty();
+
+        // KONFIRMASI. Menambah santri ke kelas mengubah kewajiban absensinya;
+        // MEMINDAHKAN antar kelas KBM mengubah wali kelas, rute perizinan, dan
+        // rapornya sekaligus. Keduanya tak boleh terjadi dari satu klik yang
+        // tak disengaja — apalagi setelah "centang semua".
+        #[cfg(target_arch = "wasm32")]
+        {
+            let n = ids.len();
+            let kelas = nama_kelas.get_value();
+            let pesan = if pindahkan {
+                let rincian = pindah
+                    .iter()
+                    .take(5)
+                    .map(|(nama, lama)| format!("• {nama} — sekarang di \"{lama}\""))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let sisa = pindah.len().saturating_sub(5);
+                let ekor = if sisa > 0 { format!("\n… dan {sisa} lainnya") } else { String::new() };
+                format!(
+                    "Tambahkan {n} santri ke \"{kelas}\"?\n\n                     {} di antaranya SUDAH punya kelas KBM dan akan DIPINDAHKAN                      (dikeluarkan dari kelas lamanya):\n{rincian}{ekor}\n\n                     Memindahkan kelas KBM mengubah wali kelas, rute perizinan, dan rapornya.",
+                    pindah.len()
+                )
+            } else {
+                format!("Tambahkan {n} santri ke kelas \"{kelas}\"?")
+            };
+            let ok = web_sys::window()
+                .and_then(|w| w.confirm_with_message(&pesan).ok())
+                .unwrap_or(false);
+            if !ok {
+                return;
+            }
+        }
+        let _ = (&pindah, &nama_kelas);
         busy.set(true);
         msg.set(None);
         leptos::task::spawn_local(async move {
-            match add_members_action(class_id, ids).await {
+            match add_members_action(class_id, ids, pindahkan).await {
                 Ok(n) => {
                     msg.set(Some((true, format!("{n} santri ditambahkan ke kelas."))));
                     selected.set(Vec::new());
@@ -346,6 +431,33 @@ fn AddMemberForm(
                 />
             </div>
 
+            // Penyaring angkatan — bersama pencarian, inilah yang membuka
+            // seluruh daftar (tanpa keduanya server hanya mengirim 10).
+            <Suspense fallback=|| ()>
+                {move || {
+                    let tahun = angkatan_ada.get().and_then(|r| r.ok()).unwrap_or_default();
+                    view! {
+                        <select
+                            class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface"
+                            on:change=move |ev| {
+                                angkatan.set(event_target_value(&ev).parse::<i32>().unwrap_or(0));
+                                do_search();
+                            }
+                        >
+                            <option value="0">"Semua angkatan"</option>
+                            {tahun
+                                .into_iter()
+                                .map(|t| {
+                                    view! {
+                                        <option value=t.to_string()>{format!("Angkatan {t}")}</option>
+                                    }
+                                })
+                                .collect_view()}
+                        </select>
+                    }
+                }}
+            </Suspense>
+
             {move || {
                 msg.get()
                     .map(|(ok, text)| {
@@ -363,10 +475,14 @@ fn AddMemberForm(
                 (!list.is_empty())
                     .then(|| {
                         let jml_tampil = list.len();
-                        // Server membatasi 100 hasil. Kalau mentok, katakan —
-                        // "centang semua" di sini hanya mencakup yang tampil,
-                        // dan pengelola berhak tahu ada yang tak ikut.
-                        let mentok = jml_tampil >= 100;
+                        // DUA batas berbeda, dan keduanya harus dikatakan —
+                        // "centang semua" hanya mencakup yang tampil.
+                        //   • belum menyaring → server cuma mengirim 10 nama;
+                        //   • sudah menyaring tapi mentok di 100.
+                        let belum_disaring =
+                            q.get().trim().is_empty() && angkatan.get() == 0;
+                        let awal_saja = belum_disaring && jml_tampil >= 10;
+                        let mentok = !belum_disaring && jml_tampil >= 100;
                         view! {
                             <div class="flex items-center justify-between gap-2">
                                 <p class="text-[11px] text-on-surface-variant min-w-0">
@@ -392,6 +508,14 @@ fn AddMemberForm(
                                     }}
                                 </button>
                             </div>
+                            {awal_saja
+                                .then(|| {
+                                    view! {
+                                        <p class="text-[11px] text-on-surface-variant">
+                                            "Menampilkan 10 santri pertama. Cari nama/NIS atau pilih angkatan untuk melihat semuanya."
+                                        </p>
+                                    }
+                                })}
                             {mentok
                                 .then(|| {
                                     view! {
@@ -405,13 +529,30 @@ fn AddMemberForm(
                                     .into_iter()
                                     .map(|s| {
                                         let id = s.id;
-                                        let meta = format!("NIS: {} • {}", s.nis, s.class_name);
+                                        // Segmen kosong tak ikut tercetak — kelas "-" pada
+                                        // santri tanpa kelas hanya jadi tanda hubung
+                                        // menggantung.
+                                        // Angkatan ikut ditampilkan: begitu daftarnya
+                                        // disaring per angkatan, itulah yang dipakai
+                                        // pengelola untuk memastikan saringannya benar.
+                                        let mut bagian = vec![format!("NIS: {}", s.nis)];
+                                        if let Some(t) = s.entry_year {
+                                            bagian.push(format!("Angkatan {t}"));
+                                        }
+                                        match s.class_name.trim() {
+                                            "" | "-" => {}
+                                            k => bagian.push(k.to_string()),
+                                        }
+                                        let meta = bagian.join(" • ");
+                                        // Sudah punya kelas KBM DAN kelas tujuan juga KBM →
+                                        // mencentangnya berarti MEMINDAHKAN, bukan menambah.
+                                        let pindah_dari = kelas_kbm.then(|| s.kbm_class.clone()).flatten();
                                         let checked = move || selected.get().contains(&id);
                                         view! {
-                                            <label class="flex items-center gap-3 p-2.5 bg-surface-container rounded-lg anim-in cursor-pointer">
+                                            <label class="flex items-start gap-3 p-2.5 bg-surface-container rounded-lg anim-in cursor-pointer">
                                                 <input
                                                     type="checkbox"
-                                                    class="w-5 h-5 accent-primary cursor-pointer shrink-0"
+                                                    class="w-5 h-5 accent-primary cursor-pointer shrink-0 mt-0.5"
                                                     prop:checked=checked
                                                     on:change=move |_| toggle(id)
                                                 />
@@ -420,6 +561,17 @@ fn AddMemberForm(
                                                         {s.name}
                                                     </p>
                                                     <p class="text-[12px] text-on-surface-variant truncate">{meta}</p>
+                                                    {pindah_dari
+                                                        .map(|lama| {
+                                                            view! {
+                                                                <span class="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-warning/10 text-warning text-[11px] font-semibold">
+                                                                    <span class="material-symbols-outlined text-[14px]">
+                                                                        "swap_horiz"
+                                                                    </span>
+                                                                    {format!("Pindahkan dari KBM \"{lama}\"")}
+                                                                </span>
+                                                            }
+                                                        })}
                                                 </div>
                                             </label>
                                         }
@@ -433,10 +585,13 @@ fn AddMemberForm(
                             >
                                 {move || {
                                     let n = selected.get().len();
+                                    let pindah = perlu_pindah().len();
                                     if busy.get() {
                                         "Menambahkan…".to_string()
                                     } else if n == 0 {
                                         "Pilih santri dulu".to_string()
+                                    } else if pindah > 0 {
+                                        format!("Tambah {n} santri ({pindah} dipindahkan)")
                                     } else {
                                         format!("Tambah {n} santri")
                                     }
