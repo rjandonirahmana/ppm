@@ -180,6 +180,7 @@ fn StafBody(d: StafHome) -> impl IntoView {
                     ("grid_on", "Galeri", "/galeri"),
                     ("article", "Artikel", "/kelola-artikel"),
                     ("shield", "Kontrol", "/kontrol-pengguna"),
+                    ("manage_accounts", "User", "/manajemen-user"),
                     ("settings", "Setelan", "/setelan"),
                 ]
                     .into_iter()

@@ -1400,7 +1400,11 @@ pub async fn remove_member(pool: &Pool, class_id: i64, student_id: i64) -> Resul
 /// jadi anggota kelas itu (tak perlu ditambah lagi). Query pendek/kosong →
 /// daftar DEFAULT supaya form tak kosong sebelum mengetik.
 pub async fn search_students(pool: &Pool, q: &str, class_id: i64) -> Result<Vec<StudentSearchItem>> {
-    Ok(repo::students_not_in_class(pool, class_id, q, 20)
+    // 100, bukan 20. Batas lama membuat "centang semua" menyesatkan: pada
+    // daftar induk 512 santri, mencari "a" mengembalikan 20 baris sementara
+    // yang cocok ratusan — dan pengelola mengira sudah memilih semuanya.
+    // Halaman pemilih ini memang dimaksudkan untuk memilih banyak sekaligus.
+    Ok(repo::students_not_in_class(pool, class_id, q, 100)
         .await?
         .into_iter()
         .map(|s| StudentSearchItem {

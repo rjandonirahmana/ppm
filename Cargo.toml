@@ -222,6 +222,10 @@ debug = 1
 #
 # Dibiarkan `true` karena mematikannya memperlambat SETIAP rebuild saat
 # `cargo leptos watch`, sedangkan kegagalannya sesekali dan obatnya satu baris.
+#
+# DI CI justru sebaliknya: build di sana selalu dingin, jadi inkremental tak
+# menghemat apa pun sementara artefak basi tetap bisa lolos. Workflow sudah
+# menyetel CARGO_INCREMENTAL=0 — biarkan begitu.
 incremental = true
 
 [profile.dev.package."*"]

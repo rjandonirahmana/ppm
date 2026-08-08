@@ -78,7 +78,12 @@ pub async fn calendar_data(
                 title: r.title.unwrap_or_else(|| r.class_name.clone()),
                 class_name: r.class_name,
                 teacher: r.teacher.unwrap_or_else(|| "-".into()),
-                category: r.category.filter(|c| !c.is_empty()).unwrap_or_else(|| "-".into()),
+                // Dirapikan DI SERVER, bukan di markup: kategori jadwal teks
+                // bebas, dan sebelumnya masuk layar apa adanya — "non_kbm"
+                // lengkap dengan garis bawahnya, "piket"/"apel" huruf kecil.
+                category: crate::models::kategori_tampil(
+                    r.category.as_deref().unwrap_or_default(),
+                ),
                 status_kind: status_kind.into(),
                 status_label: status_label.into(),
             }

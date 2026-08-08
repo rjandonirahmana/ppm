@@ -188,6 +188,7 @@ pub fn App() -> impl IntoView {
     view! {
         <Title text="AFM SMART — Portal Absensi Santri" />
         <Router>
+            <PreviewMode />
             <FlatRoutes fallback=|| view! { <NotFoundPage /> }>
                 // Publik: beranda profil pesantren untuk pengunjung.
                 <Route path=path!("/") view=BerandaPage />
@@ -228,6 +229,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/tagihan") view=FinancePage />
                 <Route path=path!("/tagihan-saya") view=MyBillsPage />
                 <Route path=path!("/kontrol-pengguna") view=KontrolPenggunaPage />
+                <Route path=path!("/manajemen-user") view=ManajemenUserPage />
                 <Route path=path!("/setelan") view=SetelanPage />
                 <Route path=path!("/rekap-mingguan") view=RekapMingguanPage />
                 <Route path=path!("/students") view=StudentsPage />
@@ -252,4 +254,41 @@ pub fn App() -> impl IntoView {
             <DesktopSidebar />
         </Router>
     }
+}
+
+/// Pratinjau tampilan PONSEL di layar desktop — dinyalakan `?preview=mobile`.
+///
+/// Sejak mode sidebar desktop ada, layout ponsel hanya muncul di bawah 768px.
+/// Mengecilkan jendela peramban bukan pengganti yang setia: `pointer: fine`
+/// tetap berlaku (jadi aturan yang membedakan sentuh vs tetikus tak ikut
+/// berubah) dan tak ada emulasi sentuh sama sekali.
+///
+/// Komponen ini hanya MENYETEL satu atribut di `<body>`; seluruh perubahan
+/// tampilannya ada di CSS (`body[data-preview="mobile"]` di tailwind.css).
+/// Tanpa query param, tak ada satu pun aturan itu yang aktif — jadi aman ikut
+/// terpasang di produksi, dan berguna untuk memeriksa tampilan ponsel pada
+/// server sungguhan, bukan cuma di mesin pengembang.
+///
+/// Atributnya ditulis lewat Effect (hanya jalan di klien): menyentuh `<body>`
+/// saat render server tak ada gunanya — HTML-nya sudah terkirim — dan membaca
+/// URL saat SSR akan berbeda dari hasil hidrasi.
+#[component]
+fn PreviewMode() -> impl IntoView {
+    let query = leptos_router::hooks::use_query_map();
+    Effect::new(move |_| {
+        let mobile = query.with(|q| q.get("preview").as_deref() == Some("mobile"));
+        #[cfg(target_arch = "wasm32")]
+        if let Some(body) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.body())
+        {
+            if mobile {
+                let _ = body.set_attribute("data-preview", "mobile");
+            } else {
+                let _ = body.remove_attribute("data-preview");
+            }
+        }
+        let _ = mobile;
+    });
+    view! {}
 }

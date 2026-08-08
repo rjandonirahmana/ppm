@@ -67,10 +67,15 @@
 --
 -- Butuh hak pemilik tabel `point_logs` (ALTER TABLE ... DISABLE TRIGGER).
 -- Idempotent: dijalankan ulang tak menemukan selisih apa pun lagi.
+-- TIDAK memuat BEGIN/COMMIT sendiri: `scripts/migrate.sh` sudah membungkus tiap
+-- migrasi dalam SATU transaksi bersama pencatatannya di `schema_migrations`.
+-- Menutup transaksi dari dalam berkas membuat pencatatan itu jatuh di luarnya —
+-- dan "migrasi jalan tapi tak tercatat" persis kegagalan yang melahirkan skrip
+-- tersebut (lihat kepala scripts/migrate.sh). Kalau dijalankan manual dengan
+-- psql, bungkus sendiri: psql -1 -f berkas.sql
+--
 -- Jalankan setelah migrasi 1–71.
 -- =============================================================================
-
-BEGIN;
 
 ALTER TABLE point_logs DISABLE TRIGGER trg_point_logs_balance;
 
@@ -133,8 +138,6 @@ BEGIN
         RAISE EXCEPTION 'Masih ada % user yang saldonya tak sama dengan jumlah lognya — dibatalkan.', sisa;
     END IF;
 END $$;
-
-COMMIT;
 
 -- Verifikasi (harus 0 baris):
 --   SELECT u.id FROM users u

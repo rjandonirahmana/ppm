@@ -236,6 +236,46 @@ fn AddMemberForm(
         });
     };
 
+    // Id yang SEDANG TAMPIL (hasil pencarian saat ini).
+    let id_tampil = move || results.get().iter().map(|s| s.id).collect::<Vec<i64>>();
+    // Semua yang tampil sudah tercentang? Menentukan tombolnya jadi "centang
+    // semua" atau "hapus centang".
+    let semua_tampil_tercentang = move || {
+        let tampil = id_tampil();
+        !tampil.is_empty() && {
+            let dipilih = selected.get();
+            tampil.iter().all(|id| dipilih.contains(id))
+        }
+    };
+
+    // Centang/hapus-centang SELURUH hasil yang sedang tampil.
+    //
+    // Bekerja pada yang TAMPIL, bukan mengganti seluruh pilihan: pengelola
+    // sering mencari "2024", centang semua, lalu mencari "2025" dan centang
+    // semua lagi. Kalau tombol ini menimpa daftar pilihan, kelompok pertama
+    // hilang tanpa ada yang memberitahu — dan baru ketahuan setelah menekan
+    // Tambah. Jadi "centang semua" MENAMBAHKAN yang tampil, dan "hapus
+    // centang" hanya membuang yang tampil; pilihan dari pencarian lain tetap
+    // utuh.
+    let toggle_semua = move |_| {
+        let tampil = id_tampil();
+        if tampil.is_empty() {
+            return;
+        }
+        let hapus = semua_tampil_tercentang();
+        selected.update(|v| {
+            if hapus {
+                v.retain(|id| !tampil.contains(id));
+            } else {
+                for id in tampil {
+                    if !v.contains(&id) {
+                        v.push(id);
+                    }
+                }
+            }
+        });
+    };
+
     // Selalu memanggil server (query pendek/kosong → daftar default beberapa
     // santri), agar daftar tampil tanpa harus mengetik.
     let do_search = move || {
@@ -322,10 +362,44 @@ fn AddMemberForm(
                 let list = results.get();
                 (!list.is_empty())
                     .then(|| {
+                        let jml_tampil = list.len();
+                        // Server membatasi 100 hasil. Kalau mentok, katakan —
+                        // "centang semua" di sini hanya mencakup yang tampil,
+                        // dan pengelola berhak tahu ada yang tak ikut.
+                        let mentok = jml_tampil >= 100;
                         view! {
-                            <p class="text-[11px] text-on-surface-variant">
-                                "Centang santri (boleh banyak), lalu tekan Tambah."
-                            </p>
+                            <div class="flex items-center justify-between gap-2">
+                                <p class="text-[11px] text-on-surface-variant min-w-0">
+                                    {move || {
+                                        let n = selected.get().len();
+                                        if n == 0 {
+                                            "Centang santri (boleh banyak), lalu tekan Tambah.".to_string()
+                                        } else {
+                                            format!("{n} santri dipilih")
+                                        }
+                                    }}
+                                </p>
+                                <button
+                                    class="px-3 py-1.5 rounded-lg border border-outline-variant text-[11px] font-semibold text-on-surface hover:border-primary hover:text-primary transition-colors cursor-pointer shrink-0 whitespace-nowrap"
+                                    on:click=toggle_semua
+                                >
+                                    {move || {
+                                        if semua_tampil_tercentang() {
+                                            format!("Hapus centang ({jml_tampil})")
+                                        } else {
+                                            format!("Centang semua ({jml_tampil})")
+                                        }
+                                    }}
+                                </button>
+                            </div>
+                            {mentok
+                                .then(|| {
+                                    view! {
+                                        <p class="text-[11px] text-warning">
+                                            "Menampilkan 100 teratas — persempit pencarian bila santri yang dicari belum muncul."
+                                        </p>
+                                    }
+                                })}
                             <div class="space-y-2">
                                 {list
                                     .into_iter()

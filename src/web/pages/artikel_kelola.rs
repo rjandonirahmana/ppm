@@ -187,7 +187,7 @@ pub fn KelolaArtikelPage() -> impl IntoView {
                                                                                 editing.set(Some(Some(untuk_edit.clone())));
                                                                             }
                                                                         >
-                                                                            "Sunting"
+                                                                            "Edit"
                                                                         </button>
                                                                         <button
                                                                             class="px-3 py-1.5 rounded-lg border border-error/40 text-body-sm font-semibold text-error cursor-pointer"
@@ -214,7 +214,7 @@ pub fn KelolaArtikelPage() -> impl IntoView {
                     editing
                         .get()
                         .map(|slot| {
-                            let judul = if slot.is_some() { "Sunting Artikel" } else { "Artikel Baru" };
+                            let judul = if slot.is_some() { "Edit Artikel" } else { "Artikel Baru" };
                             view! {
                                 <Sheet title=judul on_close=move || editing.set(None)>
                                     <ArtikelForm

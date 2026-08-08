@@ -91,11 +91,20 @@ async fn alur_siaran_chunk_data_download() {
         // CI. Bila CI kelak menyalakan service Redis, cabang ini tak pernah
         // tersentuh dan boleh dihapus.
         Err(e) => {
+            // Gerbangnya `PPM_REQUIRE_REDIS`, BUKAN `CI`. Versi pertama memakai
+            // `CI` dan itu terlalu kasar: banyak alat (task runner, beberapa
+            // terminal, editor) menyetel `CI=1` untuk urusan lain, sehingga
+            // uji ini gagal di mesin pengembang yang memang tak menjalankan
+            // Redis — dengan pesan tentang CI yang tak masuk akal di sana.
+            //
+            // Variabel eksplisit hanya diset oleh workflow yang MEMANG
+            // menyediakan service Redis. Jadi maknanya tepat: "di sini Redis
+            // dijanjikan ada; kalau tak ada, itu kegagalan sungguhan."
             assert!(
-                std::env::var("CI").is_err(),
-                "Redis lokal tak tersedia di CI ({e}) — uji ini WAJIB berjalan di sana. \
-                 Tambahkan service Redis ke workflow, atau tandai uji ini #[ignore] \
-                 secara sadar."
+                std::env::var("PPM_REQUIRE_REDIS").is_err(),
+                "PPM_REQUIRE_REDIS diset tapi Redis tak bisa dihubungi ({e}). \
+                 Di CI berarti service Redis-nya mati/salah port — uji ini WAJIB \
+                 berjalan di sana, bukan dilewati diam-diam."
             );
             eprintln!(
                 "SKIP alur_siaran_chunk_data_download: Redis lokal tak tersedia ({e}). \

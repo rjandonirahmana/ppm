@@ -177,7 +177,7 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
                         {initial}
                     </div>
                     <div>
-                        <p class="text-body-sm text-on-surface-variant">"Assalamualaikum,"</p>
+                        <p class="text-body-sm text-on-surface-variant">"Assalamu'alaikum,"</p>
                         <p class="text-headline-sm text-on-background">{first_name} "!"</p>
                     </div>
                 </div>

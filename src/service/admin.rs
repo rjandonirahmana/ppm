@@ -167,17 +167,10 @@ pub async fn delete_rfid_device(pool: &Pool, id: i64) -> Result<()> {
     Ok(())
 }
 
-fn role_label(role: &str) -> &'static str {
-    match role {
-        "admin" => "Admin",
-        "teacher" => "Guru",
-        "dewan_guru" => "Dewan Guru",
-        "supervisor" => "Pamong",
-        "santri" => "Santri",
-        "parent" => "Orang Tua",
-        _ => "Pengguna",
-    }
-}
+// `role_label` pindah ke `models` supaya repository & komponen memakai daftar
+// yang SAMA. Versi lama di sini tak mengenal "ketua" maupun "santri_finance" —
+// keduanya tampil sebagai "Pengguna" di halaman kontrol pengguna.
+use crate::models::role_label;
 
 fn action_label(action: &str) -> String {
     match action {
@@ -237,8 +230,8 @@ pub async fn user_control_data(
     Ok(UserControlData { can_manage: true, total, santri_count, staff_count, inactive_count, users })
 }
 
-pub async fn recent_activity(pool: &Pool, limit: i64) -> Result<Vec<ActivityLogItem>> {
-    Ok(repo::recent_logs(pool, limit)
+pub async fn recent_activity(pool: &Pool, hari: i32, limit: i64) -> Result<Vec<ActivityLogItem>> {
+    Ok(repo::recent_logs(pool, hari, limit)
         .await?
         .into_iter()
         .map(|l| ActivityLogItem {

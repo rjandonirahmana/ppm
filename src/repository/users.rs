@@ -568,3 +568,200 @@ pub async fn search_users_for_card(pool: &Pool, q: &str, limit: i64) -> Result<V
         })
         .collect())
 }
+
+// ── Manajemen User (/manajemen-user, admin & ketua) ──────────────────────────
+
+/// Daftar user untuk halaman manajemen: saring status aktif, peran, dan kata
+/// kunci (nama / NIS / nomor HP).
+///
+/// `aktif`: `Some(true)` hanya yang aktif, `Some(false)` hanya yang nonaktif,
+/// `None` semuanya. Halaman ini ADA justru karena yang nonaktif tak muncul di
+/// mana pun lagi — seluruh aplikasi menyaring `is_active = TRUE`, sebagaimana
+/// mestinya, sehingga 512 santri hasil impor tak terlihat sampai diaktifkan.
+///
+/// Pencariannya `ILIKE` tanpa index khusus: daftarnya ribuan baris, bukan
+/// jutaan, dan menambah index trigram untuk itu berarti menanggung biaya tulis
+/// di setiap perubahan user demi satu layar yang dibuka pengelola sesekali.
+pub async fn list_users_managed(
+    pool: &Pool,
+    aktif: Option<bool>,
+    role_filter: Option<&str>,
+    angkatan: Option<i16>,
+    cari: &str,
+    limit: i64,
+) -> Result<Vec<crate::models::ManagedUser>> {
+    let c = pool.get().await?;
+    // `$n IS NULL OR …` — satu pernyataan untuk semua kombinasi filter, jadi
+    // tak ada empat varian SQL yang harus dijaga tetap sepakat.
+    let pola = if cari.trim().is_empty() {
+        String::new()
+    } else {
+        format!("%{}%", cari.trim())
+    };
+    let pola_opt = (!pola.is_empty()).then_some(pola);
+    let rows = c
+        .query(
+            "SELECT u.id, u.full_name, u.role, u.is_active, u.nis, u.phone_number, \
+                    u.entry_year, u.gender, u.campus, u.major, \
+                    u.mubalegh_status, u.pendidikan_status, u.points, \
+                    EXISTS (SELECT 1 FROM point_logs pl WHERE pl.user_id = u.id) \
+               FROM users u \
+              WHERE ($1::bool IS NULL OR u.is_active = $1) \
+                AND ($2::text IS NULL OR u.role = $2) \
+                AND ($3::text IS NULL OR u.full_name ILIKE $3 \
+                     OR COALESCE(u.nis, '') ILIKE $3 \
+                     OR COALESCE(u.phone_number, '') ILIKE $3) \
+                AND ($4::int2 IS NULL OR u.entry_year = $4) \
+              ORDER BY u.is_active DESC, u.full_name \
+              LIMIT $5",
+            &[&aktif, &role_filter, &pola_opt, &angkatan, &limit],
+        )
+        .await
+        .context("list_users_managed")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let role: String = r.get(2);
+            crate::models::ManagedUser {
+                id: r.get(0),
+                full_name: r.get(1),
+                role_label: crate::models::role_label(&role).to_string(),
+                role,
+                is_active: r.get(3),
+                nis: r.get(4),
+                phone_number: r.get(5),
+                entry_year: r.get(6),
+                gender: r.get(7),
+                campus: r.get(8),
+                major: r.get(9),
+                mubalegh_status: r.get(10),
+                pendidikan_status: r.get(11),
+                points: r.get(12),
+                has_point_logs: r.get(13),
+            }
+        })
+        .collect())
+}
+
+/// Tahun angkatan yang BENAR-BENAR ada di data, terbaru dulu.
+///
+/// Diambil dari database, bukan rentang tahun yang dikarang di klien: daftar
+/// induk pondok ini membentang 2010–2025 dan akan terus bertambah, sedangkan
+/// rentang tetap di kode pasti basi tanpa ada yang menyadarinya — dan menawarkan
+/// tahun yang tak berpenghuni hanya menghasilkan hasil kosong yang
+/// membingungkan.
+pub async fn angkatan_tersedia(pool: &Pool) -> Result<Vec<i16>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT DISTINCT entry_year FROM users \
+              WHERE entry_year IS NOT NULL ORDER BY entry_year DESC",
+            &[],
+        )
+        .await
+        .context("angkatan_tersedia")?;
+    Ok(rows.into_iter().map(|r| r.get(0)).collect())
+}
+
+/// Aktifkan user; santri yang BELUM PUNYA catatan poin sekalian diberi saldo
+/// awal. Return `(berhasil, saldo_diberikan)`.
+///
+/// ── KENAPA SALDO AWAL DITENTUKAN DARI ADA-TIDAKNYA LOG ───────────────────────
+/// Dua hal berbeda sama-sama berakhir di sini:
+///   • santri dari daftar induk yang baru pertama kali diaktifkan — ia memang
+///     harus mulai dari 300;
+///   • santri yang sempat dinonaktifkan lalu diaktifkan lagi — saldonya masih
+///     tersimpan, dan memberinya 300 lagi berarti menghadiahi kepergiannya.
+/// Yang membedakan keduanya bukan status aktifnya, melainkan apakah ia sudah
+/// punya riwayat poin sama sekali.
+///
+/// Saldonya ditulis sebagai baris `point_logs`, bukan dengan menyetel
+/// `users.points`: trigger `trg_point_logs_balance` (migrasi 32) yang
+/// memindahkan angkanya, sehingga `points = SUM(delta)` tetap benar dan yang
+/// bersangkutan tak muncul di laporan rekonsiliasi saldo.
+pub async fn activate_user(pool: &Pool, user_id: i64, saldo_awal: i32) -> Result<(bool, bool)> {
+    let mut c = pool.get().await?;
+    let tx = c.transaction().await.context("activate_user tx")?;
+    let n = tx
+        .execute(
+            "UPDATE users SET is_active = TRUE, updated_at = NOW() \
+             WHERE id = $1 AND is_active = FALSE",
+            &[&user_id],
+        )
+        .await
+        .context("activate_user")?;
+    if n == 0 {
+        tx.rollback().await.ok();
+        return Ok((false, false));
+    }
+    // Hanya santri, dan hanya yang benar-benar belum punya riwayat poin.
+    let row = tx
+        .query_opt(
+            "INSERT INTO point_logs (user_id, delta, reason, category) \
+             SELECT u.id, $2, 'Saldo awal santri', 'other' \
+               FROM users u \
+              WHERE u.id = $1 \
+                AND u.role IN ('santri', 'santri_finance') \
+                AND NOT EXISTS (SELECT 1 FROM point_logs pl WHERE pl.user_id = u.id) \
+             RETURNING 1",
+            &[&user_id, &saldo_awal],
+        )
+        .await
+        .context("activate_user saldo awal")?;
+    tx.commit().await.context("activate_user commit")?;
+    Ok((true, row.is_some()))
+}
+
+/// Ubah detail profil satu user (halaman manajemen).
+///
+/// Kolom teks kosong disimpan sebagai NULL, bukan string kosong: `nis` dan
+/// `phone_number` UNIK, dan dua baris ber-string-kosong akan bertabrakan
+/// padahal maksudnya sama-sama "belum diisi". NULL tak pernah bertabrakan.
+pub async fn update_user_profile(
+    pool: &Pool,
+    user_id: i64,
+    p: &crate::models::ProfilEdit,
+) -> Result<bool> {
+    let kosong_jadi_null = |s: &str| {
+        let t = s.trim();
+        (!t.is_empty()).then(|| t.to_string())
+    };
+    let nama = p.full_name.trim();
+    if nama.is_empty() {
+        anyhow::bail!("Nama tidak boleh kosong.");
+    }
+    let nis = kosong_jadi_null(&p.nis);
+    let hp = kosong_jadi_null(&p.phone_number);
+    let gender = kosong_jadi_null(&p.gender);
+    let campus = kosong_jadi_null(&p.campus);
+    let major = kosong_jadi_null(&p.major);
+    let mub = kosong_jadi_null(&p.mubalegh_status);
+    let pen = kosong_jadi_null(&p.pendidikan_status);
+
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE users SET full_name = $2, nis = $3, phone_number = $4, \
+                    entry_year = $5, gender = $6, campus = $7, major = $8, \
+                    mubalegh_status = $9, pendidikan_status = $10, updated_at = NOW() \
+             WHERE id = $1",
+            &[
+                &user_id, &nama, &nis, &hp, &p.entry_year, &gender, &campus, &major, &mub, &pen,
+            ],
+        )
+        .await
+        .map_err(|e| {
+            // NIS/HP unik: sampaikan sebagai kalimat, bukan galat Postgres mentah.
+            if e.code() == Some(&tokio_postgres::error::SqlState::UNIQUE_VIOLATION) {
+                let apa = e
+                    .as_db_error()
+                    .and_then(|d| d.constraint())
+                    .map(|c| if c.contains("phone") { "Nomor HP" } else { "NIS" })
+                    .unwrap_or("NIS/Nomor HP");
+                anyhow::anyhow!("{apa} itu sudah dipakai user lain.")
+            } else {
+                anyhow::Error::new(e).context("update_user_profile")
+            }
+        })?;
+    Ok(n > 0)
+}

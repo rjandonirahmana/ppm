@@ -2,8 +2,29 @@
  *  content = sumber kelas untuk purge → hanya kelas yang DIPAKAI ikut ke CSS.
  *  Tema Material-3 (dulu disuntik via Play CDN <script>), kini di sini. */
 module.exports = {
+  // ⚠️ JANGAN HAPUS BARIS INI tanpa membereskan dulu kelas `dark:` di markup.
+  //
+  // Sekilas ia tampak konfigurasi mati: `tailwind.css` menetapkan
+  // `:root { color-scheme: light }` dan paletnya hanya punya varian terang.
+  // Tapi ADA 9 utility `dark:` yang benar-benar terpakai — semuanya di mockup
+  // `src/web/pages/html/*.html`, yang MASIH HIDUP: `design_pages.rs`
+  // menyuntikkannya lewat `include_str!` dan halaman-halaman itu punya rute
+  // sendiri (halaqah, rekaman, koneksi-ortu, …).
+  //
+  // Dengan `"class"`, utility itu hanya menyala bila ada leluhur `.dark` —
+  // dan tak ada satu pun di aplikasi ini, jadi efektifnya mati. Hapus barisnya
+  // dan Tailwind v4 jatuh ke `prefers-color-scheme`: pengguna yang ponselnya
+  // bermode gelap tiba-tiba mendapat nav & header gelap di halaman yang
+  // sisanya terang. Bukan mode gelap — separuh mode gelap.
+  //
+  // Urutan yang benar bila mode gelap mau dikerjakan sungguhan: siapkan token
+  // gelap untuk SELURUH palet di bawah, baru ubah baris ini.
   darkMode: "class",
   content: ["./src/**/*.rs", "./src/**/*.html"],
+  // Tak ada `safelist`: seluruh kelas ditulis literal di markup Rust — tak ada
+  // yang dirakit lewat `format!("text-{…}")`, jadi purge tak bisa membuang
+  // kelas yang sebenarnya terpakai. Kalau suatu saat menambah kelas dinamis,
+  // safelist-nya WAJIB ikut ditambah atau gayanya hilang senyap di produksi.
   theme: {
     extend: {
       colors: {

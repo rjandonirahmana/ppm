@@ -1,39 +1,37 @@
 //! web/pages/kontrol_pengguna.rs — "User Control" (/kontrol-pengguna, migrasi
 //! 17: activity_logs). Nav item ini tampil di SEMUA peran staf (uniform per
-//! components::nav_for), tapi halaman + server fn tetap admin-only — non-admin
-//! yang mengklik dari nav melihat kartu "Khusus Admin", BUKAN dilempar ke
-//! /login (mereka toh sudah login sah, cuma beda peran).
+//! components::nav_for), tapi kendali kelolanya admin-only — non-admin yang
+//! mengklik dari nav melihat kartu "Khusus Admin", BUKAN dilempar ke /login
+//! (mereka toh sudah login sah, cuma beda peran).
+//!
+//! CAKUPAN: perangkat RFID, pemasangan kartu, undangan registrasi, dan jejak
+//! aktivitas. DAFTAR PENGGUNA sudah TIDAK di sini — pindah ke
+//! `/manajemen-user`, yang memang khusus tentang orang (cari, sunting profil,
+//! aktifkan kembali) dan terbuka untuk ketua. Menyimpan dua daftar pengguna di
+//! dua halaman berarti dua tempat yang harus terus sepakat tentang apa yang
+//! boleh diubah siapa.
 
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{ActivityLogItem, RfidDeviceItem, SessionUser, UserControlData, UserRow};
+use crate::models::{ActivityLogItem, RfidDeviceItem, SessionUser};
 use crate::web::api::{
-    activity_log_data, assign_card_action, change_user_role_action, create_invite_action,
-    create_rfid_device_action, pending_cards_data, search_users_for_card,
-    delete_rfid_device_action, regenerate_rfid_key_action, rfid_devices_list,
-    toggle_user_active_action, update_rfid_device_action, user_control_data,
+    activity_log_data, assign_card_action, create_invite_action, create_rfid_device_action,
+    delete_rfid_device_action, pending_cards_data, regenerate_rfid_key_action, rfid_devices_list,
+    search_users_for_card, update_rfid_device_action, user_control_data,
 };
 use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
 
-const ROLE_OPTIONS: &[(&str, &str)] = &[
-    ("admin", "Admin"),
-    ("ketua", "Ketua"),
-    ("dewan_guru", "Dewan Guru"),
-    ("supervisor", "Pamong"),
-    ("santri", "Santri"),
-    ("santri_finance", "Santri (Finance)"),
-    ("parent", "Orang Tua"),
-];
-
 #[component]
 pub fn KontrolPenggunaPage() -> impl IntoView {
-    let role_filter = RwSignal::new(String::new());
-    let data = Resource::new(
-        move || role_filter.get(),
-        |f| async move { user_control_data(f).await },
-    );
-    let logs = Resource::new(|| (), |_| async move { activity_log_data().await });
+    // Hak kelola tetap dibaca dari server (bukan ditebak dari peran di klien).
+    // Filternya kosong: yang dipakai dari respons ini hanya `can_manage`.
+    let data = Resource::new(|| (), |_| async move { user_control_data(String::new()).await });
+
+    // Rentang log. Bawaan 3 HARI — cukup untuk "apa yang baru terjadi" tanpa
+    // menyeret ribuan baris lama yang tak pernah dibaca.
+    let hari = RwSignal::new(3_i32);
+    let logs = Resource::new(move || hari.get(), |h| async move { activity_log_data(h).await });
 
     Effect::new(move |_| {
         if let Some(Err(e)) = data.get() {
@@ -55,14 +53,8 @@ pub fn KontrolPenggunaPage() -> impl IntoView {
                 <div class="px-5 pt-5 space-y-4 stagger">
                     <Suspense fallback=|| {
                         view! {
-                            <div class="animate-pulse space-y-3">
-                                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
-                                    <div class="h-20 bg-surface-container rounded-2xl"></div>
-                                    <div class="h-20 bg-surface-container rounded-2xl hidden md:block"></div>
-                                    <div class="h-20 bg-surface-container rounded-2xl hidden md:block"></div>
-                                </div>
-                                <div class="h-64 bg-surface-container rounded-2xl"></div>
+                            <div class="animate-pulse">
+                                <div class="h-20 bg-surface-container rounded-2xl"></div>
                             </div>
                         }
                     }>
@@ -71,23 +63,9 @@ pub fn KontrolPenggunaPage() -> impl IntoView {
                                 .map(|res| match res {
                                     Ok(d) => {
                                         // Guru & pamong boleh MEMBUKA halaman ini untuk
-                                        // membaca jejak aktivitas, tapi seluruh kendali
-                                        // pengguna terkunci — dan daftar penggunanya
-                                        // memang tak dikirim server untuk mereka.
-                                        let boleh = d.can_manage;
-                                        view! {
-                                            {boleh
-                                                .then(|| {
-                                                    view! {
-                                                        <Body
-                                                            d=d.clone()
-                                                            role_filter=role_filter
-                                                            refetch=move || data.refetch()
-                                                        />
-                                                    }
-                                                })}
-                                            {(!boleh).then(|| view! { <HanyaLogCard /> })}
-                                        }
+                                        // membaca jejak aktivitas, tapi kendali perangkat
+                                        // & kartu terkunci.
+                                        view! { {(!d.can_manage).then(|| view! { <HanyaLogCard /> })} }
                                             .into_any()
                                     }
                                     Err(e) => {
@@ -121,7 +99,8 @@ pub fn KontrolPenggunaPage() -> impl IntoView {
                             })
                     }}
 
-                    // ── Activity Logs ────────────────────────────────────────
+                    // ── Jejak Aktivitas ──────────────────────────────────────
+                    <RentangLog hari=hari />
                     <Suspense fallback=|| ()>
                         {move || {
                             logs.get()
@@ -168,171 +147,58 @@ fn HanyaLogCard() -> impl IntoView {
     }
 }
 
+/// Penyaring rentang jejak aktivitas.
+///
+/// Bawaannya 3 hari — pertanyaan yang hampir selalu diajukan di halaman ini
+/// adalah "apa yang baru saja terjadi", bukan "apa yang pernah terjadi".
+/// Rentang panjang tetap disediakan untuk menelusuri kejadian lama, dan
+/// dibatasi di server (lihat `activity_log_data`) supaya angka besar dari
+/// pemanggil langsung tak memindai seluruh tabel.
+///
+/// "Semesteran" = 180 hari, bukan dihitung dari `academic_semesters`: log
+/// aktivitas tak terikat semester akademik mana pun, dan menautkannya ke sana
+/// hanya membuat rentangnya berpindah-pindah setiap semester berganti.
 #[component]
-fn Body(
-    d: UserControlData,
-    role_filter: RwSignal<String>,
-    refetch: impl Fn() + Copy + Send + 'static,
-) -> impl IntoView {
-    let users = d.users;
+fn RentangLog(hari: RwSignal<i32>) -> impl IntoView {
+    const PILIHAN: &[(i32, &str)] = &[
+        (1, "Hari ini"),
+        (3, "3 hari"),
+        (7, "7 hari"),
+        (30, "Bulanan"),
+        (180, "Semester"),
+    ];
     view! {
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div class="ppm-card p-4">
-                <span class="material-symbols-outlined text-primary">"group"</span>
-                <p class="text-2xl font-bold text-on-background mt-1" data-count=d.total.to_string()>
-                    {d.total}
-                </p>
-                <p class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">"Total User"</p>
-            </div>
-            <div class="ppm-card p-4">
-                <span class="material-symbols-outlined text-primary">"school"</span>
-                <p class="text-2xl font-bold text-on-background mt-1" data-count=d.santri_count.to_string()>
-                    {d.santri_count}
-                </p>
-                <p class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">"Santri"</p>
-            </div>
-            <div class="ppm-card p-4">
-                <span class="material-symbols-outlined text-primary">"supervisor_account"</span>
-                <p class="text-2xl font-bold text-on-background mt-1" data-count=d.staff_count.to_string()>
-                    {d.staff_count}
-                </p>
-                <p class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">"Guru & Pamong"</p>
-            </div>
-            <div class="ppm-card p-4">
-                <span class="material-symbols-outlined text-error">"person_off"</span>
-                <p class="text-2xl font-bold text-on-background mt-1" data-count=d.inactive_count.to_string()>
-                    {d.inactive_count}
-                </p>
-                <p class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">"Nonaktif"</p>
-            </div>
-        </div>
-
-        // ── Filter peran ─────────────────────────────────────────────────────
-        <div class="flex gap-2 overflow-x-auto pb-1">
-            <RoleChip filter=role_filter value="" label="Semua Peran" />
-            {ROLE_OPTIONS
-                .iter()
-                .map(|(v, l)| view! { <RoleChip filter=role_filter value=*v label=*l /> })
-                .collect_view()}
-        </div>
-
-        // ── Tabel user ───────────────────────────────────────────────────────
-        {if users.is_empty() {
-            view! {
-                <div class="ppm-empty space-y-1.5">
-                    <span class="material-symbols-outlined text-4xl text-on-surface-variant/60">"group_off"</span>
-                    <p class="text-body-md font-semibold text-on-background">"Tidak ada pengguna"</p>
-                </div>
-            }
-                .into_any()
-        } else {
-            view! {
-                <div class="ppm-card divide-y divide-outline-variant/40">
-                    {users
-                        .into_iter()
-                        .map(|u| view! { <UserRowView u=u refetch=refetch /> })
+        <div class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-on-surface-variant text-[20px] shrink-0">
+                "history"
+            </span>
+            // Digeser mendatar di layar sempit: lima pilihan tak muat sebagai
+            // tab berbagi lebar tanpa labelnya jadi terpotong.
+            <div class="flex-1 min-w-0 overflow-x-auto">
+                <div class="flex gap-1 bg-surface-container rounded-xl p-1 w-max min-w-full">
+                    {PILIHAN
+                        .iter()
+                        .map(|(n, label)| {
+                            let n = *n;
+                            view! {
+                                <button
+                                    class=move || {
+                                        if hari.get() == n {
+                                            "px-3 py-2 rounded-lg bg-surface text-on-background shadow-sm text-body-sm font-semibold whitespace-nowrap cursor-pointer"
+                                        } else {
+                                            "px-3 py-2 rounded-lg text-on-surface-variant text-body-sm font-semibold whitespace-nowrap cursor-pointer"
+                                        }
+                                    }
+                                    aria-pressed=move || (hari.get() == n).to_string()
+                                    on:click=move |_| hari.set(n)
+                                >
+                                    {*label}
+                                </button>
+                            }
+                        })
                         .collect_view()}
                 </div>
-            }
-                .into_any()
-        }}
-    }
-}
-
-#[component]
-fn RoleChip(filter: RwSignal<String>, value: &'static str, label: &'static str) -> impl IntoView {
-    let cls = move || {
-        if filter.get() == value {
-            "px-4 py-2 rounded-full bg-secondary-container text-primary text-body-sm font-semibold whitespace-nowrap shrink-0 press"
-        } else {
-            "px-4 py-2 rounded-full bg-surface-container-lowest border border-outline-variant/60 text-on-surface-variant text-body-sm whitespace-nowrap shrink-0 press"
-        }
-    };
-    view! {
-        <button class=cls on:click=move |_| filter.set(value.to_string())>
-            {label}
-        </button>
-    }
-}
-
-#[component]
-fn UserRowView(u: UserRow, refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
-    let id = u.id;
-    let busy = RwSignal::new(false);
-    let is_active = u.is_active;
-    let initial = u.name.chars().next().unwrap_or('U').to_string();
-
-    let toggle = move |_| {
-        if busy.get_untracked() {
-            return;
-        }
-        busy.set(true);
-        leptos::task::spawn_local(async move {
-            let _ = toggle_user_active_action(id, !is_active).await;
-            busy.set(false);
-            refetch();
-        });
-    };
-    let change_role = move |ev: leptos::ev::Event| {
-        let new_role = event_target_value(&ev);
-        if busy.get_untracked() {
-            return;
-        }
-        busy.set(true);
-        leptos::task::spawn_local(async move {
-            let _ = change_user_role_action(id, new_role).await;
-            busy.set(false);
-            refetch();
-        });
-    };
-
-    let status_dot = if is_active { "bg-success" } else { "bg-error" };
-    let status_text = if is_active {
-        "text-success"
-    } else {
-        "text-error opacity-70"
-    };
-    let toggle_icon = if is_active { "block" } else { "check_circle" };
-    let toggle_label = if is_active { "Nonaktifkan" } else { "Aktifkan" };
-    let cur_role = u.role.clone();
-
-    view! {
-        <div class="p-3.5 flex items-center gap-3">
-            <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary shrink-0">
-                {initial}
             </div>
-            <div class="flex-1 min-w-0">
-                <p class="text-body-md font-semibold text-on-background truncate">{u.name}</p>
-                <p class="text-body-sm text-on-surface-variant truncate">{u.contact}</p>
-                <div class="flex items-center gap-1.5 mt-0.5">
-                    <span class=format!("w-1.5 h-1.5 rounded-full {status_dot}")></span>
-                    <span class=format!("text-[11px] font-medium {status_text}")>
-                        {if is_active { "Aktif" } else { "Nonaktif" }}
-                    </span>
-                </div>
-            </div>
-            <select
-                class="bg-surface-container border-0 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-on-surface shrink-0 disabled:opacity-50"
-                disabled=move || busy.get()
-                on:change=change_role
-            >
-                {ROLE_OPTIONS
-                    .iter()
-                    .map(|(v, l)| {
-                        let sel = *v == cur_role;
-                        view! { <option value=*v selected=sel>{*l}</option> }
-                    })
-                    .collect_view()}
-            </select>
-            <button
-                class="w-9 h-9 rounded-lg bg-surface-container text-on-surface-variant flex items-center justify-center shrink-0 press disabled:opacity-50"
-                disabled=move || busy.get()
-                on:click=toggle
-                aria-label=toggle_label
-                title=toggle_label
-            >
-                <span class="material-symbols-outlined text-[20px]">{toggle_icon}</span>
-            </button>
         </div>
     }
 }

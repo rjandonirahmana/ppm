@@ -27,11 +27,29 @@ RUN apk add --no-cache \
     zlib-dev zlib-static \
     curl binaryen
 
-RUN rustup target add wasm32-unknown-unknown
+# ── Kunci versi toolchain ─────────────────────────────────────────────────────
+# `rust-toolchain.toml` DISALIN DULUAN, sebelum apa pun yang memanggil cargo.
+# Tanpa ini rustup memakai nightly bawaan image — yang bergerak tiap kali image
+# di-rebuild — sehingga BINARI PRODUKSI dibangun compiler yang berbeda dari yang
+# dipakai di laptop dan di CI. Perbedaan itu tak terlihat sampai satu regresi
+# nightly menghentikan deploy tanpa satu baris kode pun berubah, dan tak ada
+# yang bisa mereproduksinya di tempat lain.
+#
+# Berkas ini juga yang menyatakan `targets = ["wasm32-unknown-unknown"]`, jadi
+# rustup memasangnya sendiri — `rustup target add` tak lagi diperlukan.
+# Konsekuensi yang diterima: satu toolchain tambahan diunduh di atas bawaan
+# image. Itu harga yang jauh lebih murah daripada build yang tak reprodusibel.
+COPY rust-toolchain.toml ./
+RUN rustup show
 
 # cargo-leptos sebagai layer sendiri (rerun hanya saat base/toolchain berubah).
+# Versi DIPIN: `--locked` hanya mengunci dependensi cargo-leptos, bukan versi
+# cargo-leptos itu sendiri. Tanpa `--version`, build bulan depan bisa memakai
+# rilis baru yang mengubah tata letak keluaran (nama file /pkg, lokasi hash.txt)
+# — persis kelas kegagalan yang sudah pernah menimpa proyek ini, lihat catatan
+# di bawah. Samakan dengan versi yang dipakai pengembang (`cargo leptos --version`).
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
-    cargo install cargo-leptos --locked
+    cargo install cargo-leptos --locked --version 0.3.6
 
 ENV OPENSSL_STATIC=1
 ENV PKG_CONFIG_ALLOW_CROSS=1
@@ -69,12 +87,22 @@ RUN touch src/main.rs src/lib.rs
 # cargo leptos build → WASM (hydrate) + binari SSR sekaligus. Artefak dep di
 # cache id=target → hanya source berubah yang recompile.
 #
-# CATATAN: `hash-files = true` (Cargo.toml) → nama file /pkg ber-hash
-# (`ppm.<hash>.wasm`, `ppm.<hash>.js`) + `hash.txt` (di root site, BUKAN /pkg).
-# Runtime memetakan nama via hash.txt (HydrationScripts/HashedStylesheet). JANGAN
-# menormalkan nama & jangan mengasumsikan `*_bg.wasm` atau lokasi hash.txt (dulu
-# dua-duanya bikin build gagal padahal cargo sukses). Sanity check: ada file
-# .wasm apa pun di /pkg.
+# CATATAN: `hash-files = FALSE` (Cargo.toml) → nama file /pkg TETAP
+# (`ppm.wasm`, `ppm.js`, `ppm.css`) dan TIDAK ada `hash.txt`.
+#
+# Komentar di sini dulu menyatakan sebaliknya (`hash-files = true`, nama
+# ber-hash, runtime memetakan lewat hash.txt) — bertentangan dengan Cargo.toml
+# di paket yang sama. Siapa pun yang menyiapkan deploy dari komentar ini akan
+# menunggu berkas ber-hash yang tak pernah ada. Dokumentasi yang berbohong lebih
+# berbahaya daripada tak ada dokumentasi (pelajaran yang sudah ditulis sendiri
+# di migrasi 49).
+#
+# KONSEKUENSI nama tetap, dan ini yang penting saat deploy: nama berkas TIDAK
+# berubah antar rilis, jadi browser bisa menyajikan /pkg lama dari cache.
+# Karena itu rute /pkg disajikan `no-cache, must-revalidate` (lihat main.rs) —
+# JANGAN diubah jadi `immutable` selama hash-files masih false.
+#
+# Sanity check di bawah: ada berkas .wasm di /pkg.
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=target,target=/app/target \
     cargo leptos build --release \
@@ -83,9 +111,26 @@ RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     && test -f /app/site-out/pkg/*.wasm || (echo "ERROR: WASM file not found" && exit 1)
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
+# KENAPA Debian, padahal builder-nya Alpine: binari dari target musl bersifat
+# STATIS (ditambah OPENSSL_STATIC=1 di atas), jadi ia berjalan di distro mana
+# pun — pilihan runtime jadi bebas. Debian dipilih karena `curl` untuk
+# HEALTHCHECK dan ca-certificates-nya sudah teruji di sini.
+#
+# Ini keputusan sadar, bukan kelalaian: alternatifnya `alpine:3.x` (image lebih
+# kecil, selaras builder). Yang TIDAK boleh dilakukan adalah mengganti target
+# builder ke glibc sambil membiarkan runtime Alpine — binari glibc tak jalan di
+# musl, dan gagalnya baru terlihat saat container start.
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
+
+# ── Jalan sebagai NON-ROOT ────────────────────────────────────────────────────
+# Proses ini memegang kredensial DB, S3/RustFS, WAHA, dan token Telegram, serta
+# menulis berkas ke ./recordings dari data yang dikirim pengguna. Berjalan
+# sebagai root berarti setiap celah — RCE, path traversal saat menulis rekaman,
+# atau container escape — langsung mendapat root. UID tetap (10001) supaya
+# kepemilikan berkas pada volume ter-mount tetap sama antar rebuild.
+RUN useradd --system --uid 10001 --create-home --shell /usr/sbin/nologin ppm
 
 WORKDIR /app
 
@@ -95,8 +140,11 @@ COPY --from=builder /app/site-out  ./target/site
 # [package.metadata.leptos] utk site-addr & site-root. Hilang → panic startup.
 COPY --from=builder /app/Cargo.toml ./Cargo.toml
 
-# Direktori rekaman siaran (default RECORDINGS_DIR=./recordings). Wajib writable.
-RUN mkdir -p /app/recordings
+# Direktori rekaman siaran (default RECORDINGS_DIR=./recordings). Wajib writable
+# OLEH USER `ppm` — bukan root, lihat catatan user di atas.
+RUN mkdir -p /app/recordings && chown -R ppm:ppm /app
+
+USER ppm
 
 EXPOSE 3000
 
@@ -104,7 +152,14 @@ ENV LEPTOS_SITE_ROOT=target/site
 ENV LEPTOS_ENV=PROD
 
 # /healthz murah (tanpa query DB) → tak "unhealthy" saat DB sibuk.
-HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
+#
+# start-period 45s (dulu 20s): selama jendela ini kegagalan probe TIDAK dihitung
+# sebagai unhealthy. Startup menyambung ke Postgres & Redis, dan pada instalasi
+# baru `ensure_seed_admin` ikut menulis. Di VPS yang sibuk atau saat DB baru
+# bangun, 20 detik cukup ketat untuk membuat container di-restart tepat sebelum
+# ia sempat siap — lalu mengulanginya terus. Melebihkan jendela ini tak berbiaya
+# apa pun: begitu /healthz menjawab, probe langsung berlaku normal.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=45s --retries=3 \
     CMD curl -fsS http://localhost:3000/healthz || exit 1
 
 CMD ["./ppm"]

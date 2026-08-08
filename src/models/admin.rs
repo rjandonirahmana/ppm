@@ -103,3 +103,72 @@ pub struct UserPickItem {
     /// Nomor kartu terpasang saat ini (0 = belum punya).
     pub current_card: i64,
 }
+
+// ── Manajemen User (/manajemen-user, admin & ketua) ──────────────────────────
+
+/// Satu baris di halaman manajemen user — lebih kaya dari [`UserRow`], yang
+/// hanya melayani daftar ringkas di /kontrol-pengguna.
+///
+/// Memuat identitas santri (NIS, angkatan, kampus) supaya pengelola bisa
+/// memastikan ia menyunting orang yang benar tanpa membuka halaman lain: pada
+/// daftar 512 santri hasil impor ada 90 nama yang muncul lebih dari sekali, dan
+/// nama saja tidak cukup membedakan mereka.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ManagedUser {
+    pub id: i64,
+    pub full_name: String,
+    pub role: String,
+    pub role_label: String,
+    pub is_active: bool,
+    pub nis: Option<String>,
+    pub phone_number: Option<String>,
+    pub entry_year: Option<i16>,
+    pub gender: Option<String>,
+    pub campus: Option<String>,
+    pub major: Option<String>,
+    pub mubalegh_status: Option<String>,
+    pub pendidikan_status: Option<String>,
+    pub points: i32,
+    /// Sudah punya catatan poin? Menentukan apakah pengaktifan perlu memberi
+    /// saldo awal — lihat `repository::activate_user`.
+    pub has_point_logs: bool,
+}
+
+/// Isian yang boleh diubah pengelola di halaman manajemen user.
+///
+/// Peran dan status aktif SENGAJA tidak di sini: keduanya punya jalurnya
+/// sendiri karena membawa akibat lain (pengaktifan bisa memberi saldo awal,
+/// ganti peran mengubah hak akses) dan tak boleh ikut berubah diam-diam saat
+/// seseorang sekadar membetulkan ejaan nama.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProfilEdit {
+    pub full_name: String,
+    pub nis: String,
+    pub phone_number: String,
+    pub entry_year: Option<i16>,
+    pub gender: String,
+    pub campus: String,
+    pub major: String,
+    pub mubalegh_status: String,
+    pub pendidikan_status: String,
+}
+
+/// Label status kemubalighan (migrasi 73) untuk layar.
+pub fn mubalegh_label(kode: &str) -> &'static str {
+    match kode {
+        "belum" => "Belum",
+        "iya" => "Mubaligh",
+        "tugasan" => "Mubaligh Tugasan",
+        _ => "—",
+    }
+}
+
+/// Label status pendidikan (migrasi 73) untuk layar.
+pub fn pendidikan_label(kode: &str) -> &'static str {
+    match kode {
+        "belum" => "Belum kuliah",
+        "kuliah" => "Sedang kuliah",
+        "sarjana" => "Sarjana",
+        _ => "—",
+    }
+}

@@ -48,6 +48,47 @@ pub fn kategori_label(kode: &str) -> &'static str {
     }
 }
 
+/// Kategori sesi SIAP TAMPIL — dipakai di mana pun kategori muncul di layar.
+///
+/// Kenapa bukan `match` tertutup seperti [`kategori_label`]: kategori efektif
+/// sebuah sesi adalah `COALESCE(class_schedules.category, classes.category)`,
+/// dan yang pertama TEKS BEBAS (migrasi 10 — "dropdown diisi DISTINCT yang ada
+/// + boleh ketik baru"). Hanya `classes.category` yang terkunci CHECK.
+///
+/// Akibatnya di layar sempat muncul apa adanya: `non_kbm` lengkap dengan garis
+/// bawahnya, `piket` dan `apel` huruf kecil. Tapi memaksakan `match` tertutup
+/// justru membuang yang diketik admin — "piket habis ngaji" akan berubah jadi
+/// "Kegiatan", dan keterangan yang ia tulis sendiri hilang.
+///
+/// Jadi: kode yang dikenal dipetakan ke ejaan bakunya, sisanya DIRAPIKAN —
+/// garis bawah jadi spasi, tiap kata berhuruf besar di depan. Admin tetap
+/// melihat tulisannya sendiri, hanya lebih rapi.
+pub fn kategori_tampil(kode: &str) -> String {
+    match kode.trim() {
+        "" | "-" => String::new(),
+        // Singkatan & ejaan baku yang tak bisa ditebak dari perapian biasa.
+        "kbm" => "KBM".into(),
+        "non_kbm" => "Non-KBM".into(),
+        "bacaan" => "Bacaan".into(),
+        "apel_kepulangan" => "Apel Kepulangan".into(),
+        lain => lain
+            .split(|c: char| c == '_' || c.is_whitespace())
+            .filter(|w| !w.is_empty())
+            .map(|w| {
+                let mut ch = w.chars();
+                // `to_uppercase` per-karakter, bukan slicing byte: kategori bisa
+                // saja diketik dengan huruf non-ASCII, dan mengiris di tengah
+                // karakter multi-byte membuat String panik.
+                match ch.next() {
+                    Some(c0) => c0.to_uppercase().collect::<String>() + ch.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+    }
+}
+
 /// Jenjang sesudah `kode`, atau None bila sudah yang terakhir (Hadist Besar).
 pub fn jenjang_berikutnya(kode: &str) -> Option<&'static str> {
     let i = JENJANG.iter().position(|(k, _)| *k == kode)?;
@@ -560,6 +601,34 @@ mod tests_kelas_kategori {
         assert_eq!(kategori_label("bacaan"), "Bacaan");
         assert_eq!(kategori_label("non_kbm"), "Non-KBM");
         assert_eq!(kategori_label("piket"), "");
+    }
+
+    /// Kategori jadwal itu TEKS BEBAS (migrasi 10), jadi yang tak dikenal harus
+    /// tetap terbaca — bukan ditelan jadi label generik.
+    #[test]
+    fn kategori_tampil_merapikan_teks_bebas() {
+        assert_eq!(kategori_tampil("kbm"), "KBM");
+        assert_eq!(kategori_tampil("non_kbm"), "Non-KBM");
+        assert_eq!(kategori_tampil("apel_kepulangan"), "Apel Kepulangan");
+        // Yang tak dikenal: garis bawah jadi spasi, tiap kata berkapital.
+        assert_eq!(kategori_tampil("piket"), "Piket");
+        assert_eq!(kategori_tampil("apel"), "Apel");
+        assert_eq!(kategori_tampil("piket habis ngaji"), "Piket Habis Ngaji");
+        assert_eq!(kategori_tampil("sholat_berjamaah"), "Sholat Berjamaah");
+    }
+
+    /// Nilai kosong tak boleh jadi "-" atau spasi menggantung di layar.
+    #[test]
+    fn kategori_tampil_kosong_jadi_kosong() {
+        assert_eq!(kategori_tampil(""), "");
+        assert_eq!(kategori_tampil("-"), "");
+        assert_eq!(kategori_tampil("   "), "");
+    }
+
+    /// Perapian memakai iterator karakter — mengiris byte akan panik di sini.
+    #[test]
+    fn kategori_tampil_aman_multibyte() {
+        assert_eq!(kategori_tampil("ékstra_kurikuler"), "Ékstra Kurikuler");
     }
 
     /// Tiga kategori, dan hanya KBM yang berjenjang.

@@ -2163,10 +2163,14 @@ pub async fn user_control_data(role_filter: String) -> Result<UserControlData, S
 
 /// Jejak aksi administratif terbaru (panel Activity Logs).
 #[server(GetActivityLog, "/api-fn")]
-pub async fn activity_log_data() -> Result<Vec<ActivityLogItem>, ServerFnError> {
+pub async fn activity_log_data(hari: i32) -> Result<Vec<ActivityLogItem>, ServerFnError> {
     require_roles(&["admin", "dewan_guru", "teacher", "supervisor"]).await?;
     let state = app_state().await?;
-    crate::service::admin::recent_activity(&state.pool, 20).await.map_err(err)
+    // Rentang dibatasi di SERVER, bukan sekadar dipercaya dari klien: sebuah
+    // server fn bisa dipanggil langsung, dan `hari` raksasa berarti memindai
+    // seluruh tabel log. 200 baris cukup untuk dibaca manusia di satu layar.
+    let hari = hari.clamp(1, 200);
+    crate::service::admin::recent_activity(&state.pool, hari, 200).await.map_err(err)
 }
 
 /// Aktifkan/nonaktifkan akun.
@@ -2339,4 +2343,105 @@ pub async fn delete_rfid_device_action(id: i64) -> Result<(), ServerFnError> {
     require_roles(&["admin"]).await?;
     let state = app_state().await?;
     crate::service::admin::delete_rfid_device(&state.pool, id).await.map_err(err)
+}
+
+// ── Manajemen User (/manajemen-user) — admin & ketua ─────────────────────────
+//
+// Terpisah dari `/kontrol-pengguna` (admin-only, campur RFID + undangan + log
+// aktivitas). Halaman ini khusus tentang ORANG: mencari, menyunting profil,
+// dan mengaktifkan kembali. Ketua ikut diberi akses karena dialah yang tahu
+// siapa yang masih mondok — dan tanpa itu satu-satunya jalan mengaktifkan
+// santri hasil impor adalah lewat SQL.
+
+#[cfg(feature = "ssr")]
+const USER_MANAGE_ROLES: &[&str] = &["admin", "ketua"];
+
+/// Daftar user untuk halaman manajemen. `status`: "aktif" | "nonaktif" | ""
+/// (semua). `role` kosong = semua peran. `cari` cocok ke nama/NIS/nomor HP.
+#[server(ManagedUsers, "/api-fn")]
+pub async fn managed_users_data(
+    status: String,
+    role: String,
+    angkatan: i32,
+    cari: String,
+) -> Result<Vec<crate::models::ManagedUser>, ServerFnError> {
+    require_roles(USER_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    let aktif = match status.as_str() {
+        "aktif" => Some(true),
+        "nonaktif" => Some(false),
+        _ => None,
+    };
+    let role = role.trim();
+    let role_opt = (!role.is_empty()).then_some(role);
+    // Batas 500: daftar induk pondok ini 512 santri, dan halaman yang memuat
+    // semuanya sekaligus tak bisa dibaca siapa pun. Pencarian & filter yang
+    // dipakai untuk menyempitkan, bukan menggulir.
+    // 0 = semua angkatan (klien mengirim 0 untuk "tanpa filter"; `Option` tak
+    // dipakai agar bentuk parameternya tetap sederhana di sisi form).
+    let angkatan = (angkatan > 0).then_some(angkatan as i16);
+    crate::repository::list_users_managed(&state.pool, aktif, role_opt, angkatan, &cari, 500)
+        .await
+        .map_err(err)
+}
+
+/// Tahun angkatan yang tersedia — mengisi dropdown penyaring.
+#[server(AngkatanTersedia, "/api-fn")]
+pub async fn angkatan_tersedia_data() -> Result<Vec<i16>, ServerFnError> {
+    require_roles(USER_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    crate::repository::angkatan_tersedia(&state.pool).await.map_err(err)
+}
+
+/// Aktifkan/nonaktifkan user. Balas pesan siap tampil.
+///
+/// Mengaktifkan SANTRI yang belum punya riwayat poin sekalian memberinya saldo
+/// awal lewat `point_logs` — lihat `repository::activate_user` untuk alasan
+/// kenapa syaratnya "belum punya log", bukan "belum aktif".
+#[server(SetUserActive, "/api-fn")]
+pub async fn set_user_active_action(
+    user_id: i64,
+    active: bool,
+) -> Result<String, ServerFnError> {
+    let sess = require_roles(USER_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    // Menonaktifkan diri sendiri akan mengunci pengelola keluar dari halaman
+    // yang sedang ia pakai — dan hanya pengelola lain yang bisa memulihkannya.
+    if user_id == sess.id && !active {
+        return Err(ServerFnError::new("Tidak bisa menonaktifkan akun sendiri."));
+    }
+    if active {
+        let (ok, saldo) = crate::repository::activate_user(
+            &state.pool,
+            user_id,
+            crate::models::SEMESTER_START_POINTS,
+        )
+        .await
+        .map_err(err)?;
+        if !ok {
+            return Ok("User sudah aktif.".into());
+        }
+        Ok(if saldo {
+            format!("Diaktifkan, saldo awal {} poin diberikan.", crate::models::SEMESTER_START_POINTS)
+        } else {
+            "Diaktifkan. Saldo poin sebelumnya dipertahankan.".into()
+        })
+    } else {
+        crate::repository::set_active(&state.pool, user_id, false).await.map_err(err)?;
+        Ok("User dinonaktifkan.".into())
+    }
+}
+
+/// Simpan suntingan profil satu user (admin/ketua).
+#[server(UpdateManagedUser, "/api-fn")]
+pub async fn update_managed_user_action(
+    user_id: i64,
+    profil: crate::models::ProfilEdit,
+) -> Result<(), ServerFnError> {
+    require_roles(USER_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    crate::repository::update_user_profile(&state.pool, user_id, &profil)
+        .await
+        .map(|_| ())
+        .map_err(err)
 }

@@ -4,3 +4,7 @@
 /public/pkg
 
 /recordings
+
+# Artefak Finder macOS — ikut ter-commit kalau tak disebut di sini.
+.DS_Store
+**/.DS_Store

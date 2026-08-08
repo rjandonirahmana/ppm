@@ -208,7 +208,7 @@ pub async fn all_sessions(
     let c = pool.get().await?;
     let sql = format!(
         "{SESSION_COLS} WHERE s.session_date >= $1 AND s.session_date <= $2 \
-         ORDER BY s.session_date DESC, s.id DESC LIMIT $3"
+         ORDER BY s.session_date DESC, cs.start_time ASC NULLS LAST, s.id ASC LIMIT $3"
     );
     let rows = c.query(&sql, &[&since, &until, &limit]).await.context("all_sessions")?;
     Ok(rows.into_iter().map(row_to_session).collect())
@@ -228,7 +228,7 @@ pub async fn sessions_for_student(
         "{SESSION_COLS} \
          WHERE s.class_id IN (SELECT class_id FROM class_participants WHERE user_id = $1) \
            AND s.session_date >= $2 AND s.session_date <= $3 \
-         ORDER BY s.session_date DESC, s.id DESC LIMIT $4"
+         ORDER BY s.session_date DESC, cs.start_time ASC NULLS LAST, s.id ASC LIMIT $4"
     );
     let rows = c
         .query(&sql, &[&user_id, &since, &until, &limit])
@@ -254,7 +254,7 @@ pub async fn sessions_for_parent(
              JOIN parent_connections pc ON pc.student_id = cp.user_id \
                   AND pc.parent_id = $1 AND pc.status = 'connected') \
            AND s.session_date >= $2 AND s.session_date <= $3 \
-         ORDER BY s.session_date ASC, s.id ASC LIMIT $4"
+         ORDER BY s.session_date ASC, cs.start_time ASC NULLS LAST, s.id ASC LIMIT $4"
     );
     let rows = c
         .query(&sql, &[&parent_id, &since, &until, &limit])
@@ -275,7 +275,7 @@ pub async fn sessions_of_class(
     let c = pool.get().await?;
     let sql = format!(
         "{SESSION_COLS} WHERE s.class_id = $1 AND s.session_date >= $2 \
-         ORDER BY s.session_date ASC, s.id ASC LIMIT $3"
+         ORDER BY s.session_date ASC, cs.start_time ASC NULLS LAST, s.id ASC LIMIT $3"
     );
     let rows = c
         .query(&sql, &[&class_id, &from, &limit])

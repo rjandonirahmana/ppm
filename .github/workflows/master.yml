@@ -40,7 +40,19 @@ jobs:
       # `cargo test` biasa tak menyentuh target yang tak dipanggil.
       # --no-fail-fast: laporkan SEMUA kegagalan sekali jalan, bukan berhenti
       # di yang pertama lalu menyembunyikan sisanya.
+      # CARGO_INCREMENTAL=0: build CI selalu dingin, jadi inkremental tak
+      # menghemat apa pun — tapi ia BISA merugikan. Artefak inkremental basi di
+      # proyek ini menghasilkan kegagalan link `undefined symbol: anon.<hash>.llvm`
+      # yang lolos `cargo check` (lihat catatan di [profile.dev] Cargo.toml).
+      # Di CI hal itu akan tampil sebagai kegagalan misterius yang tak bisa
+      # direproduksi siapa pun.
       - name: Uji
+        env:
+          CARGO_INCREMENTAL: "0"
+          # Menyatakan: service Redis di atas MEMANG tersedia. Uji live_audio
+          # memakainya untuk membedakan "Redis tak ada, lewati" (mesin
+          # pengembang) dari "Redis dijanjikan tapi mati" (kegagalan nyata).
+          PPM_REQUIRE_REDIS: "1"
         run: cargo test --locked --all-targets --no-fail-fast --no-default-features --features ssr
       # Clippy INFORMATIF, bukan penghalang. Kodebase ini punya ±47 lint yang
       # sudah ada sejak lama (argumen fungsi >7, `from_str` bukan trait,

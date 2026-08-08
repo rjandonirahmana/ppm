@@ -234,7 +234,7 @@ fn KurikulumCard(
                                     view! {
                                         <p class="text-[11px] text-warning flex items-center gap-1">
                                             <span class="material-symbols-outlined text-[15px]">"link_off"</span>
-                                            "Belum tertaut materi — sunting untuk memilihnya."
+                                            "Belum tertaut materi — edit untuk memilihnya."
                                         </p>
                                     }
                                 })}
@@ -253,7 +253,7 @@ fn KurikulumCard(
                                 view! {
                                     <p class="text-body-sm text-on-surface-variant flex items-center gap-1">
                                         <span class="material-symbols-outlined text-[15px]">"more_horiz"</span>
-                                        "Belum mulai — isi posisi lewat tombol sunting."
+                                        "Belum mulai — isi posisi lewat tombol edit."
                                     </p>
                                 }
                                     .into_any()
@@ -832,7 +832,7 @@ pub(super) fn PanelKekosongan(class_id: i64, book_id: i64) -> impl IntoView {
                                 </div>
                                 <p class="text-[11px] text-on-surface-variant/70 mt-1.5">
                                     "Urut dari awal kitab. Pakai daftar ini untuk memilih bagian yang \
-                                     dibahas berikutnya — ubah lewat tombol sunting di atas."
+                                     dibahas berikutnya — ubah lewat tombol edit di atas."
                                 </p>
                             }
                                 .into_any()

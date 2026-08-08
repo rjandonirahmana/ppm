@@ -268,12 +268,32 @@ pub fn KalenderPage() -> impl IntoView {
 
 #[component]
 fn SesiItem(it: CalendarItem) -> impl IntoView {
-    let meta = format!("{} • {}", it.class_name, it.teacher);
+    // Segmen kosong TIDAK ikut tercetak. Dulu `format!("{} • {}")` apa adanya,
+    // jadi pengajar yang belum diatur muncul sebagai "piket harian • -" —
+    // tanda hubung menggantung yang terbaca seperti kerusakan render.
+    let meta = match (it.class_name.trim(), it.teacher.trim()) {
+        (kelas, guru) if guru.is_empty() || guru == "-" => kelas.to_string(),
+        (kelas, guru) if kelas.is_empty() => guru.to_string(),
+        (kelas, guru) => format!("{kelas} • {guru}"),
+    };
+    // Kategori di kolom waktu SERING menduplikasi judul di sebelahnya (judul
+    // "piket habis ngaji", kategori "piket habis ngaji" terpotong jadi
+    // "piket h…"). Tampilkan hanya bila ia benar-benar menambah keterangan.
+    let kategori = it.category.trim();
+    let kategori_beda = !kategori.is_empty()
+        && !it.title.trim().eq_ignore_ascii_case(kategori)
+        && !it.title.to_lowercase().starts_with(&kategori.to_lowercase());
+    let kategori = kategori_beda.then(|| kategori.to_string());
     view! {
         <div class="ppm-card p-3 flex items-center gap-3 anim-in">
             <div class="w-12 shrink-0 text-center">
                 <p class="text-body-sm font-bold text-primary leading-none">{it.time_label}</p>
-                <p class="text-[10px] text-on-surface-variant mt-0.5 truncate">{it.category}</p>
+                {kategori
+                    .map(|k| {
+                        view! {
+                            <p class="text-[10px] text-on-surface-variant mt-0.5 truncate">{k}</p>
+                        }
+                    })}
             </div>
             <div class="flex-1 min-w-0 border-l border-outline-variant/40 pl-3">
                 <p class="text-body-sm font-semibold text-on-background truncate">{it.title}</p>
@@ -576,7 +596,7 @@ fn SemesterRow(
             <button
                 class="w-8 h-8 rounded-lg text-primary hover:bg-secondary-container flex items-center justify-center press"
                 on:click=move |_| edit(untuk_edit.clone())
-                aria-label="Sunting semester"
+                aria-label="Edit semester"
             >
                 <span class="material-symbols-outlined text-[18px]">"edit"</span>
             </button>

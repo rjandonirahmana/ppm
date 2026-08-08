@@ -126,14 +126,17 @@ pub fn MobileHeader(
 pub fn NotifBell() -> impl IntoView {
     let open = RwSignal::new(false);
     view! {
-        <div class="relative">
+        <div class="ppm-bell">
             <button
                 class="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container relative"
                 on:click=move |_| open.update(|o| *o = !*o)
                 aria-label="Notifikasi"
             >
                 <span class="material-symbols-outlined">"notifications"</span>
-                <span class="absolute top-2 right-2 w-2 h-2 rounded-full bg-error pulse-dot"></span>
+                // Titik dulu `absolute top-2 right-2 w-2 h-2` — menggantung
+                // separuh di luar ikon dan menempel pada garis loncengnya.
+                // `.ppm-badge` memberinya cincin sewarna latar sebagai pemisah.
+                <span class="ppm-badge pulse-dot"></span>
             </button>
             {move || {
                 open.get()
@@ -143,7 +146,14 @@ pub fn NotifBell() -> impl IntoView {
                             // z tinggi (55/60) supaya popover PASTI di atas ikon/
                             // elemen lain di header (header sendiri sudah z-40).
                             <div class="fixed inset-0 z-[55]" on:click=move |_| open.set(false)></div>
-                            <div class="absolute right-0 top-12 z-[60] w-72 ppm-card shadow-xl p-4 anim-in">
+                            // `.ppm-notif-panel` (position:fixed di CSS), BUKAN
+                            // `absolute` di dalam lonceng: header memakai
+                            // `backdrop-blur` yang membentuk stacking context,
+                            // jadi panel yang lahir di dalamnya terkurung di
+                            // level header dan tertutup elemen lain. Di ponsel
+                            // ia juga memenuhi lebar layar alih-alih jadi
+                            // dropdown 18rem yang sesak.
+                            <div class="ppm-notif-panel">
                                 <div class="flex items-center justify-between mb-2">
                                     <p class="text-body-md font-bold text-on-background">"Notifikasi"</p>
                                     <button
@@ -184,7 +194,7 @@ fn nav_visible(path: &str) -> bool {
         "/dewan-guru", "/poin", "/poin-dewan", "/verifikasi-pamong",
         "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua", "/kontrol-pengguna",
         "/akademik", "/kalender", "/izin-staf", "/materi", "/rekap-mingguan", "/setelan",
-        "/galeri", "/tagihan", "/tagihan-saya", "/kelola-artikel",
+        "/galeri", "/tagihan", "/tagihan-saya", "/kelola-artikel", "/manajemen-user",
     ];
     PREFIXES
         .iter()
@@ -228,7 +238,7 @@ pub fn BottomNav() -> impl IntoView {
                 // md:hidden — di desktop digantikan <DesktopSidebar/> (kondisi
                 // tampil keduanya identik: role ada + nav_visible).
                 <nav
-                    class="md:hidden fixed bottom-0 inset-x-0 max-w-md mx-auto bg-surface-container-lowest border-t border-outline-variant/60 z-20"
+                    class="ppm-bottomnav md:hidden fixed bottom-0 inset-x-0 max-w-md mx-auto bg-surface-container-lowest border-t border-outline-variant/60 z-20"
                     style=move || if nav_visible(&pathname.get()) { "" } else { "display:none" }
                 >
                     <div class=cols>
@@ -898,28 +908,35 @@ pub fn Sheet(
             // dalamnya — tanpa ini fokus tertinggal di luar modal.
             tabindex="-1"
         >
-            <div class="ppm-sheet-grip w-10 h-1.5 bg-outline-variant rounded-full mx-auto mb-5"></div>
-            {if center_title {
-                view! {
-                    <h3 class="text-headline-sm text-on-background text-center">{title}</h3>
-                }
-                    .into_any()
-            } else {
-                view! {
-                    <div class="flex items-center justify-between mb-4">
-                        <h3 class="text-headline-sm text-on-background">{title}</h3>
-                        <button
-                            class="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container"
-                            on:click=move |_| on_close()
-                            aria-label="Tutup"
-                        >
-                            <span class="material-symbols-outlined text-lg">"close"</span>
-                        </button>
-                    </div>
-                }
-                    .into_any()
-            }}
-            {children()}
+            // KEPALA — tinggal diam saat isi bergulir. Sebelumnya judul,
+            // tombol tutup, dan isi berada dalam satu kotak yang bergulir
+            // seluruhnya: begitu isinya panjang, judulnya hilang tergulir dan
+            // padding panel ikut terbawa, sehingga isi menempel ke tepi bingkai.
+            <div class="ppm-sheet-head">
+                <div class="ppm-sheet-grip w-10 h-1.5 bg-outline-variant rounded-full mx-auto mb-4"></div>
+                {if center_title {
+                    view! {
+                        <h3 class="text-headline-sm text-on-background text-center">{title}</h3>
+                    }
+                        .into_any()
+                } else {
+                    view! {
+                        <div class="flex items-center justify-between gap-3">
+                            <h3 class="text-headline-sm text-on-background min-w-0">{title}</h3>
+                            <button
+                                class="w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container cursor-pointer"
+                                on:click=move |_| on_close()
+                                aria-label="Tutup"
+                            >
+                                <span class="material-symbols-outlined text-lg">"close"</span>
+                            </button>
+                        </div>
+                    }
+                        .into_any()
+                }}
+            </div>
+            // BADAN — satu-satunya yang bergulir.
+            <div class="ppm-sheet-body">{children()}</div>
         </div>
     }
 }
@@ -1497,10 +1514,13 @@ pub fn SwipeArea(
     const DOMINASI: f64 = 1.5;
     /// Ambang khusus RODA/TRACKPAD. Lebih besar dari ambang jari karena satu
     /// sentakan dua jari memuntahkan puluhan event kecil yang dijumlahkan.
+    /// Hanya terpakai di jalur wasm — di build server penangan rodanya kosong.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     const AMBANG_RODA: f64 = 80.0;
     /// Setelah satu perpindahan, abaikan roda selama ini (ms). Trackpad terus
     /// mengirim event "momentum" setelah jari diangkat; tanpa jeda, satu
     /// sentakan akan melompat beberapa bulan sekaligus.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     const JEDA_RODA_MS: f64 = 500.0;
 
     let mulai = RwSignal::new(Option::<(f64, f64)>::None);

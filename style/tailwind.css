@@ -86,6 +86,107 @@ body{font-family:'Work Sans',sans-serif;background-color:#f9f9ff;}
   }
 }
 
+/* ── PAGAR ANTI-LUBER HORIZONTAL ────────────────────────────────────────────
+   Satu elemen yang lebih lebar dari layar membuat SELURUH halaman bisa digeser
+   ke samping: konten seolah "tak punya batas kiri-kanan", huruf terpotong di
+   tepi, dan padding halaman tak lagi menolong karena yang meluber justru
+   melampaui padding itu.
+
+   `clip`, BUKAN `hidden`. `hidden` menjadikan body sebuah scroll container dan
+   itu mematikan `position: sticky` pada header — sedangkan `clip` memotong
+   tanpa membuat container, jadi header sticky & bilah bawah tetap bekerja.
+   Elemen yang MEMANG perlu digulir mendatar (dek `.ppm-swipe`, tabel lebar)
+   punya `overflow-x` sendiri dan tak terpengaruh.
+
+   Ini jaring pengaman, bukan pengganti perbaikan di sumbernya: elemen yang
+   meluber tetap harus diberi `min-w-0`/`truncate` supaya isinya terbaca, bukan
+   sekadar terpotong diam-diam. */
+html, body { overflow-x: clip; }
+.ppm-stage > div { overflow-x: clip; }
+
+/* Teks panjang tanpa spasi (alasan izin yang ditempel, nama berkas, tautan)
+   tak boleh mendorong kartunya melebar. */
+.ppm-card, .ppm-empty { overflow-wrap: anywhere; }
+
+/* ── Lonceng & panel notifikasi ─────────────────────────────────────────────
+   Panel-nya `position:fixed` DI LUAR aliran header, bukan `absolute` di dalam
+   ikonnya. Sebabnya header memakai `backdrop-blur`, dan itu membentuk stacking
+   context baru: panel yang lahir di dalamnya terkurung di level header dan
+   tertutup elemen lain — plus bisa terpotong bingkai kolom di ponsel.
+
+   Di ponsel panel memenuhi lebar layar (dropdown 18rem di layar 360px adalah
+   pola desktop yang dipaksakan); di desktop baru menyempit jadi dropdown.
+   Kelas kustom, BUKAN utility `fixed`, supaya tak ikut terkena aturan offset
+   kanvas desktop — lihat catatan `.ppm-dock`. */
+.ppm-bell { position: relative; }
+.ppm-badge {
+  position: absolute; top: 6px; right: 6px;
+  width: 9px; height: 9px; border-radius: 9999px; background: #ba1a1a;
+  /* Cincin sewarna latar memisahkan titik dari ikon di belakangnya — tanpa itu
+     titiknya menempel pada garis lonceng dan terbaca sebagai bagian ikon. */
+  box-shadow: 0 0 0 2px #f9f9ff;
+}
+.ppm-notif-panel {
+  position: fixed; top: 4.25rem; left: .75rem; right: .75rem; z-index: 60;
+  max-height: min(70vh, 32rem); max-height: min(70dvh, 32rem);
+  overflow-y: auto; overscroll-behavior: contain;
+  background: #ffffff; border-radius: 1.25rem; padding: 1rem;
+  box-shadow: 0 16px 48px rgba(21,28,39,.18);
+  animation: pp-sheet .22s cubic-bezier(.2,.8,.2,1) both;
+}
+@media (min-width: 768px) {
+  .ppm-notif-panel { left: auto; right: 1.5rem; width: 22rem; }
+}
+@media (prefers-reduced-motion: reduce) { .ppm-notif-panel { animation: none } }
+
+/* Ruang napas di dasar konten: bilah bawah (nav ±64px + safe-area) menutupi
+   isi terakhir halaman — di form izin, field tanggal terakhir tertutup nav. */
+.ppm-content { padding-bottom: calc(5.5rem + env(safe-area-inset-bottom)); }
+
+/* ── MODE PRATINJAU MOBILE DI DESKTOP: ?preview=mobile ──────────────────────
+   Sejak mode sidebar desktop ada, tampilan ponsel HANYA muncul di bawah 768px:
+   di atas itu bingkai kolom dilepas dan konten bergeser 16rem untuk sidebar.
+   Itu benar untuk pengguna, tapi menyulitkan memeriksa tampilan ponsel sebelum
+   deploy — mengecilkan jendela pun tak setia, karena `pointer: fine` tetap
+   berlaku dan emulasi sentuh tak ada.
+
+   Mode ini OPT-IN lewat query `?preview=mobile` (lihat `PreviewMode` di
+   web/app.rs), jadi aman ikut terpasang di produksi: tanpa param, tak satu pun
+   aturan di bawah aktif.
+
+   `!important` dipakai SENGAJA di sini — ini lapisan override yang harus
+   menang atas aturan desktop, dan hanya hidup saat atribut preview menyala.
+   Ini satu-satunya tempat di berkas ini yang boleh begitu.
+
+   Aturan desktop yang mengubah BENTUK komponen (sheet jadi dialog, masonry 2
+   kolom, dek swipe mengintip 2 kartu, grid kartu 2 kolom) dijaga terpisah
+   dengan `body:not([data-preview="mobile"])` di dalam media query-nya
+   masing-masing — satu baris per aturan, tanpa menggandakan bloknya. */
+body[data-preview="mobile"] .ppm-sidebar{display:none!important}
+body[data-preview="mobile"] .ppm-stage{margin-left:0!important;background:#e9edf8!important}
+body[data-preview="mobile"] .ppm-dock{left:0!important;max-width:28rem!important;
+  border-radius:0!important}
+/* Kembalikan bingkai kolom ponsel di lebar berapa pun. */
+body[data-preview="mobile"] .ppm-stage>div{
+  max-width:28rem!important;
+  padding-inline:0!important;
+  border-inline:1px solid rgba(112,121,116,.18)!important;
+  box-shadow:0 0 44px rgba(21,28,39,.10)!important;
+  background:#f9f9ff!important;
+}
+/* Bilah bawah ponsel disembunyikan utility `md:hidden`; paksa tampil kembali. */
+body[data-preview="mobile"] .ppm-bottomnav{display:block!important}
+/* FAB kembali ke tepi kolom ponsel, bukan tepi kanvas desktop. */
+body[data-preview="mobile"] .ppm-fab{right:calc(50% - 14rem + 1.25rem)!important}
+/* Penanda kecil supaya tak ada yang mengira ini tampilan sungguhan. */
+body[data-preview="mobile"]::after{
+  content:"PRATINJAU MOBILE";
+  position:fixed;left:.5rem;bottom:.5rem;z-index:70;
+  background:#003527;color:#fff;font-size:10px;font-weight:700;
+  letter-spacing:.08em;padding:.25rem .5rem;border-radius:.5rem;opacity:.85;
+  pointer-events:none;
+}
+
 /* ── Interaktivitas global ──────────────────────────────────────────────── */
 /* Sorotan ketukan bawaan Android dimatikan karena kotak abu-abunya tak
    mengikuti border-radius elemen. Tapi mematikannya TANPA pengganti membuat
@@ -181,28 +282,40 @@ button:active{transform:scale(.96)}
 .ppm-sheet{
   position:fixed;left:0;right:0;bottom:0;z-index:50;
   max-width:28rem;margin-inline:auto;
-  /* Padding DIDEFINISIKAN DI SINI, bukan lewat utility `p-6` di markup.
-     Aturan `.ppm-sheet` ini berada di luar @layer, sedangkan utility Tailwind
-     v4 ada di dalam @layer — yang di luar selalu menang. Akibatnya
-     `padding-bottom` di bawah menimpa shorthand `p-6`, dan isi sheet kehilangan
-     jarak ke tepi: tombol di dasar modal menempel mentok ke sisi kiri-kanan.
-     Dengan padding ditulis utuh di sini, tak ada lagi tarik-menarik. */
-  padding:1.5rem;
+  /* KEPALA TETAP + BADAN BERGULIR, bukan satu kotak yang bergulir seluruhnya.
+     Dulu `.ppm-sheet` sendiri yang `overflow-y:auto` dengan padding di
+     panelnya. Akibatnya begitu isinya melebihi tinggi panel: judul & tombol
+     tutup ikut tergulir hilang, dan yang jauh lebih terlihat — padding atas
+     bawah ikut tergulir juga, sehingga isi menempel mentok ke tepi bingkai.
+     Di desktop, yang panelnya melayang dengan sudut membulat, itu tampak
+     seperti kotak tanpa margin sama sekali.
+     Dengan flex-column, `.ppm-sheet-head` tinggal diam dan hanya
+     `.ppm-sheet-body` yang bergulir — paddingnya selalu terlihat. */
+  display:flex;flex-direction:column;
+  /* Sudut membulat harus benar-benar memotong isi yang bergulir. */
+  overflow:hidden;
   background:#f9f9ff;
   border-radius:1.5rem 1.5rem 0 0;
   /* 85dvh (dengan cadangan 85vh) — `vh` di ponsel dihitung dari viewport
      TERBESAR, jadi saat bilah URL masih terlihat panelnya lebih tinggi dari
      layar dan bagian bawahnya terpotong. `dvh` mengikuti tinggi yang benar
      saat itu juga. */
-  max-height:85vh;max-height:85dvh;overflow-y:auto;
-  /* Kurung scroll di dalam sheet. Tanpa ini, menggulir sampai ujung isi sheet
-     diteruskan ke halaman DI BALIK scrim — latarnya ikut bergerak padahal
-     tertutup, dan posisi baca halaman itu hilang saat sheet ditutup.
-     `.ppm-swipe` sudah diberi perlakuan yang sama. */
-  overscroll-behavior:contain;
+  max-height:85vh;max-height:85dvh;
+  animation:pp-sheet .3s cubic-bezier(.2,.8,.2,1) both;
+}
+
+/* Kepala sheet: grip, judul, tombol tutup. Tidak ikut bergulir. */
+.ppm-sheet-head{flex:0 0 auto;padding:1.25rem 1.5rem .75rem}
+/* Badan: satu-satunya yang bergulir.
+   `overscroll-behavior:contain` — tanpa ini, menggulir sampai ujung isi sheet
+   diteruskan ke halaman DI BALIK scrim: latarnya ikut bergerak padahal
+   tertutup, dan posisi baca halaman itu hilang saat sheet ditutup. */
+.ppm-sheet-body{
+  flex:1 1 auto;min-height:0;
+  overflow-y:auto;overscroll-behavior:contain;
+  padding:0 1.5rem;
   /* Aman di ponsel berponi / bilah gestur. */
   padding-bottom:max(2.5rem,env(safe-area-inset-bottom));
-  animation:pp-sheet .3s cubic-bezier(.2,.8,.2,1) both;
 }
 @keyframes pp-dialog{
   from{opacity:0;transform:translate(-50%,-46%) scale(.97)}
@@ -213,22 +326,32 @@ button:active{transform:scale(.96)}
      jaraknya jauh dari tempat mata berada dan ruang kosong di kiri-kanan
      terbuang. Material Design sendiri menyebut bottom-sheet pola ponsel dan
      dialog terpusat untuk layar besar — itu yang dipakai di sini. */
-  .ppm-sheet{
+  body:not([data-preview="mobile"]) .ppm-sheet{
     left:50%;right:auto;top:50%;bottom:auto;
     transform:translate(-50%,-50%);
-    width:min(40rem,92vw);max-width:40rem;margin-inline:0;
+    /* 34rem, bukan 40rem. Isi sheet di aplikasi ini hampir selalu satu kolom
+       form atau daftar pendek; pada 40rem barisnya jadi pita panjang dengan
+       ruang kosong di tengah, dan matanya harus menyeberang jauh dari label ke
+       isian. `92vw` menjaga tetap ada margin ke tepi layar di jendela sempit. */
+    width:min(34rem,92vw);max-width:34rem;margin-inline:0;
     border-radius:1.75rem;
-    max-height:86vh;
-    /* Dialog desktop lebih lega daripada bottom-sheet ponsel: di layar besar
-       panel 40rem dengan padding 1.5rem membuat isinya terasa menempel ke
-       tepi, terutama kartu/kotak berlatar yang tepinya sendiri sudah dekat. */
-    padding:2rem;
-    padding-bottom:2rem;
+    /* Batas ATAS tinggi juga: pada layar 4K, 86vh menghasilkan dialog setinggi
+       hampir satu meter untuk isi yang cuma beberapa baris. */
+    max-height:min(86vh,44rem);
     box-shadow:0 24px 64px rgba(21,28,39,.22);
     animation:pp-dialog .24s cubic-bezier(.2,.8,.2,1) both;
   }
+  /* Lebih lega di layar besar, dan kepala dipisahkan garis tipis supaya isi
+     yang bergulir di bawahnya tak tampak menempel pada judul. */
+  body:not([data-preview="mobile"]) .ppm-sheet-head{
+    padding:1.75rem 2rem 1rem;
+    border-bottom:1px solid rgba(112,121,116,.16);
+  }
+  body:not([data-preview="mobile"]) .ppm-sheet-body{
+    padding:1.5rem 2rem 2rem;
+  }
   /* Pegangan seret hanya bermakna pada sheet yang bisa ditarik (ponsel). */
-  .ppm-sheet .ppm-sheet-grip{display:none;}
+  body:not([data-preview="mobile"]) .ppm-sheet .ppm-sheet-grip{display:none;}
 }
 @media (prefers-reduced-motion:reduce){
   .ppm-scrim,.ppm-sheet{animation:none}
@@ -246,7 +369,7 @@ button:active{transform:scale(.96)}
    terlewat di semuanya. */
 .ppm-card-grid{display:flex;flex-direction:column;gap:.75rem}
 @media (min-width:768px){
-  .ppm-card-grid{
+  body:not([data-preview="mobile"]) .ppm-card-grid{
     display:grid;
     grid-template-columns:repeat(2,minmax(0,1fr));
     gap:.75rem;
@@ -286,12 +409,12 @@ button:active{transform:scale(.96)}
    terbelah antar kolom. */
 .ppm-masonry{display:flex;flex-direction:column;gap:.75rem}
 @media (min-width:768px){
-  .ppm-masonry{
+  body:not([data-preview="mobile"]) .ppm-masonry{
     display:block;
     columns:2;
     column-gap:.75rem;
   }
-  .ppm-masonry > *{
+  body:not([data-preview="mobile"]) .ppm-masonry > *{
     break-inside:avoid;
     -webkit-column-break-inside:avoid;
     margin-bottom:.75rem;
@@ -334,7 +457,7 @@ button:active{transform:scale(.96)}
 .ppm-swipe>*{scroll-snap-align:center; flex:0 0 88%; min-width:0}
 @media (min-width:768px){
   /* Layar lebar: ±2 kartu terlihat sekaligus. */
-  .ppm-swipe>*{flex-basis:46%}
+  body:not([data-preview="mobile"]) .ppm-swipe>*{flex-basis:46%}
 }
 @media (prefers-reduced-motion:reduce){
   .ppm-swipe{scroll-behavior:auto}

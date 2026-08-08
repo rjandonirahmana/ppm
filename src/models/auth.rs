@@ -59,6 +59,28 @@ pub fn role_home(role: &str) -> &'static str {
     }
 }
 
+/// Label peran untuk layar. SATU sumber — dulu `match` yang sama ditulis ulang
+/// di `service::admin`, `components::MobileHeader`, dan `DesktopSidebar`, dan
+/// ketiganya sudah menyimpang: dua di antaranya mengenal "ketua" dan
+/// "santri_finance", yang ketiga menampilkan keduanya sebagai "Pengguna".
+///
+/// Tinggal di `models` supaya `repository` juga bisa memakainya tanpa membalik
+/// arah lapisan (repository → service).
+pub fn role_label(role: &str) -> &'static str {
+    match role {
+        "admin" => "Admin",
+        "ketua" => "Ketua",
+        // 'teacher' digabung ke 'dewan_guru' (migrasi 36); sisa data lama tetap
+        // diberi label yang benar alih-alih jatuh ke "Pengguna".
+        "teacher" | "dewan_guru" => "Dewan Guru",
+        "supervisor" => "Pamong",
+        "santri" => "Santri",
+        "santri_finance" => "Santri (Finance)",
+        "parent" => "Orang Tua",
+        _ => "Pengguna",
+    }
+}
+
 /// true bila peran ini santri → wajib melengkapi profil mahasiswa saat daftar
 /// (gender, kampus, jurusan, tahun masuk PPM). Santri PPM = mahasiswa kampus
 /// sekitar, jadi data ini bagian dari identitas dasarnya, bukan pelengkap.

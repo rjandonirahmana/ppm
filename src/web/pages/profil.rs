@@ -223,7 +223,13 @@ pub fn ProfilPage() -> impl IntoView {
                                             prop:value=move || gender.get()
                                             on:change=move |e| gender.set(event_target_value(&e))
                                         >
-                                            <option value="">"—"</option>
+                                            // "Belum dipilih", bukan "—": pada <select>,
+                                            // opsi kosong WAJIB ada (tanpa itu browser
+                                            // menampilkan opsi pertama seolah terpilih
+                                            // padahal nilainya kosong). Tapi labelnya harus
+                                            // jelas menyatakan KETIADAAN, bukan tampak
+                                            // seperti pilihan ketiga.
+                                            <option value="">"Belum dipilih"</option>
                                             <option value="L">"Laki-laki"</option>
                                             <option value="P">"Perempuan"</option>
                                         </select>

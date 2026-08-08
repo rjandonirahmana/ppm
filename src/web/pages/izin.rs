@@ -419,17 +419,26 @@ fn KindButton(
     icon: &'static str,
     label: &'static str,
 ) -> impl IntoView {
+    // `min-w-0` + `truncate` pada LABEL: tanpa keduanya teks panjang
+    // ("Keperluan") tak bisa menyusut, jadi ia membanjir keluar tombol dan
+    // ikut mendorong halaman melebar — persis "kiri-kanan tanpa batas" yang
+    // terlihat di layar sempit. Gridnya sendiri sudah `minmax(0,1fr)` (bawaan
+    // `grid-cols-3` Tailwind), jadi yang perlu diberi izin menyusut memang isi
+    // tombolnya, bukan kolomnya.
+    //
+    // Ikon `shrink-0` supaya yang mengalah teksnya, bukan ikonnya — ikon yang
+    // gepeng jauh lebih jelek daripada label yang terpotong.
     let cls = move || {
         if kind.get() == value {
-            "flex items-center justify-center gap-2 py-4 rounded-2xl border-2 border-primary bg-secondary-container/40 text-primary font-semibold transition-all"
+            "flex items-center justify-center gap-2 py-4 px-2 min-w-0 rounded-2xl border-2 border-primary bg-secondary-container/40 text-primary font-semibold transition-all"
         } else {
-            "flex items-center justify-center gap-2 py-4 rounded-2xl border border-outline-variant bg-surface-container-lowest text-on-surface font-semibold transition-all"
+            "flex items-center justify-center gap-2 py-4 px-2 min-w-0 rounded-2xl border border-outline-variant bg-surface-container-lowest text-on-surface font-semibold transition-all"
         }
     };
     view! {
         <button type="button" class=cls on:click=move |_| kind.set(value.to_string())>
-            <span class="material-symbols-outlined">{icon}</span>
-            {label}
+            <span class="material-symbols-outlined shrink-0">{icon}</span>
+            <span class="truncate min-w-0">{label}</span>
         </button>
     }
 }

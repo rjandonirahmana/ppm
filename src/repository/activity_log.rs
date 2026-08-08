@@ -30,7 +30,14 @@ pub struct ActivityLogRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-pub async fn recent_logs(pool: &Pool, limit: i64) -> Result<Vec<ActivityLogRow>> {
+/// Log aktivitas dalam `hari` terakhir, terbaru dulu.
+///
+/// Rentangnya dihitung sargable — `created_at >= NOW() - INTERVAL`, bukan
+/// membungkus kolomnya dengan fungsi tanggal. Pola `(created_at AT TIME ZONE
+/// …)::date BETWEEN …` yang dipakai di beberapa query lain mematikan index
+/// pada kolom itu; di tabel yang tumbuh terus seperti `activity_logs`, itu
+/// berarti seluruh tabel dipindai untuk menampilkan tiga hari terakhir.
+pub async fn recent_logs(pool: &Pool, hari: i32, limit: i64) -> Result<Vec<ActivityLogRow>> {
     let c = pool.get().await?;
     let rows = c
         .query(
@@ -38,8 +45,9 @@ pub async fn recent_logs(pool: &Pool, limit: i64) -> Result<Vec<ActivityLogRow>>
              FROM activity_logs l \
              LEFT JOIN users a ON a.id = l.actor_id \
              LEFT JOIN users t ON t.id = l.target_user_id \
-             ORDER BY l.created_at DESC LIMIT $1",
-            &[&limit],
+             WHERE l.created_at >= NOW() - make_interval(days => $1) \
+             ORDER BY l.created_at DESC LIMIT $2",
+            &[&hari, &limit],
         )
         .await
         .context("recent_logs")?;
