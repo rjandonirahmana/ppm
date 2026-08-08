@@ -17,8 +17,22 @@ body{font-family:'Work Sans',sans-serif;background-color:#f9f9ff;}
     radial-gradient(120% 120% at 100% 0%,rgba(149,211,186,.16) 0%,transparent 45%),
     linear-gradient(135deg,#003527 0%,#064e3b 100%);
 }
-.pattern-bg{background-image:url('https://www.transparenttextures.com/patterns/cubes.png');opacity:.03;}
-.input-focus-ring:focus{box-shadow:0 0 0 4px rgba(0,53,39,.1);}
+/* Tekstur kubus samar. SELF-HOST (public/patterns-cubes.png, 633 byte) —
+   dulu ditarik dari transparenttextures.com tiap muat halaman. Itu satu-satunya
+   dependensi eksternal saat runtime yang tersisa, dan bertentangan dengan
+   alasan ikon Material di-self-host: aplikasi ini dipakai di jaringan pondok
+   yang tak selalu bisa keluar. Bila host itu lambat/mati, latar hero menghilang
+   tanpa jejak — dan setiap pengunjung ikut memberi tahu host pihak ketiga bahwa
+   ia membuka situs ini.
+   `pointer-events:none` karena lapisan ini murni dekorasi yang menumpuk di atas
+   isi (`absolute inset-0`); tanpa itu ia menelan klik di area yang ditutupinya. */
+.pattern-bg{background-image:url('/patterns-cubes.png');opacity:.03;pointer-events:none;}
+
+/* Cincin fokus isian form. `rgba(0,53,39,.1)` di atas latar #f9f9ff hanya
+   ≈1.2:1 — secara praktis tak terlihat, jadi penanda "kolom ini sedang aktif"
+   yang dijanjikan komentar di bawah tak pernah sampai ke mata siapa pun.
+   Alpha dinaikkan sampai cincinnya benar-benar terbaca. */
+.input-focus-ring:focus{box-shadow:0 0 0 4px rgba(0,53,39,.35);}
 
 /* ── Kelas komponen ppm — SATU sumber gaya elemen berulang (ubah di sini =
    berlaku seluruh app; markup halaman cukup pakai token pendek). ─────────── */
@@ -73,7 +87,13 @@ body{font-family:'Work Sans',sans-serif;background-color:#f9f9ff;}
 }
 
 /* ── Interaktivitas global ──────────────────────────────────────────────── */
+/* Sorotan ketukan bawaan Android dimatikan karena kotak abu-abunya tak
+   mengikuti border-radius elemen. Tapi mematikannya TANPA pengganti membuat
+   tautan terasa mati saat disentuh: <button> punya `:active{scale}` di bawah,
+   <a> tidak. Jadi tautan diberi umpan balik yang sama. */
 button,a{-webkit-tap-highlight-color:transparent}
+a:active{transform:scale(.97)}
+a{transition:transform .15s ease}
 /* Tailwind v4 Preflight TIDAK lagi memberi `cursor:pointer` pada <button>
    (beda dari v3) → SEMUA tombol/elemen klik tampil kursor panah, terkesan tak
    bisa diklik. Kembalikan pointer utk elemen interaktif (audit ui-ux-pro-max:
@@ -88,11 +108,20 @@ button:disabled,[aria-disabled="true"]{cursor:not-allowed}
    penanda aktif). Tombol/link → :focus-visible (hanya navigasi keyboard, tak
    muncul saat klik mouse → tak mengganggu desain). Outline mengikuti
    border-radius elemen di browser modern. */
+/* Warnanya TOKEN, bukan angka tetap. Emerald #064e3b hanya terbaca di atas
+   permukaan terang: di atas .spiritual-gradient (#003527 → #064e3b) dan di
+   sidebar emerald, kontrasnya ≈1.0–1.4:1 — gagal telak syarat 3:1 WCAG untuk
+   penanda non-teks, dan justru di sanalah tombol ajakan utama berada (hero
+   halaman depan dipakai SEMUA halaman publik). Cincin yang tak terlihat sama
+   saja dengan tak ada cincin: pengguna papan ketik kehilangan jejak fokusnya.
+   Permukaan gelap menyetel ulang tokennya ke sage terang. */
+:root{--focus-ring:#064e3b}
+.spiritual-gradient,.ppm-sidebar,.bg-primary,footer.bg-primary{--focus-ring:#a7f3d0}
 input:focus-visible,select:focus-visible,textarea:focus-visible{
-  outline:2px solid #064e3b;outline-offset:1px}
+  outline:2px solid var(--focus-ring);outline-offset:1px}
 a:focus-visible,button:focus-visible,[role="button"]:focus-visible,
 [tabindex]:not([tabindex="-1"]):focus-visible{
-  outline:2px solid #064e3b;outline-offset:2px}
+  outline:2px solid var(--focus-ring);outline-offset:2px}
 
 button{transition:transform .15s ease,background-color .15s ease,border-color .15s ease,
   box-shadow .15s ease,opacity .15s ease}
@@ -109,8 +138,12 @@ button:active{transform:scale(.96)}
 .stagger>*:nth-child(1){animation-delay:.04s}.stagger>*:nth-child(2){animation-delay:.09s}
 .stagger>*:nth-child(3){animation-delay:.14s}.stagger>*:nth-child(4){animation-delay:.19s}
 .stagger>*:nth-child(5){animation-delay:.24s}.stagger>*:nth-child(6){animation-delay:.29s}
-.stagger>*:nth-child(7){animation-delay:.34s}.stagger>*:nth-child(8){animation-delay:.39s}
-.stagger>*:nth-child(9){animation-delay:.44s}.stagger>*:nth-child(n+10){animation-delay:.5s}
+/* BERHENTI di anak ke-6. Sebelumnya jenjangnya berlanjut sampai .5s untuk
+   anak ke-10 dan seterusnya — dan karena stagger jalan ulang setiap navigasi,
+   kartu di bawah lipatan baru muncul setengah detik setelah halaman tampak
+   selesai. Yang di bawah lipatan tak terlihat saat animasinya jalan, jadi
+   jenjangnya tak pernah dinikmati siapa pun; yang tersisa cuma jedanya. */
+.stagger>*:nth-child(n+7){animation-delay:0s}
 
 /* Bar progres tumbuh dari kiri. */
 @keyframes pp-bar{from{transform:scaleX(0)}to{transform:scaleX(1)}}
@@ -157,7 +190,16 @@ button:active{transform:scale(.96)}
   padding:1.5rem;
   background:#f9f9ff;
   border-radius:1.5rem 1.5rem 0 0;
-  max-height:85vh;overflow-y:auto;
+  /* 85dvh (dengan cadangan 85vh) — `vh` di ponsel dihitung dari viewport
+     TERBESAR, jadi saat bilah URL masih terlihat panelnya lebih tinggi dari
+     layar dan bagian bawahnya terpotong. `dvh` mengikuti tinggi yang benar
+     saat itu juga. */
+  max-height:85vh;max-height:85dvh;overflow-y:auto;
+  /* Kurung scroll di dalam sheet. Tanpa ini, menggulir sampai ujung isi sheet
+     diteruskan ke halaman DI BALIK scrim — latarnya ikut bergerak padahal
+     tertutup, dan posisi baca halaman itu hilang saat sheet ditutup.
+     `.ppm-swipe` sudah diberi perlakuan yang sama. */
+  overscroll-behavior:contain;
   /* Aman di ponsel berponi / bilah gestur. */
   padding-bottom:max(2.5rem,env(safe-area-inset-bottom));
   animation:pp-sheet .3s cubic-bezier(.2,.8,.2,1) both;
@@ -224,30 +266,35 @@ button:active{transform:scale(.96)}
 .ppm-accent-error{border-left:4px solid #ba1a1a}
 
 /* MASONRY dua kolom — dipakai lewat `components::kartu_grid()`.
-   `align-items:start` di atas menghapus peregangan, tapi TIDAK menghapus baris:
-   grid tetap menyusun kartu per baris, dan tinggi baris ditentukan kartu
-   tertinggi. Kartu pendek di sebelah kartu panjang menyisakan lubang kosong
-   sampai baris berikutnya boleh mulai — persis yang terlihat saat satu kartu
-   dibuka daftar santrinya.
 
-   Perbaikannya: dua KOLOM yang tingginya berdiri sendiri, bukan satu daftar
-   yang dipatah-patah jadi baris. Kartu dibagi selang-seling (genap ke kiri,
-   ganjil ke kanan) supaya urutan bacanya tetap kiri→kanan seperti yang
-   diminta — bukan `columns` CSS yang mengisi kolom kiri penuh dulu dari atas
-   ke bawah.
+   Versi lama memecah kartu ke DUA pembungkus (genap ke kiri, ganjil ke kanan)
+   supaya urutan bacanya kiri→kanan, lalu memakai `order` per kartu untuk
+   membetulkan tampilan di ponsel (kolomnya `display:contents`, jadi DOM-nya
+   kembali 1,3,5,2,4).
 
-   Di ponsel kolomnya `display:contents`: pembungkusnya lenyap, semua kartu
-   kembali jadi satu kolom flex. Karena kartu genap/ganjil terpisah di DOM,
-   urutannya akan jadi 1,3,5,2,4 — maka tiap kartu membawa `order` sesuai
-   posisi aslinya. Flexbox menghormatinya di kedua ukuran layar: di ponsel
-   mengembalikan 1,2,3,4,5; di kolom desktop urutannya sudah menaik sendiri. */
-.ppm-card-grid > .ppm-card-col{display:contents}
+   `order` HANYA memindahkan yang terlihat. Pohon aksesibilitas dan urutan Tab
+   selalu mengikuti DOM, jadi pembaca layar membacakan 1,3,5,2,4 sementara mata
+   melihat 1,2,3,4,5 — dan pengguna papan ketik melompat naik-turun tak
+   beraturan. Itu WCAG 1.3.2 (Meaningful Sequence) dan 2.4.3 (Focus Order),
+   dan tak ada CSS yang bisa memperbaikinya selama DOM-nya memang teracak.
+
+   Sekarang kartu tinggal SATU deret di DOM, urut apa adanya, dan yang membagi
+   kolom adalah multi-kolom CSS. Konsekuensi yang diterima sadar: urutan
+   desktop jadi per-kolom (1,2,3 di kiri; 4,5,6 di kanan), bukan selang-seling
+   kiri-kanan. Keduanya urutan baca yang sah — bedanya yang ini juga benar
+   ketika yang membaca bukan mata. `break-inside:avoid` menjaga satu kartu tak
+   terbelah antar kolom. */
+.ppm-masonry{display:flex;flex-direction:column;gap:.75rem}
 @media (min-width:768px){
-  .ppm-card-grid > .ppm-card-col{
-    display:flex;
-    flex-direction:column;
-    gap:.75rem;
-    min-width:0;
+  .ppm-masonry{
+    display:block;
+    columns:2;
+    column-gap:.75rem;
+  }
+  .ppm-masonry > *{
+    break-inside:avoid;
+    -webkit-column-break-inside:avoid;
+    margin-bottom:.75rem;
   }
 }
 
@@ -256,7 +303,12 @@ button:active{transform:scale(.96)}
    normal) sambil menahan sumbu X supaya geser horizontal sampai ke handler
    kita alih-alih dimakan gulir/navigasi-balik bawaan browser.
    `user-select:none` mencegah teks tersorot saat diseret dengan tetikus. */
-.ppm-swipe-area{touch-action:pan-y;user-select:none;-webkit-user-select:none}
+/* `touch-action:pan-y` menyerahkan gulir MENEGAK ke browser dan menyisakan
+   sumbu X untuk kita. `overscroll-behavior-x:contain` mencegah gulir mendatar
+   diteruskan jadi navigasi "kembali" bawaan browser — di laptop, menggeser
+   bulan dengan dua jari akan melempar pengguna keluar halaman tanpa ini. */
+.ppm-swipe-area{touch-action:pan-y;user-select:none;-webkit-user-select:none;
+  overscroll-behavior-x:contain}
 
 /* Dek jadwal yang bisa digeser (beranda guru & pamong).
    Scroll-snap NATIVE, bukan animasi JS: geser jari di ponsel, trackpad dua jari
@@ -273,11 +325,71 @@ button:active{transform:scale(.96)}
   overscroll-behavior-x:contain;
 }
 .ppm-swipe::-webkit-scrollbar{display:none}
-/* flex-basis 100% = satu kartu memenuhi lebar dek; `gap` jadi jarak antar
-   kartu saat digeser, bukan memotong lebarnya. */
-.ppm-swipe>*{scroll-snap-align:center; flex:0 0 100%; min-width:0}
+/* PEEK — kartu berikutnya sengaja MENGINTIP di tepi kanan.
+   Sebelumnya `flex:0 0 100%`: satu kartu memenuhi dek, tepinya rata dengan
+   tepi layar, dan tak ada apa pun yang memberi tahu bahwa masih ada kartu di
+   sebelahnya. Isi yang terpotong adalah petunjuk gestur yang paling kuat —
+   lebih kuat daripada ikon, panah, atau tulisan apa pun — karena pengguna
+   MELIHAT ada yang belum selesai, bukan diberi tahu. */
+.ppm-swipe>*{scroll-snap-align:center; flex:0 0 88%; min-width:0}
+@media (min-width:768px){
+  /* Layar lebar: ±2 kartu terlihat sekaligus. */
+  .ppm-swipe>*{flex-basis:46%}
+}
 @media (prefers-reduced-motion:reduce){
   .ppm-swipe{scroll-behavior:auto}
+}
+
+/* Pudar di tepi — penanda kedua bahwa dek masih berlanjut. Memakai `mask` pada
+   deknya sendiri, bukan elemen gradient bertumpuk: tak ada elemen tambahan yang
+   harus di-`pointer-events:none`, dan tingginya otomatis mengikuti isi. */
+.ppm-swipe-fade{
+  -webkit-mask-image:linear-gradient(to right,#000 0,#000 calc(100% - 28px),transparent 100%);
+  mask-image:linear-gradient(to right,#000 0,#000 calc(100% - 28px),transparent 100%);
+}
+
+/* Titik indikator dek. TOMBOL sungguhan di markup (bukan <span>), supaya bisa
+   difokus papan ketik dan punya label — di desktop inilah satu-satunya cara
+   berpindah kartu tanpa tetikus, karena dek ini tak bisa diseret. */
+.ppm-dot{width:8px;height:8px;border-radius:9999px;background:#c8ccc4;padding:0;
+  border:0;transition:width .2s ease,background-color .2s ease}
+.ppm-dot-active{width:20px;background:#064e3b}
+
+/* Tombol panah kepala periode (kalender/rekap) — jalur NON-GESTUR yang wajib
+   ada: geser itu jalan pintas, dan WCAG 2.5.1 menuntut setiap gestur punya
+   padanan satu-tombol. Juga satu-satunya cara di desktop. */
+.ppm-nav-btn{width:2.5rem;height:2.5rem;border-radius:9999px;
+  display:flex;align-items:center;justify-content:center;
+  background:#e6eae4;color:#191d1b;cursor:pointer;
+  transition:transform .15s ease,background-color .15s ease}
+.ppm-nav-btn:active{transform:scale(.94)}
+.ppm-nav-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* Petunjuk "bisa digeser" (komponen SwipeHint). Bergoyang TIGA kali lalu diam —
+   animasi tanpa henti di tepi pandangan lebih mengganggu daripada membantu.
+   TAMPIL DI DESKTOP JUGA: sejak SwipeArea menangani event `wheel`, gulir dua
+   jari di trackpad memindahkan periode persis seperti geseran jari — jadi
+   menyembunyikan petunjuknya di layar besar berarti menyembunyikan gestur yang
+   memang ada di sana. */
+.ppm-swipe-hint{
+  display:flex;align-items:center;justify-content:center;gap:.375rem;
+  margin-top:.5rem;font-size:.75rem;color:#5f635f;
+  animation:pp-nudge 1.4s ease-in-out 3;
+}
+@keyframes pp-nudge{0%,100%{transform:translateX(0)}50%{transform:translateX(6px)}}
+
+/* Konten periode masuk dari sisi yang SESUAI arah geseran — tanpa ini
+   pergantian bulan cuma "kedip" dan tak ada yang memberi tahu ke arah mana
+   waktu bergerak. */
+@keyframes pp-slide-l{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
+@keyframes pp-slide-r{from{opacity:0;transform:translateX(-24px)}to{opacity:1;transform:none}}
+.swipe-next{animation:pp-slide-l .22s cubic-bezier(.2,.7,.2,1) both}
+.swipe-prev{animation:pp-slide-r .22s cubic-bezier(.2,.7,.2,1) both}
+
+@media (prefers-reduced-motion:reduce){
+  .ppm-swipe-hint,.swipe-next,.swipe-prev{animation:none}
+  .ppm-dot,.ppm-nav-btn{transition:none}
+  .ppm-nav-btn:active{transform:none}
 }
 
 /* Scroll-reveal (elemen [data-reveal]) — disembunyikan HANYA saat JS aktif. */
@@ -288,6 +400,13 @@ button:active{transform:scale(.96)}
 @media (prefers-reduced-motion:reduce){
   .anim-in,.stagger>*,.bar-grow,.pulse-dot,.sheet-in,.fade-in{animation:none}
   .reveal-js [data-reveal]{opacity:1;transform:none;transition:none}
+  /* Blok ini dulu hanya mematikan ANIMASI. Transisi dan transform tetap jalan,
+     jadi setiap tombol masih mengerut saat ditekan dan setiap kartu masih
+     melompat saat disentuh kursor — gerakan yang justru paling sering memicu
+     keluhan pada orang yang menyalakan setelan ini. Yang diminta pengguna
+     adalah "kurangi gerak", bukan "kurangi keyframes". */
+  button,.press,.card-hover{transition:none}
+  button:active,.press:active,.card-hover:hover{transform:none}
 }
 
 /* Halaman mobile: DESKTOP = SAMA seperti MOBILE — kolom ponsel (max-w-md di
@@ -296,11 +415,12 @@ button:active{transform:scale(.96)}
    block position:fixed → bottom-nav ikut ter-scroll ke tengah konten (bug).
    Dengan window-scroll: nav `fixed bottom-0 inset-x-0 max-w-md mx-auto` otomatis
    terkunci di dasar viewport & sejajar kolom. FAB diselaraskan via .ppm-fab. */
-.ppm-stage{min-height:100vh;}
+.ppm-stage{min-height:100vh;min-height:100dvh;}
 @media (min-width:768px){
   .ppm-stage{background:#e9edf8;}
   .ppm-stage>div{
     min-height:100vh;
+    min-height:100dvh;
     background:#f9f9ff;
     border-inline:1px solid rgba(112,121,116,.18);
     box-shadow:0 0 44px rgba(21,28,39,.10);
@@ -337,16 +457,31 @@ button:active{transform:scale(.96)}
   /* Selaraskan wrapper konten dgn header di kanvas desktop. MobileHeader sudah
      `md:px-0` (rata ke padding kanvas), TAPI wrapper konten `<div class="px-5">`
      tak punya override desktop → judul halaman menggantung ~20px di kiri semua
-     kartu. Nol-kan padding-inline wrapper konten (bukan .fixed: bottom-sheet/
+     kartu. Nol-kan padding-inline wrapper konten (bukan .ppm-dock: bottom-sheet/
      AudioDock punya padding sendiri) agar rata dgn header. Padding kanvas kini
      dari `.ppm-wide` (2rem) — satu sumber, konsisten seluruh halaman. */
-  body:has(.ppm-sidebar[data-open="1"]) .ppm-stage>div.ppm-wide>div:not(.fixed){
+  body:has(.ppm-sidebar[data-open="1"]) .ppm-stage>div.ppm-wide>div:not(.ppm-dock){
     padding-left:0;
     padding-right:0;
   }
-  /* Bilah fixed dlm halaman (chat sesi, AudioDock): di kanvas lebar dibatasi
-     36rem terpusat → jadi bilah kontrol melayang, bukan membentang penuh. */
-  body:has(.ppm-sidebar[data-open="1"]) .ppm-stage .fixed:not(.ppm-fab){
+  /* Bilah melayang dlm halaman (chat sesi, AudioDock): di kanvas lebar
+     dibatasi 36rem terpusat → jadi bilah kontrol melayang, bukan membentang
+     penuh.
+
+     DAFTAR-IZIN (`.ppm-dock`), BUKAN catch-all. Aturan ini dulu berbunyi
+     `.fixed:not(.ppm-fab)` — mengenai APA PUN yang kebetulan memakai utility
+     `fixed` di dalam halaman. Yang terkena bukan cuma bilah yang dimaksud:
+     <Sheet> pernah rusak karenanya (scrim-nya ikut dipotong jadi pita 36rem
+     sehingga latar gelapnya tak menutup layar), dan "perbaikannya" waktu itu
+     adalah menghindari kelas `fixed` — bukan memperbaiki aturannya.
+     Backdrop popover notifikasi (`fixed inset-0`) masih kena sampai sekarang:
+     penangkap-klik yang seharusnya selebar layar menyusut jadi 36rem, jadi
+     mengklik di luar popover tak selalu menutupnya.
+
+     Dengan daftar-izin, elemen fixed BARU (toast, dropdown, dialog) tak lagi
+     ikut terseret hanya karena posisinya kebetulan fixed. Yang mau di-offset
+     menyatakan dirinya sendiri. */
+  body:has(.ppm-sidebar[data-open="1"]) .ppm-stage .ppm-dock{
     left:16rem;
     max-width:36rem;
     border-radius:1rem 1rem 0 0;

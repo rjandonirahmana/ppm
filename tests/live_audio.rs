@@ -40,6 +40,13 @@ async fn body_bytes(resp: axum::response::Response) -> Vec<u8> {
 #[tokio::test]
 async fn alur_siaran_chunk_data_download() {
     // Direktori rekaman terisolasi per proses uji.
+    //
+    // `set_var` aman DI SINI dan hanya di sini: tiap berkas di tests/ jadi
+    // binary tersendiri, berkas ini berisi SATU uji, dan variabelnya diset
+    // sebelum ada thread lain yang membacanya. Menambah uji kedua ke berkas ini
+    // akan mematahkan ketiga syarat itu sekaligus — `cargo test` menjalankan
+    // uji satu binary secara paralel, dan `RECORDINGS_DIR` dibaca handler dari
+    // env global. Kalau perlu uji kedua, buat berkas tests/ baru.
     let dir = std::env::temp_dir().join(format!("ppm-rec-test-{}", std::process::id()));
     std::env::set_var("RECORDINGS_DIR", &dir);
 
@@ -59,8 +66,7 @@ async fn alur_siaran_chunk_data_download() {
     // ConnectionManager cukup ADA (bukan tersambung sungguhan) utk mengisi
     // AppState. Timeout pendek + nol retry agar setup uji tak menggantung.
     // CATATAN: versi redis ini MENYAMBUNG saat membentuk ConnectionManager
-    // (tidak lazy). Bila tak ada Redis lokal, LEWATI uji ini (bukan gagal) —
-    // live_audio tak butuh Redis, hanya AppState yang mensyaratkan field-nya.
+    // (tidak lazy), jadi tanpa Redis lokal uji ini tak bisa berjalan.
     let redis_client = redis::Client::open("redis://127.0.0.1:6379/").unwrap();
     let redis = match redis::aio::ConnectionManager::new_with_config(
         redis_client,
@@ -72,7 +78,25 @@ async fn alur_siaran_chunk_data_download() {
     .await
     {
         Ok(m) => m,
+        // ── KENAPA INI PANIK DI CI ───────────────────────────────────────────
+        // Versi lama `return` begitu saja dengan `eprintln!`. Akibatnya uji ini
+        // dilaporkan LULUS tanpa menjalankan satu pun assertion di bawahnya —
+        // dan di CI (yang memang tak punya redis-server) itu berarti seluruh
+        // alur chunk→data→download tak pernah benar-benar diuji, sementara
+        // papan hijau mengatakan sebaliknya. Uji yang tak berjalan harus
+        // terlihat, bukan menyamar jadi uji yang lulus.
+        //
+        // Di mesin pengembang melewatinya masih masuk akal (tak semua orang
+        // menyalakan Redis untuk menyentuh satu berkas), jadi bedanya cuma di
+        // CI. Bila CI kelak menyalakan service Redis, cabang ini tak pernah
+        // tersentuh dan boleh dihapus.
         Err(e) => {
+            assert!(
+                std::env::var("CI").is_err(),
+                "Redis lokal tak tersedia di CI ({e}) — uji ini WAJIB berjalan di sana. \
+                 Tambahkan service Redis ke workflow, atau tandai uji ini #[ignore] \
+                 secara sadar."
+            );
             eprintln!(
                 "SKIP alur_siaran_chunk_data_download: Redis lokal tak tersedia ({e}). \
                  Jalankan `redis-server` untuk menjalankan uji ini."

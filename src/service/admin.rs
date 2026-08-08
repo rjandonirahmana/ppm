@@ -10,7 +10,11 @@ use crate::models::{ActivityLogItem, RfidDeviceItem, UserControlData, UserRow};
 use crate::repository as repo;
 
 /// Saldo poin awal semester (PRD "Sistem Poin 2.0": 300 poin).
-pub const SEMESTER_START_POINTS: i32 = 300;
+///
+/// Nilainya kini tinggal di `models` supaya `repository` juga bisa memakainya
+/// tanpa membalik arah lapisan — lihat catatan di sana. Diekspor ulang di sini
+/// agar pemanggil lama tak perlu diubah.
+pub use crate::models::SEMESTER_START_POINTS;
 
 /// Reset saldo poin semua santri ke 300 (awal semester baru, PRD). Return
 /// jumlah santri ter-reset.

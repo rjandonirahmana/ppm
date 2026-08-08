@@ -1,12 +1,24 @@
 -- =============================================================================
--- 3_seed_users.sql — Seed SATU user per role (untuk pengujian).
+-- dev/seed_users.sql — Akun contoh SATU per peran, UNTUK PENGEMBANGAN SAJA.
 --
--- Password SEMUA akun : Tyye9#ebv        (⚠️ ganti di produksi!)
--- Hash bcrypt sudah DIVERIFIKASI cocok (cargo run -- verify ... → COCOK).
+-- ⚠️ BUKAN MIGRASI. Berkas ini dulu bernama `migration/3_seed_users.sql` dan
+-- ikut dijalankan rantai migrasi — termasuk di produksi. Dipindah ke sini
+-- (migrasi 70) karena tiga hal:
 --
--- Idempotent: ON CONFLICT (username) DO NOTHING — aman dijalankan berulang.
--- Jalankan SETELAH 1.sql + 2.sql:
---   psql "$DATABASE_URL" -f migration/3_seed_users.sql
+--   1. Password SEMUA akun di bawah tertulis lengkap di komentar berkas ini,
+--      dan hash-nya ikut masuk ke setiap database yang menjalankan migrasi.
+--   2. Ia menyisipkan role 'teacher' — DILARANG CHECK sejak migrasi 38
+--      (digabung ke 'dewan_guru' di migrasi 36). Pada database BARU, rantai
+--      migrasi pasti berhenti di sini. Sudah diperbaiki di bawah.
+--   3. Produksi tak membutuhkannya: `service::auth::ensure_seed_admin` membuat
+--      admin pertama saat tabel users kosong, dengan sandi dari env
+--      ADMIN_PASSWORD, dan MENOLAK berjalan bila LEPTOS_ENV=PROD tanpa env itu.
+--
+-- Password SEMUA akun : Tyye9#ebv        (⚠️ jangan pernah dipakai di produksi)
+--
+-- Idempotent: ON CONFLICT (username) DO NOTHING.
+-- Jalankan MANUAL, hanya di mesin pengembangan:
+--   psql "$DATABASE_URL" -f dev/seed_users.sql
 --
 -- Login bisa pakai username ATAU email ATAU NIS.
 -- =============================================================================
@@ -20,9 +32,10 @@ VALUES
      '$2b$10$XnKUkKbMB7Ubn/D7zlmiIOlp82zDFhOc/Odi3ebcgWTXC3IIYlVzu',
      NULL, 0, 'PPM AFM, Jl. Sawo No.33B, Pondok Cina, Depok'),
 
-    -- 2) TEACHER (dewan guru) — redirect → /guru
+    -- 2) DEWAN GURU — redirect → /dewan-guru  (dulu ditulis 'teacher';
+    --    role itu digabung ke dewan_guru di migrasi 36 & dilarang sejak 38)
     ('ustadz.ahmad',  'ustadz.ahmad@ppmafm.sch.id',  NULL,
-     'Ust. Ahmad Fauzi',    '+62 812-1111-2222', 'teacher',
+     'Ust. Ahmad Fauzi',    '+62 812-1111-2222', 'dewan_guru',
      '$2b$10$XnKUkKbMB7Ubn/D7zlmiIOlp82zDFhOc/Odi3ebcgWTXC3IIYlVzu',
      NULL, 0, NULL),
 

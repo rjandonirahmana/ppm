@@ -8,7 +8,9 @@ use crate::models::{
     prestasi_label, PemanggilanItem, SessionUser, SpItem, WeeklyRecapRow, WeeklyRewardRow,
 };
 use crate::web::api::{credit_weekly_rewards_action, weekly_recap_data};
-use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
+use crate::web::components::{
+    DeviceFrame, EmptyState, FetchError, MobileHeader, SwipeArea, SwipeHint,
+};
 
 #[component]
 pub fn RekapMingguanPage() -> impl IntoView {
@@ -75,9 +77,31 @@ pub fn RekapMingguanPage() -> impl IntoView {
 
                 <div class="px-5 pt-5 md:px-8 md:pt-7 space-y-5 stagger">
                     // ── Navigasi pekan ─────────────────────────────────
-                    <div class="flex items-center justify-between gap-2">
+                    // Geser kiri/kanan = pindah pekan, sama seperti kalender.
+                    // Tombol panah TETAP ada dan bukan pelengkap: gestur tak
+                    // bisa dijangkau papan ketik maupun pembaca layar, dan di
+                    // desktop tak ada yang menggeser apa pun (WCAG 2.5.1).
+                    //
+                    // Arah geseran mengikuti waktu, bukan daftar: geser ke
+                    // KANAN membawa mundur ke pekan sebelumnya — arah yang sama
+                    // dengan tombol panah kiri di sebelahnya.
+                    <SwipeArea
+                        on_prev=move || offset.update(|o| *o += 1)
+                        on_next=move || offset.update(|o| *o = (*o - 1).max(0))
+                        hint_key="rekap"
+                        // Yang bisa digeser adalah BILAH PERIODE ini, bukan
+                        // seluruh badan halaman. Dua alasan: `.ppm-swipe-area`
+                        // mematikan seleksi teks (perlu, supaya menyeret tak
+                        // menyorot tulisan) — dan halaman ini penuh nama serta
+                        // angka yang wajar disalin orang; lalu daftarnya
+                        // panjang, jadi geseran tak sengaja di tengah daftar
+                        // memindahkan pekan tanpa pengguna melihat kepala
+                        // periodenya berubah. `py-2` membuat bilahnya ±56px,
+                        // di atas ambang target sentuh 44px.
+                        class="flex items-center justify-between gap-2 py-2"
+                    >
                         <button
-                            class="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center press cursor-pointer"
+                            class="ppm-nav-btn press"
                             aria-label="Pekan sebelumnya"
                             on:click=move |_| offset.update(|o| *o += 1)
                         >
@@ -106,14 +130,15 @@ pub fn RekapMingguanPage() -> impl IntoView {
                             </Suspense>
                         </div>
                         <button
-                            class="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center press cursor-pointer disabled:opacity-40"
+                            class="ppm-nav-btn press"
                             aria-label="Pekan berikutnya"
                             prop:disabled=move || offset.get() == 0
                             on:click=move |_| offset.update(|o| *o = (*o - 1).max(0))
                         >
                             <span class="material-symbols-outlined">"chevron_right"</span>
                         </button>
-                    </div>
+                    </SwipeArea>
+                    <SwipeHint key="rekap" teks="Geser untuk ganti pekan" />
 
                     <Suspense fallback=|| {
                         view! {

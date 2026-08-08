@@ -248,38 +248,56 @@ async fn main() -> Result<()> {
                         ppm::service::telegram::report_background_error("Auto-verify final", e.to_string());
                     }
                 }
-            }
-        });
-    }
-
-    // ── Job pengingat sesi ke PAMONG (WA, ~1 jam sebelum sesi) ───────────────
-    // Tiap 5 menit: kirim WA ke pamong kelas untuk sesi yang mulai ≤60 menit
-    // lagi (agar mengatur dewan guru pengisi). Idempotent (repo menandai
-    // pamong_notified_at saat klaim → tak kirim ganda). Migrasi 30.
-    {
-        let pool = state.pool.clone();
-        let http = state.http.clone();
-        let waha = state.waha.clone();
-        let base_url = std::env::var("APP_BASE_URL").unwrap_or_default();
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(300));
-            loop {
-                tick.tick().await;
-                match ppm::service::sessions::send_pamong_session_reminders(
-                    &pool, &http, &waha, &base_url,
-                )
-                .await
-                {
-                    Ok(n) if n > 0 => tracing::info!("Pengingat sesi pamong: {n} WA terkirim"),
-                    Ok(_) => {}
-                    Err(e) => {
-                        tracing::warn!("Pengingat sesi pamong gagal: {e}");
-                        ppm::service::telegram::report_background_error("Pengingat sesi pamong", e.to_string());
+                // ── Rekonsiliasi saldo poin ─────────────────────────────────
+                // `users.points` kolom TURUNAN yang dijaga trigger migrasi 32:
+                // selama semua jalur hanya menulis `point_logs`, ia mustahil
+                // meleset dari SUM(delta). Pemeriksaan ini ada justru karena
+                // "mustahil" itu pernah tidak berlaku — migrasi 32 lahir
+                // sesudah saldo telanjur menyimpang, dan tak ada yang tahu
+                // sampai seseorang menjumlahkan riwayat dengan tangan.
+                //
+                // TIDAK menambal apa pun. Yang perlu diperbaiki adalah jalur
+                // yang bocor; menambal angkanya justru menyembunyikan jalur
+                // itu dan membuat pemeriksaan ini selalu tampak bersih.
+                match ppm::repository::saldo_menyimpang(&pool).await {
+                    Ok(v) if !v.is_empty() => {
+                        let ringkas = v
+                            .iter()
+                            .take(5)
+                            .map(|s| {
+                                format!("{} (#{}) {} ≠ {}", s.full_name, s.user_id, s.saldo, s.seharusnya)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        tracing::error!(
+                            jumlah = v.len(),
+                            "SALDO POIN MENYIMPANG dari point_logs: {ringkas}"
+                        );
+                        ppm::service::telegram::report_background_error(
+                            "Rekonsiliasi saldo poin",
+                            format!("{} santri saldonya meleset. {ringkas}", v.len()),
+                        );
                     }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Rekonsiliasi saldo gagal: {e}"),
                 }
             }
         });
     }
+
+    // ── DIHAPUS: job pengingat sesi ke PAMONG versi lama (migrasi 30) ────────
+    // Dulu di sini ada task kedua tiap 5 menit yang memanggil
+    // `send_pamong_session_reminders` — mengirim WA ke pamong untuk sesi yang
+    // mulai ≤60 menit lagi, ditandai lewat `class_sessions.pamong_notified_at`.
+    //
+    // Isinya SAMA dengan `ingatkan_pamong_sesi` di atas (migrasi 67), dan
+    // keduanya berjalan bersamaan tanpa saling tahu: dua penanda berbeda, dua
+    // interval berbeda, satu pamong menerima DUA WhatsApp untuk satu sesi.
+    // Yang bertahan adalah yang baru — ia menyaring kelas KBM, memeriksa apa
+    // yang sebenarnya belum ditunjuk (guru / pamong / keduanya), dan berhenti
+    // mengganggu begitu penugasannya lengkap.
+    //
+    // Kolom `pamong_notified_at` dibuang di migrasi 70.
 
     let leptos_conf = get_configuration(Some("Cargo.toml"))
         .map_err(|e| anyhow::anyhow!("gagal load config leptos: {e}"))?;
@@ -372,8 +390,16 @@ async fn main() -> Result<()> {
                 .layer(DefaultBodyLimit::max(limits::body_limit(limits::MATERIAL_MAX))),
         )
         .route(
+            // VIDEO_MAX, bukan IMAGE_MAX: rute ini juga menerima video utama
+            // halaman depan (migrasi 69). Batas per-jenis tetap ditegakkan di
+            // dalam handler — foto tetap dibatasi 10 MB.
             "/api/activity-photos/upload",
             post(ppm::web::activity_photos::upload)
+                .layer(DefaultBodyLimit::max(limits::body_limit(limits::VIDEO_MAX))),
+        )
+        .route(
+            "/api/articles/cover",
+            post(ppm::web::article_cover::upload)
                 .layer(DefaultBodyLimit::max(limits::body_limit(limits::IMAGE_MAX))),
         )
         .route(

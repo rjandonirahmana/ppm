@@ -1,35 +1,50 @@
-//! repository/activity_photos.rs — Query galeri foto kegiatan (migrasi 34).
+//! repository/activity_photos.rs — Query galeri media pondok (migrasi 34 & 69).
 //! Ditampilkan publik di beranda; dikelola staf di /galeri (urutan bisa di-drag).
+//! Sejak migrasi 69 tiap baris punya KATEGORI (video utama / kegiatan /
+//! fasilitas) dan jenis media (gambar / video).
 
 use anyhow::{Context, Result};
 use deadpool_postgres::Pool;
+use tokio_postgres::Row;
 
 use crate::models::ActivityPhoto;
 
-/// Semua foto terurut `sort_order` lalu `id` (tie-breaker stabil).
+/// Kolom yang dibaca — satu tempat supaya urutan `r.get(n)` di bawah tak perlu
+/// dicocokkan ulang tiap kali ada query baru.
+const COLS: &str = "id, url, caption, sort_order, focus_x, focus_y, zoom, fit, \
+                    category, media_type";
+
+fn row_to_photo(r: Row) -> ActivityPhoto {
+    ActivityPhoto {
+        id: r.get(0),
+        url: r.get(1),
+        caption: r.get(2),
+        sort_order: r.get(3),
+        focus_x: r.get(4),
+        focus_y: r.get(5),
+        zoom: r.get(6),
+        fit: r.get(7),
+        category: r.get(8),
+        media_type: r.get(9),
+    }
+}
+
+/// SEMUA media terurut `sort_order` lalu `id` (tie-breaker stabil).
+///
+/// Dipakai halaman kelola dan halaman depan sekaligus: seluruh galeri pondok
+/// hanya puluhan baris, jadi satu bacaan lalu dipilah per kategori di memori
+/// lebih murah — dan membuat halaman depan konsisten — dibanding tiga query
+/// terpisah yang bisa saling mendahului.
 pub async fn list_activity_photos(pool: &Pool) -> Result<Vec<ActivityPhoto>> {
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT id, url, caption, sort_order, focus_x, focus_y, zoom, fit \
-             FROM activity_photos ORDER BY sort_order, id",
+            &format!("SELECT {COLS} FROM activity_photos ORDER BY sort_order, id"),
             &[],
         )
         .await
         .context("list_activity_photos")?;
-    Ok(rows
-        .into_iter()
-        .map(|r| ActivityPhoto {
-            id: r.get(0),
-            url: r.get(1),
-            caption: r.get(2),
-            sort_order: r.get(3),
-            focus_x: r.get(4),
-            focus_y: r.get(5),
-            zoom: r.get(6),
-            fit: r.get(7),
-        })
-        .collect())
+    Ok(rows.into_iter().map(row_to_photo).collect())
 }
 
 /// Tambah foto baru di urutan paling belakang (max+1).
@@ -57,17 +72,30 @@ pub async fn insert_activity_photo(
     caption: &str,
     created_by: i64,
     f: PhotoFraming,
+    category: &str,
+    media_type: &str,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
             "INSERT INTO activity_photos \
-                 (url, caption, sort_order, created_by, focus_x, focus_y, zoom, fit) \
+                 (url, caption, sort_order, created_by, focus_x, focus_y, zoom, fit, \
+                  category, media_type) \
              VALUES ($1, $2, \
                      (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM activity_photos), \
-                     $3, $4, $5, $6, $7) \
+                     $3, $4, $5, $6, $7, $8, $9) \
              RETURNING id",
-            &[&url, &caption, &created_by, &f.focus_x, &f.focus_y, &f.zoom, &f.fit],
+            &[
+                &url,
+                &caption,
+                &created_by,
+                &f.focus_x,
+                &f.focus_y,
+                &f.zoom,
+                &f.fit,
+                &category,
+                &media_type,
+            ],
         )
         .await
         .context("insert_activity_photo")?;
@@ -118,5 +146,29 @@ pub async fn set_activity_photo_focus(
         )
         .await
         .context("set_activity_photo_focus")?;
+    Ok(n > 0)
+}
+
+/// Simpan keterangan & kategori satu media (migrasi 69).
+///
+/// Terpisah dari `set_activity_photo_focus` karena dua hal yang berbeda: yang
+/// itu tentang cara memandang gambar, ini tentang di mana media tampil dan apa
+/// tulisan di bawahnya. Menggabungkannya berarti editor bidikan harus ikut
+/// mengirim kategori — dan mengubah kategori dari daftar harus ikut mengirim
+/// bidikan yang tak sedang disunting.
+pub async fn set_activity_photo_meta(
+    pool: &Pool,
+    id: i64,
+    caption: &str,
+    category: &str,
+) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE activity_photos SET caption = $2, category = $3 WHERE id = $1",
+            &[&id, &caption, &category],
+        )
+        .await
+        .context("set_activity_photo_meta")?;
     Ok(n > 0)
 }

@@ -49,7 +49,7 @@ pub fn StafDashboardPage() -> impl IntoView {
         <Title text="Dashboard Staf — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
-                <MobileHeader title="Dashboard Staf" subtitle="Ringkasan aktivitas hari ini" />
+                <MobileHeader title="Dashboard Staf" subtitle="Ringkasan aktivitas hari ini" settings=true />
                 <div class="px-5 pt-5 space-y-5 stagger">
                     <Suspense fallback=|| {
                         view! {
@@ -178,6 +178,7 @@ fn StafBody(d: StafHome) -> impl IntoView {
                     ("summarize", "Rekap", "/rekap-mingguan"),
                     ("payments", "Pembayaran", "/tagihan"),
                     ("grid_on", "Galeri", "/galeri"),
+                    ("article", "Artikel", "/kelola-artikel"),
                     ("shield", "Kontrol", "/kontrol-pengguna"),
                     ("settings", "Setelan", "/setelan"),
                 ]

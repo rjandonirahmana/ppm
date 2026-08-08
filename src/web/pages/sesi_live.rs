@@ -319,7 +319,7 @@ fn LiveBody(d: SessionLiveData, refetch: impl Fn() + Copy + Send + 'static) -> i
                 "Chat dibuka saat sesi dimulai."
             };
             view! {
-                <div class="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-surface-container-lowest border-t border-outline-variant/60 px-4 py-4 z-20">
+                <div class="ppm-dock fixed bottom-0 inset-x-0 max-w-md mx-auto bg-surface-container-lowest border-t border-outline-variant/60 px-4 py-4 z-20">
                     <p class="text-body-sm text-on-surface-variant text-center flex items-center justify-center gap-2">
                         <span class="material-symbols-outlined text-[18px]">"lock"</span>
                         {teks}
@@ -332,7 +332,7 @@ fn LiveBody(d: SessionLiveData, refetch: impl Fn() + Copy + Send + 'static) -> i
         // nilai tetap per-render, jadi tak butuh reaktivitas.
         {is_live.then(|| view! {
         <form
-            class="fixed bottom-0 inset-x-0 max-w-md mx-auto bg-surface-container-lowest border-t border-outline-variant/60 px-4 py-3 flex items-center gap-2 z-20"
+            class="ppm-dock fixed bottom-0 inset-x-0 max-w-md mx-auto bg-surface-container-lowest border-t border-outline-variant/60 px-4 py-3 flex items-center gap-2 z-20"
             method="post"
             on:submit=send
         >

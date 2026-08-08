@@ -89,6 +89,16 @@ pub fn fmt_month(ts: DateTime<Utc>) -> String {
     format!("{} {}", BULAN_PANJANG[d.month0() as usize], d.year())
 }
 
+/// Tanggal lengkap berbahasa Indonesia: "8 Agustus 2026" (WIB).
+///
+/// Bentuk panjang, bukan `fmt_dt_full`: artikel bertanggal terbit, bukan
+/// berjam-menit, dan halaman publik dibaca orang luar yang tak mengenal
+/// singkatan bulan yang dipakai di dalam portal.
+pub fn tanggal_panjang(ts: DateTime<Utc>) -> String {
+    let d = ts.with_timezone(&wib()).date_naive();
+    format!("{} {} {}", d.day(), BULAN_PANJANG[d.month0() as usize], d.year())
+}
+
 /// Rentang tanggal izin: "12 – 13 Nov 2025" / "12 Nov 2025".
 pub fn fmt_range(start: chrono::NaiveDate, end: Option<chrono::NaiveDate>) -> String {
     let f = |d: chrono::NaiveDate| {

@@ -14,7 +14,7 @@ use crate::web::api::{
     academic_calendar_data, create_semester_action, delete_semester_action, semesters_data,
     update_semester_action,
 };
-use crate::web::components::{SwipeArea, DeviceFrame, FetchError, MobileHeader};
+use crate::web::components::{DeviceFrame, FetchError, MobileHeader, SwipeArea, SwipeHint};
 
 const HARI: [&str; 7] = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 
@@ -103,7 +103,7 @@ pub fn KalenderPage() -> impl IntoView {
                                                     // Header bulan + navigasi
                                                     <div class="flex items-center justify-between">
                                                         <button
-                                                            class="w-9 h-9 rounded-lg bg-surface-container text-on-surface flex items-center justify-center press"
+                                                            class="ppm-nav-btn press"
                                                             on:click=move |_| ym.set((py, pm))
                                                             aria-label="Bulan sebelumnya"
                                                         >
@@ -126,7 +126,7 @@ pub fn KalenderPage() -> impl IntoView {
                                                                 })}
                                                         </div>
                                                         <button
-                                                            class="w-9 h-9 rounded-lg bg-surface-container text-on-surface flex items-center justify-center press"
+                                                            class="ppm-nav-btn press"
                                                             on:click=move |_| ym.set((ny, nm))
                                                             aria-label="Bulan berikutnya"
                                                         >
@@ -143,6 +143,7 @@ pub fn KalenderPage() -> impl IntoView {
                                                     <SwipeArea
                                                         on_prev=move || ym.set((py, pm))
                                                         on_next=move || ym.set((ny, nm))
+                                                        hint_key="kalender"
                                                         class="ppm-card p-3"
                                                     >
                                                         // Baris nama hari
@@ -205,6 +206,17 @@ pub fn KalenderPage() -> impl IntoView {
                                                                 .collect_view()}
                                                         </div>
                                                     </SwipeArea>
+
+                                                    // Petunjuk sekali-tampil:
+                                                    // gestur tak punya wujud,
+                                                    // jadi tanpa ini hampir tak
+                                                    // ada yang menemukannya.
+                                                    // Hilang setelah geseran
+                                                    // pertama yang berhasil.
+                                                    <SwipeHint
+                                                        key="kalender"
+                                                        teks="Geser untuk ganti bulan"
+                                                    />
                                                 </div>
 
                                                 // ── Daftar sesi hari terpilih (kanan) ────

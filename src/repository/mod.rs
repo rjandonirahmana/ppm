@@ -3,6 +3,7 @@
 
 pub mod activity_log;
 pub mod activity_photos;
+pub mod articles;
 pub mod attendance;
 pub mod books;
 pub mod device;
@@ -21,6 +22,7 @@ pub mod users;
 
 pub use activity_log::*;
 pub use activity_photos::*;
+pub use articles::*;
 pub use attendance::*;
 pub use books::*;
 pub use device::*;

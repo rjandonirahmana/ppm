@@ -231,6 +231,67 @@ pub async fn reset_semester_points(pool: &Pool, start: i32) -> Result<i64> {
     Ok(row.get(0))
 }
 
+/// Satu santri yang saldonya MELESET dari jumlah log poinnya.
+pub struct SaldoMeleset {
+    pub user_id: i64,
+    pub full_name: String,
+    /// Nilai di `users.points` sekarang.
+    pub saldo: i32,
+    /// Nilai yang seharusnya: `COALESCE(SUM(point_logs.delta), 0)`.
+    pub seharusnya: i64,
+}
+
+/// Cari saldo poin yang MENYIMPANG dari akumulasi `point_logs`.
+///
+/// `users.points` adalah kolom TURUNAN yang dijaga trigger
+/// `trg_point_logs_balance` (migrasi 32). Selama semua jalur hanya menulis
+/// `point_logs`, keduanya mustahil berbeda — tapi "selama" itulah masalahnya.
+/// Penyimpangan seperti itu tak menimbulkan galat, tak muncul di layar mana
+/// pun, dan baru ketahuan kalau ada yang kebetulan menjumlahkan riwayat
+/// seorang santri dengan tangan.
+///
+/// ⚠️ PRASYARAT: MIGRASI 72. Sampai migrasi itu dijalankan, fungsi ini melapor
+/// SETIAP santri — dan laporannya benar tapi tak berguna. Sebabnya migrasi 28
+/// menyetel `users.points DEFAULT 300`, sehingga saldo awal tiap santri masuk
+/// lewat default kolom tanpa baris `point_logs` sama sekali; invarian
+/// `points = ΣΔ` memang tak pernah berlaku untuk siapa pun. Migrasi 72
+/// memasukkan saldo awal itu ke buku besar dan mengembalikan default ke 0,
+/// setelah itu barulah selisih di sini benar-benar berarti "ada yang salah".
+///
+/// Fungsi ini TIDAK memperbaiki apa pun. Menambal otomatis akan menyembunyikan
+/// jalur bocor yang menyebabkannya, dan yang perlu diperbaiki adalah jalur itu,
+/// bukan angkanya. (Lagi pula menambal lewat penyisipan log MUSTAHIL: trigger
+/// menggerakkan kedua sisi sebesar delta yang sama, jadi selisihnya kebal —
+/// lihat uraian di migrasi 72.)
+///
+/// Santri tanpa satu pun log ikut diperiksa (`LEFT JOIN` + `COALESCE`): saldo
+/// bukan-nol tanpa riwayat justru bentuk penyimpangan yang paling mencurigakan.
+pub async fn saldo_menyimpang(pool: &Pool) -> Result<Vec<SaldoMeleset>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT u.id, u.full_name, u.points, COALESCE(SUM(pl.delta), 0)::bigint \
+               FROM users u \
+               LEFT JOIN point_logs pl ON pl.user_id = u.id \
+              WHERE u.role IN ('santri', 'santri_finance') \
+              GROUP BY u.id, u.full_name, u.points \
+             HAVING u.points <> COALESCE(SUM(pl.delta), 0) \
+              ORDER BY abs(u.points - COALESCE(SUM(pl.delta), 0)) DESC",
+            &[],
+        )
+        .await
+        .context("saldo_menyimpang")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| SaldoMeleset {
+            user_id: r.get(0),
+            full_name: r.get(1),
+            saldo: r.get(2),
+            seharusnya: r.get(3),
+        })
+        .collect())
+}
+
 /// Jumlah user (dipakai bootstrap seed).
 pub async fn count_users(pool: &Pool) -> Result<i64> {
     let c = pool.get().await?;
@@ -384,17 +445,59 @@ pub async fn insert_registered_user(
     major: Option<&str>,
     entry_year: Option<i16>,
 ) -> Result<i64> {
-    let c = pool.get().await?;
-    let row = c
+    let mut c = pool.get().await?;
+    let tx = c.transaction().await.context("insert_registered_user tx")?;
+    let row = tx
         .query_one(
             "INSERT INTO users \
-                (full_name, phone_number, role, password_hash, gender, campus, major, entry_year) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+                (full_name, phone_number, role, password_hash, gender, campus, major, entry_year, \
+                 points) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0) RETURNING id",
             &[&name, &phone, &role, &password_hash, &gender, &campus, &major, &entry_year],
         )
         .await
         .context("insert_registered_user")?;
-    Ok(row.get(0))
+    let id: i64 = row.get(0);
+
+    // ── SALDO AWAL LEWAT BUKU BESAR, BUKAN DEFAULT KOLOM ─────────────────────
+    //
+    // `points` diisi 0 secara eksplisit lalu saldo awalnya dicatat sebagai satu
+    // baris `point_logs`; trigger `trg_point_logs_balance` (migrasi 32) yang
+    // menaikkan saldonya. Hasil akhirnya sama — 300 untuk santri — tapi kali
+    // ini ADA barisnya.
+    //
+    // Sebelumnya saldo awal datang dari DEFAULT kolom (migrasi 28), jadi 300
+    // itu muncul di saldo tanpa jejak apa pun di riwayat. Dua akibatnya:
+    //   • Riwayat poin seorang santri TAK BISA menjelaskan saldonya sendiri.
+    //     Santri dengan saldo 210 melihat daftar log yang jumlahnya −90, dan
+    //     tak ada baris mana pun yang menerangkan selisihnya.
+    //   • `users.points = SUM(point_logs.delta)` — invarian yang dijaga trigger
+    //     migrasi 32 dan diperiksa `saldo_menyimpang` — TIDAK PERNAH benar
+    //     untuk siapa pun, sehingga pemeriksaannya melaporkan setiap santri.
+    //
+    // Perhatikan: drift TAK BISA diperbaiki dengan menyisipkan log penyeimbang.
+    // Trigger menggerakkan KEDUA sisi sebesar delta yang sama, jadi selisih
+    // (points − ΣΔ) kebal terhadap penyisipan. Satu-satunya cara menutupnya
+    // adalah tidak membuka selisih itu sejak awal — yang dilakukan di sini.
+    // (Migrasi 71 menutup selisih yang telanjur ada, dengan trigger dimatikan
+    // sementara.)
+    let saldo_awal = if crate::models::needs_student_profile(role) {
+        crate::models::SEMESTER_START_POINTS
+    } else {
+        // Peran non-santri tak punya saldo poin — jangan buat baris kosong.
+        0
+    };
+    if saldo_awal != 0 {
+        tx.execute(
+            "INSERT INTO point_logs (user_id, delta, reason, category) \
+             VALUES ($1, $2, 'Saldo awal santri', 'other')",
+            &[&id, &saldo_awal],
+        )
+        .await
+        .context("insert_registered_user saldo awal")?;
+    }
+    tx.commit().await.context("insert_registered_user commit")?;
+    Ok(id)
 }
 
 pub async fn set_role(pool: &Pool, user_id: i64, role: &str) -> Result<bool> {

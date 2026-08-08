@@ -215,6 +215,10 @@ pub async fn pamong_data(pool: &Pool, pamong_id: Option<i64>) -> Result<PamongDa
 
 /// Setujui/tolak satu absensi (tahap pamong). `pamong_id` Some = guard hanya
 /// kelas yang diampu guru ini (migrasi 30).
+///
+/// MENOLAK di sini juga MENARIK poin absensi itu bila tahap final sudah
+/// terlanjur memberikannya — tahap final memang boleh mendahului pamong (lihat
+/// `repo::decide_pamong`). Jadi ini bukan sekadar "ubah status".
 pub async fn decide_pamong(
     pool: &Pool,
     att_id: i64,

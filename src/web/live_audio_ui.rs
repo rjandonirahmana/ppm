@@ -92,7 +92,7 @@ pub fn AudioDock(
     view! {
         // Elemen audio statis (di luar blok reaktif) → playback tak ikut remount.
         <audio node_ref=audio_ref class="hidden"></audio>
-        <div class="fixed bottom-[76px] inset-x-0 max-w-md mx-auto px-4 z-20 pointer-events-none">
+        <div class="ppm-dock fixed bottom-[76px] inset-x-0 max-w-md mx-auto px-4 z-20 pointer-events-none">
             {move || {
                 if is_live.get() && can_manage.get() && can_record.get() {
                     Some(

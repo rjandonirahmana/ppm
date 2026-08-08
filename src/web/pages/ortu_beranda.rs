@@ -41,7 +41,7 @@ pub fn OrtuBerandaPage() -> impl IntoView {
         <Title text="Pantauan Orang Tua — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
-                <MobileHeader title="Pantauan Orang Tua" />
+                <MobileHeader title="Pantauan Orang Tua" settings=true />
 
                 <div class="px-5 pt-5 space-y-4 stagger">
                     <Suspense fallback=|| {

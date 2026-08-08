@@ -205,6 +205,23 @@ tower = { version = "0.5", features = ["util"] }
 [profile.dev]
 opt-level = 1
 debug = 1
+# ⚠️ KALAU BUILD GAGAL DI TAHAP LINK DENGAN "undefined symbol: anon.<hash>.llvm"
+# (baik `rust-lld` untuk WASM maupun `cc` untuk biner server), ITU BUKAN SALAH
+# KODE ANDA — itu artefak inkremental yang basi. Gejalanya khas: simbol yang
+# hilang bernama `anon.…llvm.…` atau instansiasi generik Leptos, dan
+# `cargo check` tetap bersih.
+#
+# Obatnya, dari yang paling ringan:
+#     CARGO_INCREMENTAL=0 cargo leptos build
+#     cargo clean -p ppm && cargo clean -p ppm --target-dir target/front
+#
+# `cargo leptos` memakai RUSTFLAGS berbeda dari `cargo build` biasa, jadi
+# artefaknya TERPISAH — membersihkan `target/` saja tak cukup, `target/front`
+# (bundle WASM) harus ikut. Ini pernah menyesatkan: `cargo build` dengan flag
+# yang kelihatannya sama berhasil, sementara `cargo leptos build` terus gagal.
+#
+# Dibiarkan `true` karena mematikannya memperlambat SETIAP rebuild saat
+# `cargo leptos watch`, sedangkan kegagalannya sesekali dan obatnya satu baris.
 incremental = true
 
 [profile.dev.package."*"]

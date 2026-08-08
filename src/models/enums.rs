@@ -6,6 +6,16 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// Saldo poin awal santri (PRD "Sistem Poin 2.0": 300 poin — diberi tiap awal
+/// semester, berkurang bila izin/alfa/telat).
+///
+/// Tinggal di `models`, bukan di `service::admin` seperti dulu, karena
+/// `repository::insert_registered_user` juga membutuhkannya untuk mencatat
+/// saldo awal ke buku besar. Repository mengimpor dari service akan membalik
+/// arah lapisan (service yang memakai repository, bukan sebaliknya); `models`
+/// memang lapisan bersama yang boleh dilihat keduanya.
+pub const SEMESTER_START_POINTS: i32 = 300;
+
 /// Status kehadiran santri.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -7,6 +7,30 @@ use leptos_router::hooks::use_location;
 
 use crate::models::{BookProgressItem, SessionUser, Surah};
 
+/// Tombol gerigi pengaturan di header — SELALU ke `/profil`. `wide` = ikut
+/// tampil di desktop.
+///
+/// Tujuannya sengaja tidak bergantung peran. Sempat dibuat begitu (admin →
+/// `/setelan`), dan itu keliru: `/setelan` adalah konfigurasi APLIKASI —
+/// alur persetujuan izin, reset saldo poin semester — bukan pengaturan milik
+/// orang yang sedang memakainya. Gerigi di sebelah lonceng dibaca semua orang
+/// sebagai "akun saya", dan itu `/profil`, halaman yang sama yang ditunjuk
+/// "Pengaturan" di sidebar desktop. Admin tetap menjangkau `/setelan` lewat
+/// kotak "Setelan" di grid Alat Administrasi pada dashboard-nya.
+#[component]
+fn SettingsLink(wide: bool) -> impl IntoView {
+    let cls = if wide {
+        "w-9 h-9 rounded-full flex items-center justify-center text-on-surface hover:bg-surface-container press"
+    } else {
+        "md:hidden w-9 h-9 rounded-full flex items-center justify-center text-on-surface hover:bg-surface-container press"
+    };
+    view! {
+        <a href="/profil" class=cls aria-label="Pengaturan" title="Pengaturan">
+            <span class="material-symbols-outlined">"settings"</span>
+        </a>
+    }
+}
+
 /// Header: mobile = sticky bar (judul + lonceng + setting). Desktop (md+, ala
 /// TOPBAR mockup Admin Portal) = judul lebih besar non-sticky + **identitas
 /// user** (avatar inisial + nama + peran) menggantikan tombol setting — sidebar
@@ -17,6 +41,14 @@ pub fn MobileHeader(
     title: &'static str,
     #[prop(optional)] back_href: Option<&'static str>,
     #[prop(optional)] subtitle: Option<&'static str>,
+    /// Halaman BERANDA sebuah peran: gerigi setelan ikut tampil di desktop.
+    ///
+    /// Di halaman dalam, gerigi cukup ada di ponsel — di desktop sidebar sudah
+    /// memuat "Pengaturan", dan dua jalan ke tempat yang sama pada satu layar
+    /// hanya menambah keraguan. Di beranda justru sebaliknya: itu halaman yang
+    /// dibuka pertama dan tempat orang mencari setelan.
+    #[prop(optional)]
+    settings: bool,
 ) -> impl IntoView {
     let session = use_context::<Resource<Option<SessionUser>>>();
     view! {
@@ -46,13 +78,10 @@ pub fn MobileHeader(
             <span class="md:hidden">
                 <NotifBell />
             </span>
-            <a
-                href="/profil"
-                class="md:hidden w-9 h-9 rounded-full flex items-center justify-center text-on-surface hover:bg-surface-container press"
-                aria-label="Pengaturan"
-            >
-                <span class="material-symbols-outlined">"settings"</span>
-            </a>
+            // Tujuannya tetap /profil untuk semua peran, jadi tak perlu membaca
+            // sesi sama sekali — tak ada Transition, tak ada risiko
+            // hydration-mismatch, dan tautannya sudah benar di HTML pertama.
+            <SettingsLink wide=settings />
             // ── Identitas user (desktop saja) ────────────────────────────
             <Transition fallback=|| ()>
                 {move || {
@@ -155,7 +184,7 @@ fn nav_visible(path: &str) -> bool {
         "/dewan-guru", "/poin", "/poin-dewan", "/verifikasi-pamong",
         "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua", "/kontrol-pengguna",
         "/akademik", "/kalender", "/izin-staf", "/materi", "/rekap-mingguan", "/setelan",
-        "/galeri", "/tagihan", "/tagihan-saya",
+        "/galeri", "/tagihan", "/tagihan-saya", "/kelola-artikel",
     ];
     PREFIXES
         .iter()
@@ -635,6 +664,88 @@ pub fn PhotoFrame(
                 loading=if lazy { "lazy" } else { "eager" }
                 class="relative"
             />
+        </div>
+    }
+}
+
+/// Bingkai satu media galeri — `<img>` untuk foto, `<video>` untuk video
+/// (migrasi 69).
+///
+/// Dipisah dari [`PhotoFrame`] alih-alih menambah satu flag ke dalamnya karena
+/// yang dibutuhkan video bukan cuma tag yang berbeda: ia butuh `muted` +
+/// `playsinline` (tanpa keduanya iOS/Android menolak memutar otomatis dan
+/// justru membuka pemutar layar penuh), `loop`, dan `poster` yang tak punya
+/// padanan pada gambar. `PhotoFrame` tetap dipakai apa adanya di jalur yang
+/// memang cuma menampilkan foto.
+///
+/// `object-fit`/`object-position` di `style` berlaku untuk `<video>` persis
+/// seperti untuk `<img>`, jadi bidikan tersimpan (migrasi 54 & 55) ikut
+/// menentukan bagian video yang tampil.
+#[component]
+pub fn MediaFrame(
+    #[prop(into)] src: String,
+    #[prop(into)] style: String,
+    /// `true` → render `<video>`.
+    video: bool,
+    /// Tampilkan latar buram di belakang media (mode `contain`).
+    backdrop: bool,
+    #[prop(into, optional)] alt: String,
+    /// Kelas bingkai luar — di sinilah rasio ditentukan, mis. `aspect-[3/4]`.
+    #[prop(into, optional)] class: String,
+    #[prop(optional)] lazy: bool,
+    /// Video berjalan sendiri, membisu & berulang (kepala halaman depan).
+    /// Tanpa ini video tampil dengan kontrol pemutar biasa.
+    #[prop(optional)] ambient: bool,
+) -> impl IntoView {
+    let frame_class = format!("relative overflow-hidden {class}");
+    view! {
+        <div class=frame_class>
+            {(backdrop && !video)
+                .then(|| {
+                    view! {
+                        <img
+                            src=src.clone()
+                            style=crate::models::BACKDROP_STYLE
+                            alt=""
+                            aria-hidden="true"
+                        />
+                    }
+                })}
+            {if video {
+                view! {
+                    <video
+                        src=src.clone()
+                        style=style.clone()
+                        class="relative"
+                        autoplay=ambient
+                        // Atribut DAN properti: atributnya yang membuat HTML
+                        // SSR sudah membisu saat pertama dirender, propertinya
+                        // yang bertahan setelah hidrasi. Video yang tak
+                        // membisu ditolak putar-otomatis oleh semua browser
+                        // seluler — kepala halaman akan tampil sebagai kotak
+                        // hitam diam.
+                        muted=ambient
+                        prop:muted=ambient
+                        r#loop=ambient
+                        controls=!ambient
+                        playsinline="playsinline"
+                        preload=if lazy { "metadata" } else { "auto" }
+                        aria-label=alt.clone()
+                    ></video>
+                }
+                    .into_any()
+            } else {
+                view! {
+                    <img
+                        src=src.clone()
+                        style=style.clone()
+                        alt=alt.clone()
+                        loading=if lazy { "lazy" } else { "eager" }
+                        class="relative"
+                    />
+                }
+                    .into_any()
+            }}
         </div>
     }
 }
@@ -1307,29 +1418,23 @@ pub fn KotakCari(
 ///
 /// `<div class="ppm-card-grid">` polos memakai CSS Grid, dan grid selalu
 /// menyusun per BARIS: kartu pendek di sebelah kartu panjang meninggalkan
-/// lubang kosong sampai baris berikutnya boleh mulai. Fungsi ini membagi kartu
-/// selang-seling ke dua kolom terpisah — genap ke kiri, ganjil ke kanan —
-/// sehingga tiap kolom mengalir sendiri dan tak ada lubang, sementara urutan
-/// bacanya tetap kiri→kanan.
+/// lubang kosong sampai baris berikutnya boleh mulai. Yang dipakai di sini
+/// multi-kolom CSS (`.ppm-masonry`), yang mengalirkan kartu tanpa baris.
 ///
-/// `order` ditempel per kartu karena di ponsel kedua kolom dilebur kembali
-/// (`display:contents`); tanpa itu urutannya jadi 1,3,5,2,4. Lihat
-/// `.ppm-card-col` di style/tailwind.css.
+/// KARTU TIDAK LAGI DIPECAH KE DUA PEMBUNGKUS. Versi sebelumnya membagi genap
+/// ke kiri dan ganjil ke kanan lalu membetulkan tampilannya dengan `order` —
+/// dan `order` hanya memindahkan yang TERLIHAT. Pembaca layar serta urutan Tab
+/// mengikuti DOM, jadi keduanya membacakan 1,3,5,2,4 sementara mata melihat
+/// 1,2,3,4,5. Di sini urutan DOM = urutan baca = urutan tampil.
+///
+/// Harga yang dibayar: di desktop urutannya jadi per-kolom (paruh pertama di
+/// kiri, sisanya di kanan), bukan selang-seling. Lihat `.ppm-masonry` di
+/// style/tailwind.css.
 ///
 /// Dipakai untuk daftar kartu seragam. Kalau isinya campur (mis. satu pesan
 /// "kosong" yang harus melebar penuh), pakai `.ppm-card-grid` langsung.
 pub fn kartu_grid(kartu: Vec<AnyView>) -> impl IntoView {
-    let (mut kiri, mut kanan) = (Vec::new(), Vec::new());
-    for (i, k) in kartu.into_iter().enumerate() {
-        let item = view! { <div style=format!("order:{i}")>{k}</div> };
-        if i % 2 == 0 { kiri.push(item) } else { kanan.push(item) }
-    }
-    view! {
-        <div class="ppm-card-grid">
-            <div class="ppm-card-col">{kiri}</div>
-            <div class="ppm-card-col">{kanan}</div>
-        </div>
-    }
+    view! { <div class="ppm-masonry">{kartu}</div> }
 }
 
 /// Placeholder memuat berbentuk balok — menggantikan blok `animate-pulse`
@@ -1358,33 +1463,89 @@ pub fn Skeleton(
 /// perangkat sentuh, sehingga versi touch-only membuat gestur yang sama tak
 /// bekerja di layar besar.
 ///
-/// Ambang 60 px + syarat `|dx| > |dy|`: tanpa keduanya, gulir vertikal biasa
-/// yang sedikit miring akan terbaca sebagai geser dan memindahkan bulan tanpa
-/// diminta. `touch-action:pan-y` (lihat `.ppm-swipe-area` di tailwind.css)
+/// Ambang 48 px + syarat "horizontal DOMINAN" (`|dx| > |dy| * 1.5`): tanpa
+/// keduanya, gulir vertikal biasa yang sedikit miring akan terbaca sebagai
+/// geser dan memindahkan bulan tanpa diminta. Syarat lama `|dx| > |dy|` masih
+/// meloloskan gerakan diagonal 46°, yang di ponsel adalah gulir biasa dengan
+/// ibu jari. `touch-action:pan-y` (lihat `.ppm-swipe-area` di tailwind.css)
 /// membiarkan gulir vertikal tetap milik browser, sementara sumbu X jadi milik
 /// kita.
+///
+/// Gestur yang DIMULAI di atas elemen interaktif diabaikan. Grid kalender penuh
+/// dengan `<button>` tanggal: tanpa saringan ini, menekan satu tanggal lalu
+/// jari bergeser sedikit ke samping akan sekaligus memindahkan bulan, dan
+/// tanggal yang barusan ditekan berpindah ke bawah jari.
 #[component]
 pub fn SwipeArea(
     /// Geser ke KANAN (jari bergerak ke kanan) — lazimnya "sebelumnya".
     on_prev: impl Fn() + Copy + Send + 'static,
     /// Geser ke KIRI — lazimnya "berikutnya".
     on_next: impl Fn() + Copy + Send + 'static,
+    /// Kunci petunjuk sekali-tampil (lihat [`SwipeHint`]). Geseran PERTAMA yang
+    /// berhasil menandai kunci ini, sehingga petunjuknya tak muncul lagi —
+    /// orang yang sudah tahu tak perlu terus diberi tahu.
+    #[prop(optional, into)]
+    hint_key: Option<String>,
     #[prop(optional, into)] class: String,
     children: Children,
 ) -> impl IntoView {
-    /// Jarak minimum yang dianggap sengaja digeser, dalam piksel.
-    const AMBANG: f64 = 60.0;
+    /// Jarak minimum yang dianggap sengaja digeser, dalam piksel. Di bawah ini
+    /// terlalu sensitif (bulan berganti tanpa sengaja), jauh di atasnya terasa
+    /// berat.
+    const AMBANG: f64 = 48.0;
+    /// Seberapa jauh gerakan harus lebih mendatar daripada menegak.
+    const DOMINASI: f64 = 1.5;
+    /// Ambang khusus RODA/TRACKPAD. Lebih besar dari ambang jari karena satu
+    /// sentakan dua jari memuntahkan puluhan event kecil yang dijumlahkan.
+    const AMBANG_RODA: f64 = 80.0;
+    /// Setelah satu perpindahan, abaikan roda selama ini (ms). Trackpad terus
+    /// mengirim event "momentum" setelah jari diangkat; tanpa jeda, satu
+    /// sentakan akan melompat beberapa bulan sekaligus.
+    const JEDA_RODA_MS: f64 = 500.0;
 
     let mulai = RwSignal::new(Option::<(f64, f64)>::None);
+    // Akumulator roda + waktu kunci. `StoredValue`, bukan signal: keduanya
+    // keadaan gestur yang sedang berjalan, tak ada yang perlu dirender ulang
+    // karenanya.
+    let roda_akum = StoredValue::new(0.0f64);
+    let roda_kunci = StoredValue::new(0.0f64);
     let cls = format!("ppm-swipe-area {class}");
+    let hint_key = StoredValue::new(hint_key);
+
+    // Elemen interaktif di bawah titik sentuh? `closest` menaiki pohon, jadi
+    // menekan <span> di DALAM sebuah tombol pun ikut terdeteksi.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
+    let dari_interaktif = move |ev: &leptos::ev::PointerEvent| -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::JsCast;
+            return ev
+                .target()
+                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                .and_then(|el| {
+                    el.closest("button, a, input, select, textarea, [data-no-swipe]").ok().flatten()
+                })
+                .is_some();
+        }
+        #[allow(unreachable_code)]
+        false
+    };
 
     view! {
         <div
             class=cls
             on:pointerdown=move |ev: leptos::ev::PointerEvent| {
+                if dari_interaktif(&ev) {
+                    mulai.set(None);
+                    return;
+                }
                 mulai.set(Some((ev.client_x() as f64, ev.client_y() as f64)));
             }
             on:pointercancel=move |_| mulai.set(None)
+            // Jari/kursor terangkat DI LUAR elemen: `pointerup` tak pernah
+            // sampai ke sini, dan titik awal yang tertinggal akan dipakai oleh
+            // gestur berikutnya — geseran hantu dari posisi yang sudah basi.
+            on:pointerleave=move |_| mulai.set(None)
             on:pointerup=move |ev: leptos::ev::PointerEvent| {
                 let Some((x0, y0)) = mulai.get_untracked() else {
                     return;
@@ -1392,14 +1553,113 @@ pub fn SwipeArea(
                 mulai.set(None);
                 let dx = ev.client_x() as f64 - x0;
                 let dy = ev.client_y() as f64 - y0;
-                if dx.abs() < AMBANG || dx.abs() <= dy.abs() {
+                if dx.abs() < AMBANG || dx.abs() <= dy.abs() * DOMINASI {
                     return;
                 }
+                tandai_hint_terpakai(hint_key.get_value().as_deref());
                 if dx > 0.0 { on_prev() } else { on_next() }
+            }
+            // ── TRACKPAD / RODA MENDATAR (laptop) ────────────────────────────
+            // Gulir dua jari TIDAK menghasilkan Pointer Event sama sekali — ia
+            // event `wheel`. Jadi tanpa penangan ini, seluruh gestur di atas
+            // tak pernah tersentuh di laptop, dan satu-satunya jalan tersisa
+            // adalah tombol panah.
+            //
+            // `prevent_default` penting: gulir mendatar di banyak browser
+            // memicu navigasi "kembali". Tanpa dicegah, menggeser bulan justru
+            // melempar pengguna keluar halaman.
+            on:wheel=move |ev: leptos::ev::WheelEvent| {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let (dx, dy) = (ev.delta_x(), ev.delta_y());
+                    // Gulir menegak tetap milik browser — halaman harus tetap
+                    // bisa di-scroll seperti biasa di atas area ini.
+                    if dx.abs() <= dy.abs() {
+                        return;
+                    }
+                    ev.prevent_default();
+                    let sekarang = js_sys::Date::now();
+                    if sekarang < roda_kunci.get_value() {
+                        return; // masih dalam jeda momentum
+                    }
+                    let akum = roda_akum.get_value() + dx;
+                    roda_akum.set_value(akum);
+                    if akum.abs() < AMBANG_RODA {
+                        return;
+                    }
+                    roda_akum.set_value(0.0);
+                    roda_kunci.set_value(sekarang + JEDA_RODA_MS);
+                    tandai_hint_terpakai(hint_key.get_value().as_deref());
+                    // Dua jari bergerak ke KIRI → deltaX positif → "berikutnya",
+                    // arah yang sama dengan jari menggeser ke kiri di ponsel.
+                    if akum < 0.0 { on_prev() } else { on_next() }
+                }
+                let _ = (&ev, &roda_akum, &roda_kunci);
             }
         >
             {children()}
         </div>
+    }
+}
+
+/// Kunci localStorage petunjuk geser untuk sebuah fitur.
+/// Hanya terpakai di jalur wasm — localStorage tak ada di build server.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn hint_storage_key(key: &str) -> String {
+    format!("ppm-swipe-hint-{key}")
+}
+
+/// Catat bahwa pengguna sudah pernah menggeser fitur ini.
+///
+/// Disimpan per-FITUR, bukan satu penanda global: tahu bahwa kalender bisa
+/// digeser tak berarti tahu bahwa rekap pekanan juga bisa, dan satu kunci
+/// bersama akan menyembunyikan petunjuk kedua sebelum sempat terlihat.
+fn tandai_hint_terpakai(key: Option<&str>) {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(key) = key {
+        if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+            let _ = s.set_item(&hint_storage_key(key), "1");
+        }
+    }
+    let _ = key;
+}
+
+/// Petunjuk "ini bisa digeser" yang muncul SEKALI per fitur.
+///
+/// Gestur tak punya wujud: tak ada yang menandakan sebuah area bisa digeser
+/// sampai seseorang kebetulan menggesernya. Petunjuk ini menutup jarak itu,
+/// lalu menghilang selamanya setelah geseran pertama yang berhasil (ditandai
+/// [`SwipeArea`] lewat `hint_key` yang sama).
+///
+/// Hanya di PONSEL. Di desktop yang bekerja adalah tombol panah di kepala
+/// periode — menyuruh pengguna tetikus "menggeser" hanya membingungkan.
+///
+/// Dibaca lewat Effect (bukan saat render) supaya HTML dari server dan render
+/// pertama di klien sama-sama menampilkan petunjuknya: localStorage tak ada di
+/// server, dan membacanya saat render menghasilkan hydration-mismatch.
+#[component]
+pub fn SwipeHint(#[prop(into)] key: String, #[prop(into)] teks: String) -> impl IntoView {
+    let tampil = RwSignal::new(true);
+    Effect::new(move |_| {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let sudah = web_sys::window()
+                .and_then(|w| w.local_storage().ok().flatten())
+                .and_then(|s| s.get_item(&hint_storage_key(&key)).ok().flatten())
+                .is_some();
+            if sudah {
+                tampil.set(false);
+            }
+        }
+        let _ = &key;
+    });
+    view! {
+        <Show when=move || tampil.get() fallback=|| ()>
+            <p class="ppm-swipe-hint" aria-hidden="true">
+                <span class="material-symbols-outlined text-base">"swipe"</span>
+                {teks.clone()}
+            </p>
+        </Show>
     }
 }
 

@@ -22,6 +22,13 @@
 /// Foto kegiatan galeri, wajah tamu, dan bukti bayar tagihan.
 pub const IMAGE_MAX: usize = 10 * 1024 * 1024;
 
+/// Video utama halaman depan (migrasi 69). Jauh di atas [`IMAGE_MAX`] karena
+/// klip 15–30 detik beresolusi layar penuh memang berukuran puluhan MB —
+/// batas gambar akan menolak hampir semua rekaman yang berguna. Batas ISI
+/// tetap dibedakan per jenis di dalam handler: rute yang sama menerima foto,
+/// dan foto 100 MB tak pernah masuk akal.
+pub const VIDEO_MAX: usize = 100 * 1024 * 1024;
+
 /// Berkas Materials Library (mp3/wav/ogg, pdf, mp4/webm).
 pub const MATERIAL_MAX: usize = 100 * 1024 * 1024;
 
@@ -44,7 +51,7 @@ mod tests {
     /// batas isi) yang menjadi bug 2 MB itu.
     #[test]
     fn batas_body_selalu_di_atas_batas_isi() {
-        for max in [IMAGE_MAX, MATERIAL_MAX, AUDIO_CHUNK_MAX] {
+        for max in [IMAGE_MAX, VIDEO_MAX, MATERIAL_MAX, AUDIO_CHUNK_MAX] {
             assert!(body_limit(max) > max, "body_limit({max}) harus > {max}");
         }
     }
@@ -55,7 +62,7 @@ mod tests {
     #[test]
     fn semua_batas_melampaui_bawaan_axum() {
         const AXUM_DEFAULT: usize = 2 * 1024 * 1024;
-        for max in [IMAGE_MAX, MATERIAL_MAX, AUDIO_CHUNK_MAX] {
+        for max in [IMAGE_MAX, VIDEO_MAX, MATERIAL_MAX, AUDIO_CHUNK_MAX] {
             assert!(body_limit(max) > AXUM_DEFAULT);
         }
     }

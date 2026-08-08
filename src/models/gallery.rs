@@ -18,6 +18,94 @@ pub struct ActivityPhoto {
     /// `"cover"` (penuhi bingkai, terpotong) atau `"contain"` (foto utuh).
     /// Lihat [`PhotoFit`] dan migrasi 55.
     pub fit: String,
+    /// Bagian halaman depan tempat media ini tampil. Lihat [`MediaCategory`]
+    /// dan migrasi 69.
+    pub category: String,
+    /// `"image"` atau `"video"` — lihat [`MediaKind`] dan migrasi 69.
+    pub media_type: String,
+}
+
+/// Bagian halaman depan tempat sebuah media galeri tampil (migrasi 69).
+///
+/// Galeri dulu satu tumpukan tanpa penanda, jadi halaman depan hanya bisa
+/// menampilkannya sebagai satu grid. Padahal isinya tiga hal yang muncul di
+/// tempat berbeda, dan pengelola perlu bisa mengganti video kepala halaman
+/// tanpa menyentuh foto kegiatan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaCategory {
+    /// Media yang berjalan di kepala halaman depan (satu yang teratas dipakai).
+    VideoUtama,
+    /// Foto kegiatan santri — grid "Kegiatan".
+    Kegiatan,
+    /// Foto sarana pondok — grid "Fasilitas".
+    Fasilitas,
+}
+
+impl MediaCategory {
+    /// Nilai tak dikenal jatuh ke `Kegiatan`: itu kategori bawaan di tabel, dan
+    /// media yang salah tempat jauh lebih baik daripada media yang hilang.
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "video_utama" => Self::VideoUtama,
+            "fasilitas" => Self::Fasilitas,
+            _ => Self::Kegiatan,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::VideoUtama => "video_utama",
+            Self::Kegiatan => "kegiatan",
+            Self::Fasilitas => "fasilitas",
+        }
+    }
+
+    /// Label berbahasa Indonesia untuk tab & judul bagian.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::VideoUtama => "Video Utama",
+            Self::Kegiatan => "Kegiatan",
+            Self::Fasilitas => "Fasilitas",
+        }
+    }
+
+    /// Urutan tab di halaman kelola — sekaligus daftar kategori yang sah.
+    pub const ALL: [MediaCategory; 3] = [Self::VideoUtama, Self::Kegiatan, Self::Fasilitas];
+}
+
+/// Jenis berkas media. Dipisah dari kategori karena keduanya memang bisa
+/// berbeda: pondok yang belum punya rekaman boleh memakai foto sebagai video
+/// utama, dan kelak bisa ada video kegiatan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaKind {
+    Image,
+    Video,
+}
+
+impl MediaKind {
+    pub fn from_str(s: &str) -> Self {
+        if s == "video" {
+            Self::Video
+        } else {
+            Self::Image
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Image => "image",
+            Self::Video => "video",
+        }
+    }
+
+    /// Jenis media yang diwakili sebuah MIME unggahan.
+    pub fn of_mime(mime: &str) -> Self {
+        if mime.starts_with("video/") {
+            Self::Video
+        } else {
+            Self::Image
+        }
+    }
 }
 
 /// Cara foto mengisi bingkainya.
@@ -60,6 +148,18 @@ impl PhotoFit {
 impl ActivityPhoto {
     pub fn fit(&self) -> PhotoFit {
         PhotoFit::from_str(&self.fit)
+    }
+
+    pub fn category(&self) -> MediaCategory {
+        MediaCategory::from_str(&self.category)
+    }
+
+    pub fn kind(&self) -> MediaKind {
+        MediaKind::from_str(&self.media_type)
+    }
+
+    pub fn is_video(&self) -> bool {
+        self.kind() == MediaKind::Video
     }
 
     /// Gaya CSS untuk elemen `<img>` foto: mode isi + titik fokus + perbesaran.
@@ -152,6 +252,37 @@ mod tests {
         assert_eq!(clamp_focus(f32::NAN, f32::INFINITY, f32::NAN), (0.5, 0.5, 1.0));
         assert_eq!(clamp_focus(-3.0, 9.0, 99.0), (0.0, 1.0, 3.0));
         assert_eq!(clamp_focus(0.25, 0.75, 1.5), (0.25, 0.75, 1.5));
+    }
+
+    /// Kategori tak dikenal HARUS jatuh ke `kegiatan` — itu DEFAULT kolomnya
+    /// (migrasi 69). Kalau tidak, satu baris aneh bisa mengosongkan grid
+    /// kegiatan sekaligus muncul sebagai video kepala halaman.
+    #[test]
+    fn kategori_tak_dikenal_jadi_kegiatan() {
+        assert_eq!(MediaCategory::from_str("video_utama"), MediaCategory::VideoUtama);
+        assert_eq!(MediaCategory::from_str("fasilitas"), MediaCategory::Fasilitas);
+        assert_eq!(MediaCategory::from_str("kegiatan"), MediaCategory::Kegiatan);
+        assert_eq!(MediaCategory::from_str(""), MediaCategory::Kegiatan);
+        assert_eq!(MediaCategory::from_str("VIDEO_UTAMA"), MediaCategory::Kegiatan);
+    }
+
+    /// Nilai `as_str` WAJIB lolos CHECK migrasi 69, jadi bolak-balik harus utuh.
+    #[test]
+    fn kategori_bolak_balik_utuh() {
+        for c in MediaCategory::ALL {
+            assert_eq!(MediaCategory::from_str(c.as_str()), c);
+        }
+    }
+
+    /// Jenis media disimpulkan dari MIME hasil sniff isi berkas, bukan dari
+    /// ekstensi nama — jadi pemetaannya harus mengikuti prefix MIME.
+    #[test]
+    fn jenis_media_dari_mime() {
+        assert_eq!(MediaKind::of_mime("video/mp4"), MediaKind::Video);
+        assert_eq!(MediaKind::of_mime("video/webm"), MediaKind::Video);
+        assert_eq!(MediaKind::of_mime("image/jpeg"), MediaKind::Image);
+        assert_eq!(MediaKind::from_str("video"), MediaKind::Video);
+        assert_eq!(MediaKind::from_str(""), MediaKind::Image);
     }
 
     /// Mode ikut ke gaya CSS — kalau tidak, memilih "muat seluruhnya" tak

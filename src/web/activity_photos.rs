@@ -1,6 +1,10 @@
-//! web/activity_photos.rs — Upload foto kegiatan ke galeri (migrasi 34).
+//! web/activity_photos.rs — Upload media galeri (migrasi 34 & 69).
 //! Handler axum murni (multipart, di luar server-fn — sama alasan materials.rs).
-//! Auth cookie manual; hanya admin/dewan_guru. Balas JSON `{ "id", "url" }`.
+//! Auth cookie manual; hanya admin/dewan_guru. Balas JSON `{ "id", "url", … }`.
+//!
+//! Sejak migrasi 69 rute ini menerima FOTO maupun VIDEO: video utama halaman
+//! depan dikelola di galeri yang sama, jadi memisahkannya ke rute sendiri hanya
+//! menggandakan seluruh alur auth-simpan-catat untuk perbedaan satu MIME.
 
 use std::sync::Arc;
 
@@ -26,14 +30,16 @@ fn parse_f32(field: Result<String, axum::extract::multipart::MultipartError>, df
         .unwrap_or(dflt)
 }
 
-/// Ekstensi/mime gambar yang diterima galeri.
-fn classify_image(filename: &str) -> Option<&'static str> {
+/// Ekstensi/mime yang diterima galeri — gambar DAN video (migrasi 69).
+fn classify_media(filename: &str) -> Option<&'static str> {
     let ext = filename.rsplit('.').next()?.to_lowercase();
     Some(match ext.as_str() {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
         "webp" => "image/webp",
         "gif" => "image/gif",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
         _ => return None,
     })
 }
@@ -72,6 +78,7 @@ pub async fn upload(
     let mut filename = String::new();
     let (mut focus_x, mut focus_y, mut zoom) = crate::models::FOCUS_DEFAULT;
     let mut fit = crate::models::PhotoFit::Cover;
+    let mut category = crate::models::MediaCategory::Kegiatan;
 
     loop {
         let field = match form.next_field().await {
@@ -90,6 +97,12 @@ pub async fn upload(
                 let raw = field.text().await.unwrap_or_default();
                 fit = crate::models::PhotoFit::from_str(raw.trim());
             }
+            // Kategori juga opsional: klien lama mengunggah foto kegiatan, dan
+            // itulah nilai bawaannya.
+            "category" => {
+                let raw = field.text().await.unwrap_or_default();
+                category = crate::models::MediaCategory::from_str(raw.trim());
+            }
             "file" => {
                 filename = field.file_name().unwrap_or_default().to_string();
                 match field.bytes().await {
@@ -104,24 +117,36 @@ pub async fn upload(
     let Some(bytes) = file_bytes else {
         return (StatusCode::BAD_REQUEST, "File wajib diunggah.").into_response();
     };
-    if bytes.is_empty() || bytes.len() > crate::web::limits::IMAGE_MAX {
-        return (StatusCode::BAD_REQUEST, "Ukuran gambar tidak valid (maks 10MB).")
-            .into_response();
-    }
-    let Some(content_type) = classify_image(&filename) else {
+    let Some(content_type) = classify_media(&filename) else {
         return (
             StatusCode::BAD_REQUEST,
-            "Jenis file tidak didukung (gunakan jpg/png/webp/gif).",
+            "Jenis file tidak didukung (gunakan jpg/png/webp/gif atau mp4/webm).",
         )
             .into_response();
     };
+    let kind = crate::models::MediaKind::of_mime(content_type);
+    // Batas ISI dibedakan per jenis meski rute-nya satu: layer body di router
+    // harus melonggar sampai ukuran video, dan tanpa pemeriksaan ini foto pun
+    // ikut boleh 100 MB.
+    let (max, batas_pesan) = match kind {
+        crate::models::MediaKind::Video => (crate::web::limits::VIDEO_MAX, "video maks 100MB"),
+        crate::models::MediaKind::Image => (crate::web::limits::IMAGE_MAX, "gambar maks 10MB"),
+    };
+    if bytes.is_empty() || bytes.len() > max {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("Ukuran file tidak valid ({batas_pesan})."),
+        )
+            .into_response();
+    }
     // Ekstensi cuma nama yang dipilih pengunggah; isinya yang menentukan. Tanpa
     // cek ini, berkas apa pun bisa dinamai `.png` lalu tersimpan berlabel
     // `image/png` dan disajikan kembali dengan label itu.
     if !crate::web::filetype::matches(&bytes, content_type) {
         return (
             StatusCode::BAD_REQUEST,
-            "Isi file tidak cocok dengan ekstensinya — pastikan ini benar-benar gambar.",
+            "Isi file tidak cocok dengan ekstensinya — pastikan ini benar-benar \
+             gambar atau video.",
         )
             .into_response();
     }
@@ -160,6 +185,8 @@ pub async fn upload(
         caption,
         claims.user_id,
         framing,
+        category.as_str(),
+        kind.as_str(),
     )
     .await
     {
@@ -172,6 +199,9 @@ pub async fn upload(
                 "focus_y": fy,
                 "zoom": z,
                 "fit": fit.as_str(),
+                "caption": caption,
+                "category": category.as_str(),
+                "media_type": kind.as_str(),
             })),
         )
             .into_response(),

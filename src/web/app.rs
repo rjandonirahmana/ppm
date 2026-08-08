@@ -191,6 +191,9 @@ pub fn App() -> impl IntoView {
             <FlatRoutes fallback=|| view! { <NotFoundPage /> }>
                 // Publik: beranda profil pesantren untuk pengunjung.
                 <Route path=path!("/") view=BerandaPage />
+                // Artikel PUBLIK (migrasi 69) — daftar & satu tulisan.
+                <Route path=path!("/artikel") view=ArtikelListPage />
+                <Route path=path!("/artikel/:slug") view=ArtikelDetailPage />
                 <Route path=path!("/login") view=LoginPage />
                 <Route path=path!("/register") view=RegisterPage />
                 <Route path=path!("/tamu") view=TamuPage />
@@ -221,6 +224,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/izin-staf") view=IzinStafPage />
                 <Route path=path!("/materi") view=MateriPage />
                 <Route path=path!("/galeri") view=GaleriPage />
+                <Route path=path!("/kelola-artikel") view=KelolaArtikelPage />
                 <Route path=path!("/tagihan") view=FinancePage />
                 <Route path=path!("/tagihan-saya") view=MyBillsPage />
                 <Route path=path!("/kontrol-pengguna") view=KontrolPenggunaPage />

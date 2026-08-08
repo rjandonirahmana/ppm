@@ -1615,6 +1615,117 @@ pub async fn set_activity_photo_focus_action(
         .map_err(err)
 }
 
+/// Simpan keterangan & kategori satu media galeri (admin/dewan_guru, migrasi 69).
+///
+/// Kategori dirapikan lewat `MediaCategory::from_str` sebelum menyentuh tabel:
+/// kolomnya punya CHECK, dan nilai asing dari pemanggil langsung akan gagal
+/// dengan galat Postgres alih-alih jatuh ke kategori bawaan.
+#[server(SetActivityPhotoMeta, "/api-fn")]
+pub async fn set_activity_photo_meta_action(
+    id: i64,
+    caption: String,
+    category: String,
+) -> Result<(), ServerFnError> {
+    require_roles(GALLERY_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    let cat = crate::models::MediaCategory::from_str(category.trim());
+    crate::repository::set_activity_photo_meta(&state.pool, id, caption.trim(), cat.as_str())
+        .await
+        .map(|_| ())
+        .map_err(err)
+}
+
+// ── Artikel halaman depan (migrasi 69) ────────────────────────────────────────
+// Daftar & isi TERBIT bersifat publik; membuat/menyunting/menghapus admin saja.
+
+#[cfg(feature = "ssr")]
+const ARTICLE_MANAGE_ROLES: &[&str] = &["admin", "ketua"];
+
+/// Artikel terbit, terbaru dulu — PUBLIK. `limit` 0 = semua.
+#[server(GetArticles, "/api-fn")]
+pub async fn articles_data(limit: i64) -> Result<Vec<crate::models::Article>, ServerFnError> {
+    let state = app_state().await?;
+    crate::repository::list_articles_published(&state.pool, limit.max(0))
+        .await
+        .map_err(err)
+}
+
+/// Satu artikel terbit berdasarkan slug — PUBLIK. `None` = tak ada / masih draf.
+#[server(GetArticle, "/api-fn")]
+pub async fn article_data(slug: String) -> Result<Option<crate::models::Article>, ServerFnError> {
+    let state = app_state().await?;
+    crate::repository::get_article_published(&state.pool, slug.trim())
+        .await
+        .map_err(err)
+}
+
+/// Semua artikel TERMASUK draf — halaman kelola admin.
+#[server(GetArticlesAdmin, "/api-fn")]
+pub async fn articles_admin_data() -> Result<Vec<crate::models::Article>, ServerFnError> {
+    require_roles(ARTICLE_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    crate::repository::list_articles_all(&state.pool).await.map_err(err)
+}
+
+/// Simpan artikel: `id` `Some` = perbarui, `None` = buat baru. Balas id-nya.
+///
+/// Satu server fn untuk dua operasi karena formnya SATU dan isiannya sama
+/// persis; memisahkannya berarti dua daftar parameter yang harus dijaga tetap
+/// identik, dan form yang harus memilih tujuan sebelum mengirim.
+#[server(SaveArticle, "/api-fn")]
+pub async fn save_article_action(
+    id: Option<i64>,
+    title: String,
+    excerpt: String,
+    body: String,
+    cover_url: String,
+    published: bool,
+) -> Result<i64, ServerFnError> {
+    let author = require_roles(ARTICLE_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(ServerFnError::new("Judul artikel wajib diisi."));
+    }
+    let cover = cover_url.trim();
+    let cover = (!cover.is_empty()).then_some(cover);
+    // Judul yang seluruhnya non-ASCII (mis. Arab) menghasilkan slug kosong —
+    // bukan alamat yang sah, dan hanya satu artikel seperti itu yang bisa ada
+    // sebelum kolom uniknya bentrok. Cadangannya bertanggal supaya tetap bisa
+    // dibaca manusia.
+    let mut slug = crate::models::slugify(title);
+    if slug.is_empty() {
+        slug = format!("artikel-{}", chrono::Utc::now().format("%Y%m%d%H%M%S"));
+    }
+    let input = crate::repository::ArticleInput {
+        slug: &slug,
+        title,
+        excerpt: excerpt.trim(),
+        body: body.trim(),
+        cover_url: cover,
+        published,
+    };
+
+    match id {
+        Some(id) => {
+            crate::repository::update_article(&state.pool, id, &input).await.map_err(err)?;
+            Ok(id)
+        }
+        None => crate::repository::insert_article(&state.pool, &input, author.id)
+            .await
+            .map_err(err),
+    }
+}
+
+/// Hapus artikel (admin).
+#[server(DeleteArticle, "/api-fn")]
+pub async fn delete_article_action(id: i64) -> Result<(), ServerFnError> {
+    require_roles(ARTICLE_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    crate::repository::delete_article(&state.pool, id).await.map(|_| ()).map_err(err)
+}
+
 // ── Buku tamu (migrasi 35) — PUBLIK (tanpa login) ─────────────────────────────
 // /tamu: isi data → kode 6-digit (Redis) → ketik di mesin IoT → mesin kirim kode
 // + wajah ke POST /api/guestbook → HP tamu polling status → ✅.

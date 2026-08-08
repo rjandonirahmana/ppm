@@ -3,6 +3,7 @@
 //! jangan taruh tipe yang menarik dep server-only (tokio/axum/postgres) di sini.
 
 pub mod admin;
+pub mod article;
 pub mod attendance;
 pub mod auth;
 pub mod enums;
@@ -21,6 +22,7 @@ pub mod santri;
 pub mod schedule;
 
 pub use admin::*;
+pub use article::*;
 pub use attendance::*;
 pub use auth::*;
 pub use enums::*;

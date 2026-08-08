@@ -51,7 +51,19 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                         <h1 class="text-headline-sm text-on-background">"Verifikasi Pamong"</h1>
                         <p class="text-body-sm text-on-surface-variant">"Kehadiran menunggu tindakan"</p>
                     </div>
-                    <span class="material-symbols-outlined text-primary">"how_to_reg"</span>
+                    <div class="flex items-center gap-1">
+                        <span class="material-symbols-outlined text-primary">"how_to_reg"</span>
+                        // Pamong tak punya setelan aplikasi — gerigi ini menuju
+                        // setelan AKUN (/profil), tempat ganti sandi & keluar.
+                        <a
+                            href="/profil"
+                            class="w-9 h-9 rounded-full flex items-center justify-center text-on-surface hover:bg-surface-container press"
+                            aria-label="Setelan"
+                            title="Setelan"
+                        >
+                            <span class="material-symbols-outlined">"settings"</span>
+                        </a>
+                    </div>
                 </header>
 
                 <div class="px-5 pt-5 space-y-5 stagger">

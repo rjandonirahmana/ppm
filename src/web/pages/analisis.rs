@@ -48,7 +48,7 @@ fn AnalisisPage(title: &'static str) -> impl IntoView {
         <Title text=format!("{title} — AFM SMART") />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
-                <MobileHeader title=title subtitle="Portal Administrasi" />
+                <MobileHeader title=title subtitle="Portal Administrasi" settings=true />
                 <div class="px-5 pt-5 space-y-5 stagger">
                     <Suspense fallback=|| {
                         view! {

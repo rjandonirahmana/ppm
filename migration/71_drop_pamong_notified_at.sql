@@ -1,0 +1,40 @@
+-- =============================================================================
+-- 71_drop_pamong_notified_at.sql — Langkah CONTRACT: buang kolom penanda
+-- pengingat WA versi lama.
+--
+-- ⚠️ JANGAN JALANKAN SEBELUM BINER BARU BERJALAN DI PRODUKSI.
+--
+-- Ini sengaja dipisah dari migrasi 70. Migrasi di proyek ini dijalankan MANUAL
+-- sementara kode di-deploy otomatis saat push, jadi urutan keduanya tak
+-- terjamin. Membuang kolom yang masih dipakai biner lama menghasilkan
+--     ERROR: column "pamong_notified_at" does not exist
+-- setiap 5 menit, plus satu alert Telegram tiap kali — persis yang terjadi saat
+-- versi pertama migrasi 70 memuat DROP ini di dalamnya.
+--
+-- Pola yang benar (expand/contract):
+--   rilis N   : kode berhenti memakai kolom; kolomnya DIBIARKAN
+--   rilis N+1 : kolomnya dibuang (berkas ini)
+--
+-- CARA MEMASTIKAN AMAN — di log server produksi harus terlihat baris dari job
+-- BARU dan tak ada lagi dari job lama:
+--     ADA   : "Pengingat sesi: N pesan terkirim ke pamong"   ← permits.rs (m67)
+--     TIADA : "Pengingat sesi pamong: N WA terkirim"          ← job lama
+--     TIADA : "Pengingat sesi pamong gagal: …"                ← job lama
+-- Kalau dua yang terakhir masih muncul, biner lama MASIH hidup — tunda.
+--
+-- Cek terakhir sebelum menjalankan (harus mengembalikan 0 baris):
+--     SELECT 1 FROM pg_stat_activity
+--      WHERE query ILIKE '%pamong_notified_at%' AND state <> 'idle';
+--
+-- Kolomnya hanya penanda waktu; membuangnya tak menghilangkan riwayat apa pun.
+-- Fungsi penandanya sudah digantikan `pamong_reminded_at` (migrasi 67), yang
+-- dipakai satu-satunya job pengingat yang tersisa.
+--
+-- Idempotent. Jalankan setelah migrasi 70 DAN setelah deploy.
+-- =============================================================================
+
+ALTER TABLE class_sessions DROP COLUMN IF EXISTS pamong_notified_at;
+
+-- Verifikasi (harus kosong):
+--   SELECT column_name FROM information_schema.columns
+--    WHERE table_name = 'class_sessions' AND column_name = 'pamong_notified_at';

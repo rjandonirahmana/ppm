@@ -1,8 +1,11 @@
 //! web — App universal Leptos (SSR + hydrate): shell HTML, router, halaman.
 
-// Upload foto kegiatan galeri (server, multipart — di luar server-fn).
+// Upload media galeri (server, multipart — di luar server-fn).
 #[cfg(feature = "ssr")]
 pub mod activity_photos;
+// Upload gambar sampul artikel (server, multipart — di luar server-fn).
+#[cfg(feature = "ssr")]
+pub mod article_cover;
 // Check-in tamu dari mesin IoT (server, multipart — di luar server-fn).
 #[cfg(feature = "ssr")]
 pub mod guestbook;

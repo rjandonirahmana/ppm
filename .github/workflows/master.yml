@@ -3,7 +3,58 @@ on:
   push:
     branches: ["main"]
 jobs:
+  # Uji dijalankan SEBELUM build & deploy, dan deploy bergantung padanya.
+  # Sebelumnya workflow ini langsung membangun image lalu mendorongnya ke
+  # server produksi tanpa satu pun `cargo test` — seluruh berkas di tests/
+  # tak pernah berjalan di mana pun kecuali di mesin yang kebetulan
+  # mengingatnya. Papan hijau di sini dulu hanya berarti "image berhasil
+  # dibuat", bukan "kodenya benar".
+  test:
+    runs-on: ubuntu-latest
+    services:
+      # live_audio membentuk ConnectionManager Redis saat setup (tidak lazy),
+      # jadi tanpa service ini ujinya tak bisa berjalan — dan sejak sekarang ia
+      # PANIK bila absen di CI alih-alih diam-diam dilaporkan lulus.
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          # Samakan dengan rust-toolchain.toml.
+          toolchain: nightly-2026-07-15
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # --locked: bangun dengan Cargo.lock APA ADANYA. Tanpa ini cargo boleh
+      # memutakhirkan dependensi diam-diam, sehingga yang diuji di sini bukan
+      # yang akan dijalankan di produksi.
+      # --all-targets: ikutkan tests/ dan benches/. Berkas uji di repo ini
+      # pernah gagal DIKOMPILASI berbulan-bulan tanpa ada yang tahu, karena
+      # `cargo test` biasa tak menyentuh target yang tak dipanggil.
+      # --no-fail-fast: laporkan SEMUA kegagalan sekali jalan, bukan berhenti
+      # di yang pertama lalu menyembunyikan sisanya.
+      - name: Uji
+        run: cargo test --locked --all-targets --no-fail-fast --no-default-features --features ssr
+      # Clippy INFORMATIF, bukan penghalang. Kodebase ini punya ±47 lint yang
+      # sudah ada sejak lama (argumen fungsi >7, `from_str` bukan trait,
+      # indentasi doc-list) — semuanya soal gaya, bukan kebenaran. Memasang
+      # `-D warnings` sekarang berarti setiap deploy produksi terhenti oleh
+      # hal-hal itu, dan yang akan terjadi bukan lint-nya dibereskan melainkan
+      # langkah ini dimatikan. Naikkan jadi `-D warnings` setelah lint yang ada
+      # dibersihkan — saat itu ia baru bermakna.
+      - name: Clippy (tak menghalangi)
+        continue-on-error: true
+        run: cargo clippy --locked --all-targets --no-default-features --features ssr
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

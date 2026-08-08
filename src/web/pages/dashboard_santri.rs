@@ -181,7 +181,19 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
                         <p class="text-headline-sm text-on-background">{first_name} "!"</p>
                     </div>
                 </div>
-                <NotifBell />
+                <div class="flex items-center gap-1">
+                    <NotifBell />
+                    // Santri tak punya setelan aplikasi — gerigi ini menuju
+                    // setelan AKUN (/profil), tempat ganti sandi & keluar.
+                    <a
+                        href="/profil"
+                        class="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container press"
+                        aria-label="Setelan"
+                        title="Setelan"
+                    >
+                        <span class="material-symbols-outlined">"settings"</span>
+                    </a>
+                </div>
             </header>
 
             // ── Kartu Poin ──────────────────────────────────────────────────

@@ -407,22 +407,53 @@ pub async fn decide_pamong(
     // Tahap 1 hanya MEMAJUKAN status; POIN diberikan sekali di tahap FINAL
     // (decide_verify / auto-verify-final) — migrasi 33. Guard: pamong bertugas
     // sesi = approver (COALESCE cs.pamong_id, cl.pamong_id); $4 NULL = admin/dewan.
+    //
+    // ── KENAPA ADA CTE PENARIKAN POIN ────────────────────────────────────────
+    // Tahap final SENGAJA boleh mendahului pamong: antreannya menyaring
+    // `pamong_status <> 'rejected'`, bukan `= 'approved'` (lihat
+    // `pending_verify`). Jadi urutan guru-dulu-pamong-belakangan bukan kasus
+    // aneh, melainkan alur biasa — dan konsekuensinya baris ini bisa sudah
+    // `verify_status='approved'` dengan poin terlanjur masuk saat pamong
+    // menolak.
+    //
+    // Tanpa penarikan ini santri berakhir "ditolak" tapi tetap berpoin: status
+    // dan saldo saling bertentangan, dan tak ada satu pun layar yang
+    // memperlihatkan pertentangan itu. Poin ditarik dengan predikat yang SAMA
+    // PERSIS dengan jalur koreksi absensi (`correct_attendance`,
+    // `upsert_session_attendance_bulk`) — satu cara membatalkan poin absensi,
+    // bukan tiga yang mirip.
+    //
+    // Penghapusan cukup menyentuh `point_logs`: `trg_point_logs_balance`
+    // (migrasi 32) yang mengembalikan `users.points`. Log lama sebelum migrasi
+    // 51 tak punya `attendance_id` dan sengaja tak disentuh daripada salah
+    // tebak.
     let c = pool.get().await?;
-    let n = c
-        .execute(
-            "UPDATE attendances a SET pamong_status = $2, pamong_by = $3, pamong_at = NOW(), \
-                    verify_status = CASE WHEN $2 = 'rejected' THEN 'rejected' \
-                                         ELSE a.verify_status END \
-             WHERE a.id = $1 AND a.pamong_status = 'pending' \
-                AND ($4::bigint IS NULL OR \
-                    (SELECT COALESCE(cs.pamong_id, cl.pamong_id) FROM class_sessions cs \
-                        JOIN classes cl ON cl.id = cs.class_id \
-                        WHERE cs.id = a.class_session_id) = $4) \
-             RETURNING a.id",
+    let row = c
+        .query_one(
+            "WITH upd AS ( \
+                UPDATE attendances a SET pamong_status = $2, pamong_by = $3, pamong_at = NOW(), \
+                        verify_status = CASE WHEN $2 = 'rejected' THEN 'rejected' \
+                                             ELSE a.verify_status END \
+                 WHERE a.id = $1 AND a.pamong_status = 'pending' \
+                    AND ($4::bigint IS NULL OR \
+                        (SELECT COALESCE(cs.pamong_id, cl.pamong_id) FROM class_sessions cs \
+                            JOIN classes cl ON cl.id = cs.class_id \
+                            WHERE cs.id = a.class_session_id) = $4) \
+                 RETURNING a.id \
+             ), \
+             tarik AS ( \
+                DELETE FROM point_logs \
+                 WHERE $2 = 'rejected' \
+                   AND attendance_id IN (SELECT id FROM upd) \
+                   AND category IN ('attendance', 'discipline') \
+                RETURNING 1 \
+             ) \
+             SELECT count(*)::bigint FROM upd",
             &[&att_id, &status, &approver, &pamong_id],
         )
         .await
         .context("decide_pamong")?;
+    let n: i64 = row.get(0);
     Ok(n > 0)
 }
 
@@ -881,17 +912,59 @@ pub async fn decide_verify(
 /// downtime lama tiba-tiba menghukum retroaktif riwayat lama). DIKECUALIKAN:
 /// sesi libur (cancelled), santri yg sudah punya catatan pada sesi itu, dan
 /// santri dgn izin (permit_requests) disetujui yang mencakup TANGGAL SESI itu.
-/// Idempotent via NOT EXISTS (tak ada UNIQUE constraint di attendances —
-/// lihat roadmap #6). Return jumlah baris alpa baru.
+/// Idempotent BERLAPIS DUA. `NOT EXISTS` menyaring yang sudah tercatat saat
+/// query disusun; `ON CONFLICT DO NOTHING` menangkap yang lolos di antara
+/// pembacaan dan penulisan. Komentar lama di sini menyatakan "tak ada UNIQUE
+/// constraint di attendances" — itu belum benar sejak migrasi 42, yang justru
+/// memasang dua index unik untuk aturan dedup ini.
+///
+/// Tanpa lapis kedua, dua eksekusi yang tumpang tindih (job harian tertunda +
+/// pemicuan manual, atau dua instance server) membuat INSERT kedua menabrak
+/// UNIQUE, dan karena seluruhnya SATU pernyataan, SEMUA baris alpa hari itu
+/// ikut batal — bukan cuma yang bentrok. Kegagalan diam-diam yang menghukum
+/// hari berikutnya, bukan hari ini.
+///
+/// `ON CONFLICT` sengaja TANPA target. Baris yang ditulis di sini bisa
+/// menabrak DUA constraint berbeda yang dua-duanya berarti "sudah ada
+/// catatan": `UNIQUE (user_id, class_session_id)` (migrasi 2) dan
+/// `uq_attendance_schedule_daily` (migrasi 42, parsial). Satu klausa bertarget
+/// hanya bisa menyebut salah satunya, dan yang tak disebut tetap menggagalkan
+/// seluruh pernyataan. Ini pengecualian sadar dari kebiasaan "selalu sebut
+/// targetnya" — di sini targetnya memang jamak.
+///
+/// Return jumlah baris alpa baru.
 ///
 /// Izin memerdekakan santri HANYA untuk kelas yang izinnya ditujukan
 /// (`p.class_id`). Sejak migrasi 46 izin dipecah per kelas, jadi tanpa syarat
 /// ini satu izin untuk kelas A ikut melindungi santri di kelas B pada hari yang
 /// sama — dia bolos kelas B tanpa tercatat. Izin lama tanpa class_id (NULL)
 /// tetap berlaku menyeluruh, seperti sebelum migrasi 46.
+/// Kunci penasihat (advisory lock) job auto-absent. Angkanya sembarang tapi
+/// TETAP — yang penting tak dipakai job lain. Dicatat di sini, bukan di
+/// pemanggil, supaya siapa pun yang menambah job baru melihat nomor yang sudah
+/// terpakai saat membaca berkas ini.
+const LOCK_AUTO_ABSENT: i64 = 0x7070_6D5F_6162_7301; // "ppm_abs" + 01
 pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
-    let c = pool.get().await?;
-    let row = c
+    let mut c = pool.get().await?;
+    // Kunci TRANSAKSIONAL, bukan `pg_try_advisory_lock` biasa: koneksi datang
+    // dari pool dan dikembalikan setelah dipakai. Kunci sesi akan ikut menempel
+    // pada koneksi yang didaur ulang, dan job berikutnya menemukan kunci yang
+    // tak pernah dilepas siapa pun. Versi `_xact_` lepas sendiri saat COMMIT
+    // atau ROLLBACK, termasuk saat prosesnya mati di tengah.
+    let tx = c.transaction().await.context("run_auto_absent transaction")?;
+    let dapat: bool = tx
+        .query_one("SELECT pg_try_advisory_xact_lock($1)", &[&LOCK_AUTO_ABSENT])
+        .await
+        .context("run_auto_absent lock")?
+        .get(0);
+    if !dapat {
+        // Eksekusi lain sedang berjalan. Menunggu tak ada gunanya — yang
+        // sedang jalan akan menandai baris yang sama — jadi lebih baik pulang
+        // dengan angka nol daripada menumpuk koneksi di belakang kunci.
+        tracing::info!("run_auto_absent dilewati: eksekusi lain sedang berjalan");
+        return Ok(0);
+    }
+    let row = tx
         .query_one(
             "WITH tz AS (SELECT (NOW() AT TIME ZONE 'Asia/Jakarta') AS n), \
              ins AS ( \
@@ -928,6 +1001,7 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
                           AND (p.start_time IS NULL \
                                OR (sch.start_time < p.end_time \
                                    AND sch.end_time > p.start_time))) \
+                ON CONFLICT DO NOTHING \
                 RETURNING id, user_id, class_schedule_id \
              ), \
              lg AS ( \
@@ -944,7 +1018,9 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
         )
         .await
         .context("run_auto_absent")?;
-    Ok(row.get(0))
+    let n: i64 = row.get(0);
+    tx.commit().await.context("run_auto_absent commit")?;
+    Ok(n)
 }
 
 // ── Auto-verify (queue tak disentuh manusia >1 hari) ─────────────────────────
@@ -952,10 +1028,15 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
 /// Auto-approve TAHAP 1 (pamong) untuk absensi yang sudah >1 hari menunggu
 /// sejak `scanned_at` tanpa keputusan manual (satu query set-based, sama
 /// filosofi `run_auto_absent` — jangan biarkan antrean menumpuk selamanya).
-/// Poin diberikan SAMA seperti `decide_pamong` approve manual: present +10,
-/// late +2 (atau override `class_schedules.late_points` bila diisi),
-/// outside_schedule/permit/sick netral. `pamong_by` dibiarkan NULL (oleh
-/// sistem, bukan pengguna — pola sama `run_auto_absent`). Return jumlah baris.
+///
+/// TIDAK memberi poin. Sejak migrasi 33 poin absensi ditulis SEKALI di tahap
+/// FINAL (`decide_verify` / `run_auto_verify_final`); tahap pamong hanya
+/// memajukan status. Doc lama di sini menyebut "present +10, late +2" — angka
+/// yang tak pernah lagi ditulis fungsi ini, dan menyesatkan justru di jalur
+/// yang paling sulit diperiksa ulang.
+///
+/// `pamong_by` dibiarkan NULL (oleh sistem, bukan pengguna — pola sama
+/// `run_auto_absent`). Return jumlah baris.
 pub async fn run_auto_verify_pamong(pool: &Pool) -> Result<i64> {
     // Hanya MEMAJUKAN tahap pamong utk kelas 2-langkah (require_pamong) yg
     // menunggu >1 hari. TANPA poin (poin diberikan di tahap FINAL, migrasi 33).

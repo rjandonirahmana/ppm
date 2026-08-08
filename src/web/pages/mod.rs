@@ -2,7 +2,10 @@
 
 mod akademik;
 mod analisis;
-mod beranda;
+mod artikel;
+mod artikel_kelola;
+// `pub`: halaman artikel memakai bilah nav & kaki halaman publiknya.
+pub mod beranda;
 mod dashboard_santri;
 mod design_pages;
 mod galeri;
@@ -40,6 +43,8 @@ mod verifikasi_tahap2;
 
 pub use akademik::AkademikSantriPage;
 pub use analisis::{DewanGuruDashboardPage, GuruDashboardPage};
+pub use artikel::{ArtikelDetailPage, ArtikelListPage};
+pub use artikel_kelola::KelolaArtikelPage;
 pub use kelas_saya::KelasSayaPage;
 pub use beranda::BerandaPage;
 pub use dashboard_santri::SantriDashboardPage;

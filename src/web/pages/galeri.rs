@@ -1,25 +1,62 @@
-//! web/pages/galeri.rs — Galeri "Foto Kegiatan" (migrasi 34). Kelola foto yang
-//! tampil di beranda publik: unggah banyak sekaligus, geser (drag-and-drop asli)
-//! untuk mengubah urutan, dan hapus. Hanya admin/dewan_guru yang bisa mengelola.
+//! web/pages/galeri.rs — Galeri media pondok (migrasi 34 & 69). Kelola apa yang
+//! tampil di halaman depan publik: unggah banyak sekaligus, geser (drag-and-drop
+//! asli) untuk mengubah urutan, sunting keterangan, dan hapus. Hanya
+//! admin/dewan_guru yang bisa mengelola.
 //!
-//! ALUR UNGGAH: pilih berkas → **atur bidikan dulu** → baru terkirim. Bidikan
-//! (titik fokus, perbesaran, mode isi — migrasi 54 & 55) ikut di request unggah
-//! yang sama, jadi foto tak pernah sempat tampil dengan bidikan yang bukan
-//! pilihan siapa pun. Berkas diunggah satu per satu lewat
+//! TIGA KATEGORI (migrasi 69), dipilih lewat tab:
+//!   Video Utama → media yang berjalan di kepala halaman depan (yang TERATAS
+//!                 yang dipakai; sisanya cadangan yang tinggal digeser ke atas)
+//!   Kegiatan    → grid foto kegiatan santri
+//!   Fasilitas   → grid foto sarana pondok
+//!
+//! ALUR UNGGAH: pilih berkas → **isi keterangan & atur bidikan dulu** → baru
+//! terkirim. Semuanya ikut di request unggah yang sama, jadi media tak pernah
+//! sempat tampil di halaman depan tanpa keterangan atau dengan bidikan yang
+//! bukan pilihan siapa pun. Berkas diunggah satu per satu lewat
 //! POST /api/activity-photos/upload (multipart, di luar server-fn).
 //! Urutan disimpan via `reorder_activity_photos_action`.
 
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{frame_style_of, ActivityPhoto, PhotoFit, SessionUser, FOCUS_DEFAULT};
+use crate::models::{
+    frame_style_of, ActivityPhoto, MediaCategory, PhotoFit, SessionUser, FOCUS_DEFAULT,
+};
 use crate::web::api::{
     activity_photos_data, delete_activity_photo_action, reorder_activity_photos_action,
-    set_activity_photo_focus_action,
+    set_activity_photo_focus_action, set_activity_photo_meta_action,
 };
 use crate::web::components::{
-    DeviceFrame, EmptyState, FetchError, MobileHeader, PhotoFrame, Sheet,
+    DeviceFrame, EmptyState, FetchError, MediaFrame, MobileHeader, Sheet,
 };
+
+/// Semua nilai yang bisa diubah pengelola untuk satu media — dikirim sekaligus
+/// oleh editor. Digabung dalam satu struct, bukan enam parameter berderet,
+/// karena keduanya (unggah baru & sunting tersimpan) memakai daftar yang sama
+/// dan urutan enam argumen bertipe mirip adalah tempat yang bagus untuk salah.
+#[derive(Clone, Debug)]
+struct MediaDraft {
+    focus_x: f32,
+    focus_y: f32,
+    zoom: f32,
+    fit: String,
+    caption: String,
+    category: MediaCategory,
+}
+
+/// Berkas apa saja yang boleh dipilih untuk sebuah kategori.
+///
+/// Video hanya masuk akal di kepala halaman depan; grid kegiatan & fasilitas
+/// menampilkan puluhan petak sekaligus, dan video di sana berarti berbelas MB
+/// terunduh untuk petak yang mungkin tak pernah dilihat.
+fn accept_for(cat: MediaCategory) -> &'static str {
+    match cat {
+        MediaCategory::VideoUtama => {
+            "video/mp4,video/webm,image/jpeg,image/png,image/webp,image/gif"
+        }
+        _ => "image/jpeg,image/png,image/webp,image/gif",
+    }
+}
 
 #[component]
 pub fn GaleriPage() -> impl IntoView {
@@ -51,6 +88,11 @@ pub fn GaleriPage() -> impl IntoView {
         }
     });
 
+    // Tab kategori yang sedang dilihat — sekaligus kategori bawaan untuk berkas
+    // yang baru dipilih (pengelola yang sedang membuka tab "Fasilitas" hampir
+    // pasti sedang mengunggah foto fasilitas).
+    let tab = RwSignal::new(MediaCategory::Kegiatan);
+
     let drag_from: RwSignal<Option<usize>> = RwSignal::new(None);
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
@@ -61,8 +103,8 @@ pub fn GaleriPage() -> impl IntoView {
     // indeks saat dibutuhkan. Itu sengaja: `web_sys::File` bukan tipe yang bisa
     // disimpan di signal Leptos (tak `Send`/`Sync`), dan membungkusnya hanya
     // untuk itu berarti kode khusus-wasm merembes ke seluruh komponen. Yang
-    // disimpan di sini cukup angka dan satu URL pratinjau — keduanya biasa saja
-    // di kedua target build.
+    // disimpan di sini cukup angka, satu URL pratinjau, dan satu penanda jenis
+    // — semuanya biasa saja di kedua target build.
     //
     // `<input>` baru dikosongkan setelah SELURUH antrean selesai; mengosongkannya
     // lebih awal akan membuang berkas yang belum sempat diunggah.
@@ -70,8 +112,10 @@ pub fn GaleriPage() -> impl IntoView {
     let pending_idx = RwSignal::new(0usize);
     // URL objek (blob:) pratinjau berkas yang sedang diatur.
     let pending_src = RwSignal::new(String::new());
+    // Berkas yang sedang diatur berupa video? Menentukan bentuk editornya.
+    let pending_video = RwSignal::new(false);
 
-    // Foto TERSIMPAN yang sedang disunting ulang lewat tombol "Atur".
+    // Media TERSIMPAN yang sedang disunting ulang lewat tombol "Atur".
     let editing: RwSignal<Option<ActivityPhoto>> = RwSignal::new(None);
 
     let file_input: NodeRef<leptos::html::Input> = NodeRef::new();
@@ -100,9 +144,14 @@ pub fn GaleriPage() -> impl IntoView {
             let Some(input) = file_input.get_untracked() else { return false };
             let Some(files) = input.files() else { return false };
             let Some(file) = files.get(idx as u32) else { return false };
+            // Jenis dari `File.type` (ditetapkan browser dari isi/ekstensi) —
+            // server tetap memeriksa magic number-nya, ini cuma untuk memilih
+            // bentuk pratinjau.
+            let is_video = file.type_().starts_with("video/");
             match web_sys::Url::create_object_url_with_blob(&file) {
                 Ok(u) => {
                     pending_idx.set(idx);
+                    pending_video.set(is_video);
                     pending_src.set(u);
                     return true;
                 }
@@ -111,7 +160,7 @@ pub fn GaleriPage() -> impl IntoView {
         }
         #[allow(unreachable_code)]
         {
-            let _ = (idx, &file_input, &pending_idx);
+            let _ = (idx, &file_input, &pending_idx, &pending_video);
             false
         }
     };
@@ -121,6 +170,7 @@ pub fn GaleriPage() -> impl IntoView {
         revoke_preview();
         pending_total.set(0);
         pending_idx.set(0);
+        pending_video.set(false);
         if let Some(inp) = file_input.get_untracked() {
             inp.set_value("");
         }
@@ -146,9 +196,9 @@ pub fn GaleriPage() -> impl IntoView {
         let _ = (&file_input, &pending_total, &msg);
     };
 
-    // Kirim berkas yang sedang diatur, LENGKAP dengan bidikannya, lalu lanjut ke
-    // berkas berikutnya dalam antrean.
-    let upload_current = move |fx: f32, fy: f32, z: f32, fit: String| {
+    // Kirim berkas yang sedang diatur, LENGKAP dengan keterangan, kategori, dan
+    // bidikannya, lalu lanjut ke berkas berikutnya dalam antrean.
+    let upload_current = move |d: MediaDraft| {
         if busy.get_untracked() {
             return;
         }
@@ -170,16 +220,19 @@ pub fn GaleriPage() -> impl IntoView {
             leptos::task::spawn_local(async move {
                 let form = web_sys::FormData::new().unwrap();
                 let _ = form.append_with_blob("file", &file);
-                let _ = form.append_with_str("focus_x", &fx.to_string());
-                let _ = form.append_with_str("focus_y", &fy.to_string());
-                let _ = form.append_with_str("zoom", &z.to_string());
-                let _ = form.append_with_str("fit", &fit);
+                let _ = form.append_with_str("focus_x", &d.focus_x.to_string());
+                let _ = form.append_with_str("focus_y", &d.focus_y.to_string());
+                let _ = form.append_with_str("zoom", &d.zoom.to_string());
+                let _ = form.append_with_str("fit", &d.fit);
+                let _ = form.append_with_str("caption", &d.caption);
+                let _ = form.append_with_str("category", d.category.as_str());
 
                 let window = web_sys::window().unwrap();
                 let opts = web_sys::RequestInit::new();
                 opts.set_method("POST");
                 opts.set_body(form.as_ref());
                 let mut ok = false;
+                let mut gagal = String::new();
                 if let Ok(req) = web_sys::Request::new_with_str_and_init(
                     "/api/activity-photos/upload",
                     &opts,
@@ -206,35 +259,50 @@ pub fn GaleriPage() -> impl IntoView {
                                 let url = get_str("url").unwrap_or_default();
                                 if id > 0 && !url.is_empty() {
                                     // Pakai nilai yang DIKEMBALIKAN server: server
-                                    // merapikan bidikan ke rentang sahnya, jadi
-                                    // memakai nilai kiriman sendiri bisa membuat
+                                    // merapikan bidikan & kategori ke nilai sahnya,
+                                    // jadi memakai nilai kiriman sendiri bisa membuat
                                     // grid berbeda dari yang tersimpan.
                                     items.update(|v| {
                                         let ord = v.len() as i32;
                                         v.push(ActivityPhoto {
                                             id,
                                             url,
-                                            caption: String::new(),
+                                            caption: get_str("caption").unwrap_or_default(),
                                             sort_order: ord,
                                             focus_x: get_num("focus_x").unwrap_or(0.5) as f32,
                                             focus_y: get_num("focus_y").unwrap_or(0.5) as f32,
                                             zoom: get_num("zoom").unwrap_or(1.0) as f32,
                                             fit: get_str("fit")
                                                 .unwrap_or_else(|| "cover".into()),
+                                            category: get_str("category")
+                                                .unwrap_or_else(|| "kegiatan".into()),
+                                            media_type: get_str("media_type")
+                                                .unwrap_or_else(|| "image".into()),
                                         });
                                     });
                                     ok = true;
                                 }
                             }
+                        } else {
+                            // Server menjelaskan penolakannya dalam bahasa
+                            // Indonesia (jenis file, ukuran) — jauh lebih
+                            // berguna daripada "unggah gagal" yang generik.
+                            gagal = wasm_bindgen_futures::JsFuture::from(resp.text().unwrap())
+                                .await
+                                .ok()
+                                .and_then(|t| t.as_string())
+                                .unwrap_or_default();
                         }
                     }
                 }
                 busy.set(false);
                 if !ok {
-                    msg.set(Some((
-                        false,
-                        "Unggah gagal — periksa berkas/koneksi, lalu coba lagi.".into(),
-                    )));
+                    let teks = if gagal.trim().is_empty() {
+                        "Unggah gagal — periksa berkas/koneksi, lalu coba lagi.".to_string()
+                    } else {
+                        gagal
+                    };
+                    msg.set(Some((false, teks)));
                     // Berhenti di berkas yang gagal; sisa antrean dibuang agar
                     // pengelola tak menebak-nebak mana yang sudah masuk.
                     finish_batch();
@@ -245,38 +313,55 @@ pub fn GaleriPage() -> impl IntoView {
                     return; // editor lanjut ke berkas berikutnya
                 }
                 finish_batch();
-                msg.set(Some((true, format!("{total} foto terunggah."))));
+                msg.set(Some((true, format!("{total} media terunggah."))));
             });
         }
         // Di build SSR seluruh blok di atas tak ada, jadi parameternya menganggur.
         #[cfg(not(target_arch = "wasm32"))]
-        let _ = (fx, fy, z, fit, &busy, &msg);
+        let _ = (d, &busy, &msg);
     };
 
-    // Simpan bidikan foto yang SUDAH tersimpan (tombol "Atur" di kartu).
-    let save_existing = move |id: i64, fx: f32, fy: f32, z: f32, fit: String| {
+    // Simpan suntingan media yang SUDAH tersimpan (tombol "Atur" di kartu).
+    //
+    // Dua server fn dipanggil berurutan karena memang dua hal berbeda di tabel:
+    // bidikan (migrasi 54/55) dan keterangan+kategori (migrasi 69). Bidikan
+    // dilewati untuk video — editornya memang tak menawarkannya, jadi mengirim
+    // nilai bawaan justru akan MENGHAPUS bidikan yang mungkin sudah diatur.
+    let save_existing = move |id: i64, is_video: bool, d: MediaDraft| {
         if busy.get_untracked() {
             return;
         }
         busy.set(true);
-        let fit2 = fit.clone();
         leptos::task::spawn_local(async move {
-            let ok = set_activity_photo_focus_action(id, fx, fy, z, fit2.clone())
-                .await
-                .is_ok();
+            let mut ok = set_activity_photo_meta_action(
+                id,
+                d.caption.clone(),
+                d.category.as_str().to_string(),
+            )
+            .await
+            .is_ok();
+            if ok && !is_video {
+                ok = set_activity_photo_focus_action(id, d.focus_x, d.focus_y, d.zoom, d.fit.clone())
+                    .await
+                    .is_ok();
+            }
             busy.set(false);
             if ok {
                 items.update(|v| {
                     if let Some(p) = v.iter_mut().find(|p| p.id == id) {
-                        p.focus_x = fx;
-                        p.focus_y = fy;
-                        p.zoom = z;
-                        p.fit = fit2;
+                        p.caption = d.caption.clone();
+                        p.category = d.category.as_str().to_string();
+                        if !is_video {
+                            p.focus_x = d.focus_x;
+                            p.focus_y = d.focus_y;
+                            p.zoom = d.zoom;
+                            p.fit = d.fit.clone();
+                        }
                     }
                 });
                 editing.set(None);
             } else {
-                msg.set(Some((false, "Gagal menyimpan bidikan — coba lagi.".into())));
+                msg.set(Some((false, "Gagal menyimpan — coba lagi.".into())));
             }
         });
     };
@@ -306,17 +391,59 @@ pub fn GaleriPage() -> impl IntoView {
         });
     };
 
+    // Media pada tab aktif, LENGKAP dengan indeks globalnya. Indeks global yang
+    // dibawa, bukan indeks dalam hasil saring: drag-reorder menyusun ulang
+    // daftar penuh, dan indeks hasil saring akan memindahkan media yang salah
+    // begitu ada satu saja media kategori lain di depannya.
+    let visible = move || -> Vec<(usize, ActivityPhoto)> {
+        let cat = tab.get();
+        items
+            .get()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, p)| p.category() == cat)
+            .collect()
+    };
+
     view! {
-        <Title text="Galeri Foto Kegiatan — AFM SMART" />
+        <Title text="Galeri Media — AFM SMART" />
         <DeviceFrame>
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader
-                    title="Galeri Foto Kegiatan"
-                    subtitle="Foto yang tampil di beranda publik"
+                    title="Galeri Media"
+                    subtitle="Video & foto yang tampil di halaman depan"
                     back_href="/staf"
                 />
 
                 <div class="px-5 pt-5 space-y-4 stagger">
+                    // ── Tab kategori ──────────────────────────────────────────
+                    <div class="flex gap-1 bg-surface-container rounded-xl p-1">
+                        {MediaCategory::ALL
+                            .into_iter()
+                            .map(|c| {
+                                let count = move || {
+                                    items.get().iter().filter(|p| p.category() == c).count()
+                                };
+                                view! {
+                                    <button
+                                        class=move || {
+                                            if tab.get() == c {
+                                                "flex-1 py-2 px-2 rounded-lg bg-surface text-on-background shadow-sm text-body-sm font-semibold cursor-pointer"
+                                            } else {
+                                                "flex-1 py-2 px-2 rounded-lg text-on-surface-variant text-body-sm font-semibold cursor-pointer"
+                                            }
+                                        }
+                                        aria-pressed=move || (tab.get() == c).to_string()
+                                        on:click=move |_| tab.set(c)
+                                    >
+                                        {c.label()}
+                                        <span class="ml-1 opacity-60">{move || format!("({})", count())}</span>
+                                    </button>
+                                }
+                            })
+                            .collect_view()}
+                    </div>
+
                     // ── Panel unggah (khusus admin/dewan guru) ────────────────
                     <Show when=move || manage.get() fallback=|| ()>
                         <div class="ppm-card p-4 space-y-3">
@@ -324,12 +451,31 @@ pub fn GaleriPage() -> impl IntoView {
                                 <span class="material-symbols-outlined text-primary">
                                     "cloud_upload"
                                 </span>
-                                "Unggah Foto"
+                                {move || format!("Unggah ke {}", tab.get().label())}
                             </h3>
                             <p class="text-body-sm text-on-surface-variant">
-                                "Pilih foto (jpg/png/webp, maks 10MB). Setelah dipilih, atur \
-                                 dulu bidikannya — baru terkirim. Seret foto di bawah untuk \
-                                 mengubah urutan tampil."
+                                {move || {
+                                    match tab.get() {
+                                        MediaCategory::VideoUtama => {
+                                            "Video yang berjalan di kepala halaman depan \
+                                             (mp4/webm, maks 100MB) — boleh juga foto. Yang \
+                                             PALING ATAS yang dipakai; sisanya cadangan."
+                                        }
+                                        MediaCategory::Kegiatan => {
+                                            "Foto kegiatan santri (jpg/png/webp, maks 10MB). \
+                                             Setelah dipilih, isi keterangan & atur bidikannya — \
+                                             baru terkirim."
+                                        }
+                                        MediaCategory::Fasilitas => {
+                                            "Foto sarana pondok (jpg/png/webp, maks 10MB). \
+                                             Keterangan dipakai sebagai nama fasilitas di \
+                                             halaman depan."
+                                        }
+                                    }
+                                }}
+                            </p>
+                            <p class="text-body-sm text-on-surface-variant">
+                                "Seret media di bawah untuk mengubah urutan tampil."
                             </p>
                             {move || {
                                 msg.get()
@@ -345,7 +491,7 @@ pub fn GaleriPage() -> impl IntoView {
                             <input
                                 type="file"
                                 node_ref=file_input
-                                accept="image/jpeg,image/png,image/webp,image/gif"
+                                accept=move || accept_for(tab.get())
                                 multiple=true
                                 class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface"
                                 on:change=on_pick
@@ -353,7 +499,7 @@ pub fn GaleriPage() -> impl IntoView {
                         </div>
                     </Show>
 
-                    // ── Grid foto (drag untuk urutkan, hapus per foto) ─────────
+                    // ── Grid media (drag untuk urutkan, hapus per media) ───────
                     <Suspense fallback=|| {
                         view! {
                             <div class="grid grid-cols-2 gap-3 animate-pulse">
@@ -369,12 +515,12 @@ pub fn GaleriPage() -> impl IntoView {
                                     Ok(_) => {
                                         view! {
                                             {move || {
-                                                if items.get().is_empty() {
+                                                if visible().is_empty() {
                                                     view! {
                                                         <EmptyState
                                                             icon="grid_on"
-                                                            title="Belum ada foto"
-                                                            subtitle="Unggah foto kegiatan lewat panel di atas."
+                                                            title="Belum ada media"
+                                                            subtitle="Unggah lewat panel di atas."
                                                         />
                                                     }
                                                         .into_any()
@@ -384,13 +530,13 @@ pub fn GaleriPage() -> impl IntoView {
                                                             {move || {
                                                                 // Baca peran reaktif: grid re-render saat `manage` flip.
                                                                 let mgr = manage.get();
-                                                                items
-                                                                    .get()
+                                                                visible()
                                                                     .into_iter()
-                                                                    .enumerate()
                                                                     .map(|(idx, p)| {
                                                                         let pid = p.id;
                                                                         let photo = p.clone();
+                                                                        let caption = p.caption.clone();
+                                                                        let is_video = p.is_video();
                                                                         let dim = move || {
                                                                             if drag_from.get() == Some(idx) { "opacity:.4" } else { "" }
                                                                         };
@@ -414,31 +560,45 @@ pub fn GaleriPage() -> impl IntoView {
                                                                                 on:dragend=move |_| drag_from.set(None)
                                                                             >
                                                                                 // Bidikan yang tersimpan ikut dipakai di grid ini,
-                                                                                // bukan cuma di beranda — supaya yang dilihat
+                                                                                // bukan cuma di halaman depan — supaya yang dilihat
                                                                                 // pengelola sama dengan yang dilihat pengunjung.
-                                                                                <PhotoFrame
+                                                                                <MediaFrame
                                                                                     src=p.url.clone()
                                                                                     style=p.frame_style()
+                                                                                    video=is_video
                                                                                     backdrop=p.fit().needs_backdrop()
-                                                                                    alt="Foto kegiatan"
+                                                                                    alt=p.caption.clone()
                                                                                     class="aspect-square"
                                                                                     lazy=true
                                                                                 />
+                                                                                {is_video
+                                                                                    .then(|| view! {
+                                                                                        <span class="absolute top-1.5 left-1.5 h-6 px-1.5 rounded-lg bg-black/55 text-white flex items-center gap-1 pointer-events-none">
+                                                                                            <span class="material-symbols-outlined text-[14px]">"movie"</span>
+                                                                                            <span class="text-[10px] font-semibold">"Video"</span>
+                                                                                        </span>
+                                                                                    })}
+                                                                                {(!caption.trim().is_empty())
+                                                                                    .then(|| view! {
+                                                                                        <span class="absolute inset-x-0 bottom-0 px-2 py-1.5 pr-16 bg-gradient-to-t from-black/70 to-transparent text-white text-[11px] font-medium truncate pointer-events-none">
+                                                                                            {caption.clone()}
+                                                                                        </span>
+                                                                                    })}
                                                                                 {mgr
                                                                                     .then(|| view! {
                                                                                         <button
-                                                                                            class="absolute top-1.5 right-1.5 w-7 h-7 rounded-lg bg-black/55 text-white flex items-center justify-center"
+                                                                                            class="absolute top-1.5 right-1.5 w-7 h-7 rounded-lg bg-black/55 text-white flex items-center justify-center cursor-pointer"
                                                                                             on:click=move |_| delete_photo(pid)
-                                                                                            aria-label="Hapus foto"
+                                                                                            aria-label="Hapus media"
                                                                                         >
                                                                                             <span class="material-symbols-outlined text-[16px]">"delete"</span>
                                                                                         </button>
                                                                                         <button
-                                                                                            class="absolute bottom-1.5 right-1.5 h-7 px-2 rounded-lg bg-black/55 text-white flex items-center gap-1"
+                                                                                            class="absolute bottom-1.5 right-1.5 h-7 px-2 rounded-lg bg-black/55 text-white flex items-center gap-1 cursor-pointer"
                                                                                             on:click=move |_| editing.set(Some(photo.clone()))
-                                                                                            aria-label="Atur bidikan foto"
+                                                                                            aria-label="Atur media"
                                                                                         >
-                                                                                            <span class="material-symbols-outlined text-[16px]">"crop"</span>
+                                                                                            <span class="material-symbols-outlined text-[16px]">"tune"</span>
                                                                                             <span class="text-[10px] font-semibold">"Atur"</span>
                                                                                         </button>
                                                                                     })}
@@ -460,7 +620,7 @@ pub fn GaleriPage() -> impl IntoView {
                     </Suspense>
                 </div>
 
-                // ── Editor bidikan: berkas BARU (sebelum diunggah) ─────────────
+                // ── Editor: berkas BARU (sebelum diunggah) ─────────────────────
                 {move || {
                     (pending_total.get() > 0 && !pending_src.get().is_empty())
                         .then(|| {
@@ -468,45 +628,50 @@ pub fn GaleriPage() -> impl IntoView {
                             let total = pending_total.get();
                             let nth = pending_idx.get() + 1;
                             view! {
-                                <Sheet title="Sesuaikan Foto Sebelum Diunggah" on_close=finish_batch>
-                                    <PhotoFocusEditor
+                                <Sheet title="Sesuaikan Media Sebelum Diunggah" on_close=finish_batch>
+                                    <MediaEditor
                                         src=pending_src.get()
+                                        is_video=pending_video.get()
                                         focus_x=fx
                                         focus_y=fy
                                         zoom=z
                                         fit="cover"
+                                        caption=""
+                                        category=tab.get()
                                         commit_label="Unggah"
                                         busy=busy
                                         progress=(nth, total)
-                                        on_commit=move |fx, fy, z, fit| upload_current(fx, fy, z, fit)
+                                        on_commit=move |d| upload_current(d)
                                     />
                                 </Sheet>
                             }
                         })
                 }}
 
-                // ── Editor bidikan: foto yang SUDAH tersimpan ──────────────────
+                // ── Editor: media yang SUDAH tersimpan ─────────────────────────
                 {move || {
                     editing
                         .get()
                         .map(|p| {
                             let id = p.id;
+                            let is_video = p.is_video();
                             view! {
                                 <Sheet
-                                    title="Sesuaikan Tampilan Foto"
+                                    title="Sesuaikan Media"
                                     on_close=move || editing.set(None)
                                 >
-                                    <PhotoFocusEditor
+                                    <MediaEditor
                                         src=p.url.clone()
+                                        is_video=is_video
                                         focus_x=p.focus_x
                                         focus_y=p.focus_y
                                         zoom=p.zoom
                                         fit=p.fit.clone()
+                                        caption=p.caption.clone()
+                                        category=p.category()
                                         commit_label="Simpan"
                                         busy=busy
-                                        on_commit=move |fx, fy, z, fit| {
-                                            save_existing(id, fx, fy, z, fit)
-                                        }
+                                        on_commit=move |d| save_existing(id, is_video, d)
                                     />
                                 </Sheet>
                             }
@@ -517,34 +682,41 @@ pub fn GaleriPage() -> impl IntoView {
     }
 }
 
-/// Editor bidikan satu foto: **seret untuk menggeser, slider untuk memperbesar,
-/// dan pilih cara foto mengisi bingkai**.
+/// Editor satu media: **keterangan, kategori, dan — untuk foto — bidikan
+/// (seret untuk menggeser, slider untuk memperbesar, pilih cara mengisi
+/// bingkai)**.
 ///
-/// Kenapa ini ada: galeri menampilkan foto pada bingkai dengan rasio tetap. Foto
-/// yang panjang ke atas atau lebar ke samping otomatis terpotong dari tengah,
-/// sehingga bagian pentingnya hilang — wajah di tepi atas, kegiatan di sisi
-/// kanan. Untuk foto yang sangat tidak sebentuk bingkai, memindahkan titik fokus
-/// saja tidak menolong: apa pun bidikannya tetap ada yang terbuang. Karena itu
-/// ada mode **"Muat seluruhnya"**, yang menampilkan foto UTUH dan mengisi ruang
-/// sisanya dengan versi buram foto itu sendiri.
+/// Kenapa bidikan ini ada: galeri menampilkan foto pada bingkai dengan rasio
+/// tetap. Foto yang panjang ke atas atau lebar ke samping otomatis terpotong
+/// dari tengah, sehingga bagian pentingnya hilang — wajah di tepi atas, kegiatan
+/// di sisi kanan. Untuk foto yang sangat tidak sebentuk bingkai, memindahkan
+/// titik fokus saja tidak menolong: apa pun bidikannya tetap ada yang terbuang.
+/// Karena itu ada mode **"Foto Utuh"**, yang menampilkan foto UTUH dan mengisi
+/// ruang sisanya dengan versi buram foto itu sendiri.
 ///
 /// Yang disimpan BUKAN hasil potongan, melainkan cara memandangnya (migrasi 54 &
 /// 55). Bedanya penting: foto yang sama tampil di dua rasio berbeda — 3:4 di
-/// beranda publik, 1:1 di grid pengelola — dan satu hasil potongan mustahil pas
+/// halaman depan, 1:1 di grid pengelola — dan satu hasil potongan mustahil pas
 /// di keduanya. Berkas aslinya juga tetap utuh, jadi bidikannya bisa diubah lagi
 /// kapan saja.
 ///
-/// Pratinjaunya memakai rasio 3:4 mengikuti beranda publik, karena itulah
-/// tampilan yang dilihat orang luar.
+/// **Video tidak menawarkan bidikan.** Menyeret bingkai butuh ukuran asli
+/// medianya, dan pada video ukuran itu baru diketahui setelah metadata terunduh
+/// — pengelola akan menyeret bingkai yang belum bisa dihitung batas geserannya
+/// lalu heran mengapa videonya tak bergeming. Video kepala halaman ditampilkan
+/// memenuhi lebar layar, di mana bidikan tengah memang yang diinginkan.
 #[component]
-fn PhotoFocusEditor(
-    /// Sumber gambar: URL objek (berkas baru) atau URL publik (foto tersimpan).
+fn MediaEditor(
+    /// Sumber media: URL objek (berkas baru) atau URL publik (media tersimpan).
     #[prop(into)]
     src: String,
+    is_video: bool,
     focus_x: f32,
     focus_y: f32,
     zoom: f32,
     #[prop(into)] fit: String,
+    #[prop(into)] caption: String,
+    category: MediaCategory,
     /// Teks tombol utama — "Unggah" untuk berkas baru, "Simpan" untuk suntingan.
     #[prop(into)]
     commit_label: String,
@@ -553,13 +725,15 @@ fn PhotoFocusEditor(
     /// (ke-berapa, dari berapa) saat mengunggah beberapa berkas sekaligus.
     #[prop(optional)]
     progress: Option<(usize, usize)>,
-    /// Dipanggil saat tombol utama ditekan: (focus_x, focus_y, zoom, fit).
-    on_commit: impl Fn(f32, f32, f32, String) + Copy + Send + Sync + 'static,
+    /// Dipanggil saat tombol utama ditekan.
+    on_commit: impl Fn(MediaDraft) + Copy + Send + Sync + 'static,
 ) -> impl IntoView {
     let fx = RwSignal::new(focus_x);
     let fy = RwSignal::new(focus_y);
     let zoom = RwSignal::new(zoom);
     let fit = RwSignal::new(PhotoFit::from_str(&fit));
+    let caption = RwSignal::new(caption);
+    let category = RwSignal::new(category);
     let dragging = RwSignal::new(false);
 
     let frame: NodeRef<leptos::html::Div> = NodeRef::new();
@@ -574,8 +748,8 @@ fn PhotoFocusEditor(
     // sisi panjang yang melewati bingkai, dan (b) luapan dari perbesaran, yaitu
     // seluruh bingkai dikali (zoom − 1).
     //
-    // Pada mode "muat seluruhnya" dengan zoom 1, keduanya nol: foto sudah utuh
-    // di dalam bingkai, tak ada yang tersembunyi, jadi menyeret memang tak
+    // Pada mode "foto utuh" dengan zoom 1, keduanya nol: foto sudah utuh di
+    // dalam bingkai, tak ada yang tersembunyi, jadi menyeret memang tak
     // seharusnya melakukan apa pun.
     #[cfg(target_arch = "wasm32")]
     let pannable = move || -> (f64, f64) {
@@ -643,12 +817,14 @@ fn PhotoFocusEditor(
         if busy.get_untracked() {
             return;
         }
-        on_commit(
-            fx.get_untracked(),
-            fy.get_untracked(),
-            zoom.get_untracked(),
-            fit.get_untracked().as_str().to_string(),
-        );
+        on_commit(MediaDraft {
+            focus_x: fx.get_untracked(),
+            focus_y: fy.get_untracked(),
+            zoom: zoom.get_untracked(),
+            fit: fit.get_untracked().as_str().to_string(),
+            caption: caption.get_untracked().trim().to_string(),
+            category: category.get_untracked(),
+        });
     };
 
     let reset = move |_| {
@@ -658,7 +834,7 @@ fn PhotoFocusEditor(
         zoom.set(z);
     };
 
-    // Beralih ke "muat seluruhnya" MENGEMBALIKAN zoom ke 1 dan fokus ke tengah:
+    // Beralih ke "foto utuh" MENGEMBALIKAN zoom ke 1 dan fokus ke tengah:
     // maksud memilih mode itu adalah melihat foto utuh, dan membawa serta zoom
     // dari mode sebelumnya justru memotongnya lagi — persis yang ingin dihindari.
     let set_fit = move |f: PhotoFit| {
@@ -676,6 +852,7 @@ fn PhotoFocusEditor(
 
     let preview_style = move || frame_style_of(fx.get(), fy.get(), zoom.get(), fit.get());
     let src_for_backdrop = src.clone();
+    let src_for_video = src.clone();
 
     view! {
         {progress
@@ -683,119 +860,187 @@ fn PhotoFocusEditor(
             .map(|(nth, total)| {
                 view! {
                     <p class="text-body-sm text-primary font-semibold mb-2">
-                        {format!("Foto {nth} dari {total}")}
+                        {format!("Media {nth} dari {total}")}
                     </p>
                 }
             })}
 
-        // ── Pilihan cara foto mengisi bingkai ─────────────────────────────────
-        <div class="flex gap-1 bg-surface-container rounded-xl p-1 mb-3">
-            <FitBtn
-                fit=fit
-                value=PhotoFit::Cover
-                label="Isi Penuh"
-                hint="bingkai penuh, tepi terpotong"
-                on_pick=set_fit
-            />
-            <FitBtn
-                fit=fit
-                value=PhotoFit::Contain
-                label="Foto Utuh"
-                hint="seluruh foto terlihat"
-                on_pick=set_fit
-            />
-        </div>
+        // ── Keterangan & kategori — berlaku untuk foto MAUPUN video ───────────
+        <label class="block text-body-sm font-semibold text-on-background mb-1.5">
+            "Keterangan"
+        </label>
+        <input
+            type="text"
+            maxlength="160"
+            placeholder="Mis. Kajian kitab bakda Subuh"
+            class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface mb-4"
+            prop:value=move || caption.get()
+            on:input=move |ev| caption.set(event_target_value(&ev))
+        />
 
-        <p class="text-body-sm text-on-surface-variant mb-3">
-            {move || {
-                if fit.get() == PhotoFit::Contain {
-                    "Foto ditampilkan utuh tanpa terpotong. Ruang kosong di \
-                     sekelilingnya diisi versi buram foto ini. Perbesar jika \
-                     ingin memotong tepinya."
-                } else {
-                    "Geser foto untuk memilih bagian yang ditampilkan, lalu atur perbesarannya."
-                }
-            }}
-        </p>
-
-        <div
-            node_ref=frame
-            class="relative w-full max-w-[16rem] mx-auto aspect-[3/4] rounded-2xl overflow-hidden bg-surface-container select-none"
-            style=move || {
-                let c = if dragging.get() { "grabbing" } else { "grab" };
-                format!("cursor:{c};touch-action:none")
-            }
-            on:pointerdown=on_down
-            on:pointermove=on_move
-            on:pointerup=on_up
-            on:pointercancel=on_up
-        >
-            {move || {
-                (fit.get() == PhotoFit::Contain)
-                    .then(|| {
-                        view! {
-                            <img
-                                src=src_for_backdrop.clone()
-                                style=crate::models::BACKDROP_STYLE
-                                alt=""
-                                aria-hidden="true"
-                            />
-                        }
-                    })
-            }}
-            <img
-                node_ref=img
-                src=src
-                style=preview_style
-                alt="Pratinjau foto"
-                draggable="false"
-                class="relative"
-            />
-            // Garis bantu sepertiga — membantu menempatkan subjek, dan sekaligus
-            // memberi tanda bahwa bingkai ini memang bisa diutak-atik.
-            <div class="absolute inset-0 pointer-events-none opacity-40">
-                <div class="absolute left-1/3 top-0 bottom-0 w-px bg-white/70"></div>
-                <div class="absolute left-2/3 top-0 bottom-0 w-px bg-white/70"></div>
-                <div class="absolute top-1/3 left-0 right-0 h-px bg-white/70"></div>
-                <div class="absolute top-2/3 left-0 right-0 h-px bg-white/70"></div>
-            </div>
-        </div>
-
-        <div class="mt-4 flex items-center gap-3">
-            <span class="material-symbols-outlined text-on-surface-variant text-[20px]">
-                "zoom_out"
-            </span>
-            <input
-                type="range"
-                min="1"
-                max="3"
-                step="0.01"
-                class="flex-1 accent-primary"
-                prop:value=move || zoom.get().to_string()
-                on:input=move |ev| {
-                    if let Ok(v) = event_target_value(&ev).parse::<f32>() {
-                        zoom.set(v.clamp(1.0, 3.0));
+        <label class="block text-body-sm font-semibold text-on-background mb-1.5">
+            "Tampil di bagian"
+        </label>
+        <div class="flex gap-1 bg-surface-container rounded-xl p-1 mb-4">
+            {MediaCategory::ALL
+                .into_iter()
+                .map(|c| {
+                    view! {
+                        <button
+                            class=move || {
+                                if category.get() == c {
+                                    "flex-1 py-2 px-2 rounded-lg bg-surface text-on-background shadow-sm text-body-sm font-semibold cursor-pointer"
+                                } else {
+                                    "flex-1 py-2 px-2 rounded-lg text-on-surface-variant text-body-sm font-semibold cursor-pointer"
+                                }
+                            }
+                            aria-pressed=move || (category.get() == c).to_string()
+                            on:click=move |_| category.set(c)
+                        >
+                            {c.label()}
+                        </button>
                     }
-                }
-                aria-label="Perbesaran foto"
-            />
-            <span class="material-symbols-outlined text-on-surface-variant text-[20px]">
-                "zoom_in"
-            </span>
-            <span class="text-body-sm font-semibold text-on-surface-variant w-12 text-right">
-                {move || format!("{:.1}×", zoom.get())}
-            </span>
+                })
+                .collect_view()}
         </div>
+
+        {if is_video {
+            // Video: pratinjau apa adanya, dengan kontrol pemutar supaya
+            // pengelola bisa memastikan klipnya benar sebelum terbit.
+            view! {
+                <video
+                    src=src_for_video.clone()
+                    class="w-full max-w-[20rem] mx-auto rounded-2xl bg-black"
+                    controls="controls"
+                    muted="muted"
+                    prop:muted=true
+                    playsinline="playsinline"
+                    preload="metadata"
+                ></video>
+                <p class="text-body-sm text-on-surface-variant mt-3">
+                    "Video ditampilkan memenuhi lebar layar di kepala halaman depan, \
+                     membisu dan berulang. Pastikan bagian pentingnya ada di tengah."
+                </p>
+            }
+                .into_any()
+        } else {
+            view! {
+                // ── Pilihan cara foto mengisi bingkai ─────────────────────────
+                <div class="flex gap-1 bg-surface-container rounded-xl p-1 mb-3">
+                    <FitBtn
+                        fit=fit
+                        value=PhotoFit::Cover
+                        label="Isi Penuh"
+                        hint="bingkai penuh, tepi terpotong"
+                        on_pick=set_fit
+                    />
+                    <FitBtn
+                        fit=fit
+                        value=PhotoFit::Contain
+                        label="Foto Utuh"
+                        hint="seluruh foto terlihat"
+                        on_pick=set_fit
+                    />
+                </div>
+
+                <p class="text-body-sm text-on-surface-variant mb-3">
+                    {move || {
+                        if fit.get() == PhotoFit::Contain {
+                            "Foto ditampilkan utuh tanpa terpotong. Ruang kosong di \
+                             sekelilingnya diisi versi buram foto ini. Perbesar jika \
+                             ingin memotong tepinya."
+                        } else {
+                            "Geser foto untuk memilih bagian yang ditampilkan, lalu atur perbesarannya."
+                        }
+                    }}
+                </p>
+
+                <div
+                    node_ref=frame
+                    class="relative w-full max-w-[16rem] mx-auto aspect-[3/4] rounded-2xl overflow-hidden bg-surface-container select-none"
+                    style=move || {
+                        let c = if dragging.get() { "grabbing" } else { "grab" };
+                        format!("cursor:{c};touch-action:none")
+                    }
+                    on:pointerdown=on_down
+                    on:pointermove=on_move
+                    on:pointerup=on_up
+                    on:pointercancel=on_up
+                >
+                    {move || {
+                        (fit.get() == PhotoFit::Contain)
+                            .then(|| {
+                                view! {
+                                    <img
+                                        src=src_for_backdrop.clone()
+                                        style=crate::models::BACKDROP_STYLE
+                                        alt=""
+                                        aria-hidden="true"
+                                    />
+                                }
+                            })
+                    }}
+                    <img
+                        node_ref=img
+                        src=src.clone()
+                        style=preview_style
+                        alt="Pratinjau foto"
+                        draggable="false"
+                        class="relative"
+                    />
+                    // Garis bantu sepertiga — membantu menempatkan subjek, dan sekaligus
+                    // memberi tanda bahwa bingkai ini memang bisa diutak-atik.
+                    <div class="absolute inset-0 pointer-events-none opacity-40">
+                        <div class="absolute left-1/3 top-0 bottom-0 w-px bg-white/70"></div>
+                        <div class="absolute left-2/3 top-0 bottom-0 w-px bg-white/70"></div>
+                        <div class="absolute top-1/3 left-0 right-0 h-px bg-white/70"></div>
+                        <div class="absolute top-2/3 left-0 right-0 h-px bg-white/70"></div>
+                    </div>
+                </div>
+
+                <div class="mt-4 flex items-center gap-3">
+                    <span class="material-symbols-outlined text-on-surface-variant text-[20px]">
+                        "zoom_out"
+                    </span>
+                    <input
+                        type="range"
+                        min="1"
+                        max="3"
+                        step="0.01"
+                        class="flex-1 accent-primary"
+                        prop:value=move || zoom.get().to_string()
+                        on:input=move |ev| {
+                            if let Ok(v) = event_target_value(&ev).parse::<f32>() {
+                                zoom.set(v.clamp(1.0, 3.0));
+                            }
+                        }
+                        aria-label="Perbesaran foto"
+                    />
+                    <span class="material-symbols-outlined text-on-surface-variant text-[20px]">
+                        "zoom_in"
+                    </span>
+                    <span class="text-body-sm font-semibold text-on-surface-variant w-12 text-right">
+                        {move || format!("{:.1}×", zoom.get())}
+                    </span>
+                </div>
+            }
+                .into_any()
+        }}
 
         <div class="mt-5 flex gap-2">
+            {(!is_video)
+                .then(|| {
+                    view! {
+                        <button
+                            class="flex-1 py-3 rounded-xl border-2 border-outline-variant text-on-surface-variant font-semibold press cursor-pointer"
+                            on:click=reset
+                        >
+                            "Atur Ulang"
+                        </button>
+                    }
+                })}
             <button
-                class="flex-1 py-3 rounded-xl border-2 border-outline-variant text-on-surface-variant font-semibold press"
-                on:click=reset
-            >
-                "Atur Ulang"
-            </button>
-            <button
-                class="flex-1 py-3 rounded-xl bg-primary text-on-primary font-semibold press disabled:opacity-60"
+                class="flex-1 py-3 rounded-xl bg-primary text-on-primary font-semibold press cursor-pointer disabled:opacity-60"
                 prop:disabled=move || busy.get()
                 on:click=commit
             >
@@ -819,9 +1064,9 @@ fn FitBtn(
         <button
             class=move || {
                 if active() {
-                    "flex-1 py-2 px-2 rounded-lg bg-surface text-on-background shadow-sm"
+                    "flex-1 py-2 px-2 rounded-lg bg-surface text-on-background shadow-sm cursor-pointer"
                 } else {
-                    "flex-1 py-2 px-2 rounded-lg text-on-surface-variant"
+                    "flex-1 py-2 px-2 rounded-lg text-on-surface-variant cursor-pointer"
                 }
             }
             aria-pressed=move || active().to_string()
