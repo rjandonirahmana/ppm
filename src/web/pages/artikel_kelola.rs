@@ -15,7 +15,9 @@ use leptos_meta::Title;
 
 use crate::models::{slugify, Article};
 use crate::web::api::{articles_admin_data, delete_article_action, save_article_action};
-use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader, Sheet};
+use crate::web::components::{
+    DeviceFrame, EmptyState, FetchError, FlashMsg, MobileHeader, Sheet,
+};
 
 #[component]
 pub fn KelolaArtikelPage() -> impl IntoView {
@@ -94,17 +96,7 @@ pub fn KelolaArtikelPage() -> impl IntoView {
                         </a>
                     </div>
 
-                    {move || {
-                        msg.get()
-                            .map(|(ok, t)| {
-                                let cls = if ok {
-                                    "p-2.5 bg-secondary-container text-on-secondary-container rounded-lg text-body-sm"
-                                } else {
-                                    "p-2.5 bg-error-container text-on-error-container rounded-lg text-body-sm"
-                                };
-                                view! { <div class=cls>{t}</div> }
-                            })
-                    }}
+                    <FlashMsg pesan=msg />
 
                     <Suspense fallback=|| {
                         view! {

@@ -16,17 +16,7 @@ use crate::web::components::{kartu_grid, DeviceFrame, FetchError};
 pub fn VerifikasiTahap2Page() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { verify_data().await });
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            let msg = e.to_string();
-            if crate::web::components::is_auth_error(&msg) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(data);
 
     let busy_id = RwSignal::new(Option::<i64>::None);
     let decide = move |id: i64, approve: bool| {

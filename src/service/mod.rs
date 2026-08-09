@@ -55,6 +55,7 @@ pub mod fmt;
 pub mod gate;
 pub mod guest;
 pub mod hafalan;
+pub mod ics;
 pub mod kelas;
 pub mod laporan;
 pub mod materials;

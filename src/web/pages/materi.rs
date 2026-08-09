@@ -194,16 +194,7 @@ fn MaterialRow(m: MaterialItem) -> impl IntoView {
 pub fn MateriPage() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { materials_list(200).await });
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            if crate::web::components::is_auth_error(&e.to_string()) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(data);
 
     view! {
         <Title text="Materials Library — AFM SMART" />

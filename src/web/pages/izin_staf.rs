@@ -16,16 +16,7 @@ use crate::web::components::{
 pub fn IzinStafPage() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { permit_queue_data().await });
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            if crate::web::components::is_auth_error(&e.to_string()) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(data);
 
     let busy_id = RwSignal::new(Option::<i64>::None);
     // Detail izin yang sedang dibuka — wali kelas bisa membaca (dan menyunting)

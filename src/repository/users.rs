@@ -389,6 +389,32 @@ pub async fn set_active(pool: &Pool, user_id: i64, active: bool) -> Result<bool>
     Ok(n > 0)
 }
 
+/// Identitas sesi seorang pengguna AKTIF — id, nama, peran. `None` bila
+/// akunnya tak ada atau sudah dinonaktifkan.
+///
+/// Dipakai jalur yang wewenangnya TIDAK datang dari cookie sesi (langganan
+/// kalender `.ics`, yang diambil server Google tanpa cookie apa pun). Dibaca
+/// segar tiap permintaan justru supaya penonaktifan akun langsung berlaku di
+/// tarikan berikutnya — tanpa perlu mencabut tautannya satu per satu.
+pub async fn session_user_aktif(
+    pool: &Pool,
+    user_id: i64,
+) -> Result<Option<crate::models::SessionUser>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(
+            "SELECT id, full_name, role FROM users WHERE id = $1 AND is_active = TRUE",
+            &[&user_id],
+        )
+        .await
+        .context("session_user_aktif")?;
+    Ok(row.map(|r| crate::models::SessionUser {
+        id: r.get(0),
+        name: r.get(1),
+        role: r.get(2),
+    }))
+}
+
 /// Peran seorang user. `None` = akunnya tak ada.
 ///
 /// Dibaca ulang dari DB — bukan diambil dari baris yang kebetulan sudah ada di

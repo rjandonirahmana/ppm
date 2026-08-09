@@ -27,7 +27,7 @@ use crate::web::api::{
     set_activity_photo_focus_action, set_activity_photo_meta_action,
 };
 use crate::web::components::{
-    DeviceFrame, EmptyState, FetchError, MediaFrame, MobileHeader, Sheet,
+    DeviceFrame, EmptyState, FetchError, FlashMsg, MediaFrame, MobileHeader, Sheet,
 };
 
 /// Semua nilai yang bisa diubah pengelola untuk satu media — dikirim sekaligus
@@ -500,17 +500,7 @@ pub fn GaleriPage() -> impl IntoView {
                             <p class="text-body-sm text-on-surface-variant">
                                 "Seret media di bawah untuk mengubah urutan tampil."
                             </p>
-                            {move || {
-                                msg.get()
-                                    .map(|(ok, t)| {
-                                        let cls = if ok {
-                                            "p-2.5 bg-secondary-container text-on-secondary-container rounded-lg text-body-sm"
-                                        } else {
-                                            "p-2.5 bg-error-container text-on-error-container rounded-lg text-body-sm"
-                                        };
-                                        view! { <div class=cls>{t}</div> }
-                                    })
-                            }}
+                            <FlashMsg pesan=msg />
                             <input
                                 type="file"
                                 node_ref=file_input

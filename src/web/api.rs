@@ -2768,6 +2768,19 @@ pub async fn anak_ortu_search(q: String) -> Result<Vec<StudentSearchItem>, Serve
     crate::service::kelas::search_students(&state.pool, &q, 0, None).await.map_err(err)
 }
 
+/// Alamat langganan kalender (path + token) milik pengguna yang sedang login.
+///
+/// Tokennya diturunkan dari rahasia server, jadi TIDAK boleh dihitung di
+/// browser — kalau bisa, siapa pun tinggal mengganti angka id di URL untuk
+/// membaca jadwal orang lain. Origin ("https://…") ditambahkan layar, karena
+/// servernya tak selalu tahu nama domain publiknya sendiri.
+#[server(KalenderLangganan, "/api-fn")]
+pub async fn kalender_langganan_path() -> Result<String, ServerFnError> {
+    let sess = require_session().await?;
+    let state = app_state().await?;
+    Ok(crate::service::ics::path_langganan(&state.jwt_secret, sess.id))
+}
+
 /// Keadaan mesin tempat aplikasi berjalan: CPU, memori, uptime, kolam DB.
 ///
 /// ADMIN & KETUA — sama dengan alat pengelolaan lain di /staf. Ketua memang

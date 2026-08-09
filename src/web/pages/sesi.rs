@@ -54,17 +54,7 @@ pub fn SesiContent() -> impl IntoView {
     // komponen supaya pilihan tak reset saat resource refetch.
     let show_past = RwSignal::new(false);
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            let msg = e.to_string();
-            if crate::web::components::is_auth_error(&msg) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(data);
 
     view! {
         <Suspense fallback=|| {

@@ -16,17 +16,7 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
     let permits = Resource::new(|| (), |_| async move { permit_queue_data().await });
 
     // Guard: belum login / bukan pamong → login.
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            let msg = e.to_string();
-            if crate::web::components::is_auth_error(&msg) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(data);
 
     // Keputusan sedang diproses (id) → disable tombol baris tsb.
     let busy_id = RwSignal::new(Option::<i64>::None);

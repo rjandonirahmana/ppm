@@ -18,16 +18,7 @@ use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 pub fn AkademikSantriPage() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { own_book_progress_data().await });
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            if crate::web::components::is_auth_error(&e.to_string()) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(data);
 
     view! {
         <Title text="Akademik — AFM SMART" />

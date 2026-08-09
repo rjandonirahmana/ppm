@@ -185,11 +185,24 @@ pub async fn mark_paid(
     verified_by: i64,
 ) -> Result<bool> {
     let c = pool.get().await?;
+    // `AND status='belum'` — pola yang sama dengan `setujui_pengajuan`.
+    //
+    // Tanpa guard ini jalur lama bisa menyentuh baris berstatus APA PUN, dan
+    // sejak migrasi 75 akibatnya jauh lebih buruk daripada sekadar klik ganda:
+    //   • `menunggu` → `lunas` TANPA periode. Baris pengajuan periodenya memang
+    //     masih NULL, dan mark_paid tak mengisinya — hasilnya baris lunas yatim
+    //     yang tak terbaca `periode_terlewat` (santrinya tetap dianggap
+    //     menunggak) dan tak bisa lagi diproses verifikator (guard 'menunggu'
+    //     sudah tak cocok). Pengajuannya lenyap dari antrean tanpa pernah
+    //     ditetapkan periodenya.
+    //   • `ditolak` → `lunas` menghidupkan kembali penolakan.
+    //   • `lunas` → `lunas` menimpa paid_at/method/verified_by — jejak siapa
+    //     memverifikasi apa hilang permanen.
     let n = c
         .execute(
             "UPDATE bills SET status='lunas', paid_at=now(), \
                     paid_amount = COALESCE($2, price), method=$3, verified_by=$4 \
-             WHERE id=$1",
+             WHERE id=$1 AND status='belum'",
             &[&bill_id, &paid_amount, &method, &verified_by],
         )
         .await
@@ -211,10 +224,19 @@ pub async fn set_proof(pool: &Pool, bill_id: i64, user_id: i64, proof_url: &str)
 }
 
 /// Hapus tagihan (admin/ketua).
+/// Hapus catatan periode yang BELUM dibayar saja.
+///
+/// Guard statusnya penting sejak migrasi 75. Tanpa itu tombol hapus di tab
+/// "Periode Berjalan" menerima id apa pun dari klien, termasuk:
+///   • pengajuan `menunggu` — bukti transfer keluarga lenyap tanpa jejak, dan
+///     itu persis yang dicegah `tolak_pengajuan` dengan menyimpan barisnya;
+///   • pembayaran `lunas` — riwayat keuangan yang sudah diverifikasi hilang.
+/// Yang ingin dihapus pengurus hanyalah periode yang ia buat sendiri dan
+/// ternyata keliru; itu selalu berstatus `belum`.
 pub async fn delete_bill(pool: &Pool, bill_id: i64) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
-        .execute("DELETE FROM bills WHERE id=$1", &[&bill_id])
+        .execute("DELETE FROM bills WHERE id=$1 AND status='belum'", &[&bill_id])
         .await
         .context("delete_bill")?;
     Ok(n > 0)
@@ -248,6 +270,75 @@ pub async fn ajukan_pembayaran(
         .await
         .context("ajukan_pembayaran")?;
     Ok(row.get(0))
+}
+
+/// Satu baris pengajuan dalam kiriman yang bisa mencakup beberapa anak.
+#[derive(Clone, Copy, Debug)]
+pub struct PengajuanAnak {
+    pub student_id: i64,
+    pub amount: i64,
+}
+
+/// Catat SATU kiriman untuk BEBERAPA anak sekaligus (satu transfer, satu bukti).
+///
+/// Orang tua dengan dua anak mentransfer sekali untuk keduanya — memaksanya
+/// mengirim dua kali berarti ia harus memotret bukti yang sama dua kali dan
+/// pengurus menerima dua kiriman yang tak terlihat berhubungan.
+///
+/// SATU TRANSAKSI. Kalau baris kedua gagal, yang pertama ikut dibatalkan:
+/// kiriman separuh masuk jauh lebih buruk daripada gagal seluruhnya — keluarga
+/// melihat satu anak tercatat dan menyimpulkan yang lain hilang, lalu mengirim
+/// ulang, dan setorannya tercatat dua kali.
+///
+/// `proof_url` sengaja SAMA untuk semua baris: buktinya memang satu lembar.
+pub async fn ajukan_pembayaran_batch(
+    pool: &Pool,
+    items: &[PengajuanAnak],
+    submitted_by: i64,
+    proof_url: &str,
+    catatan: &str,
+) -> Result<Vec<i64>> {
+    let mut c = pool.get().await?;
+    let tx = c.transaction().await.context("ajukan_batch: begin")?;
+    let stmt = tx
+        .prepare(
+            "INSERT INTO bills (user_id, title, price, status, proof_url, note, \
+                                submitted_by, submitted_at) \
+             VALUES ($1, 'Pengajuan pembayaran', $2, 'menunggu', $3, $4, $5, NOW()) \
+             RETURNING id",
+        )
+        .await
+        .context("ajukan_batch: prepare")?;
+    let mut ids = Vec::with_capacity(items.len());
+    for it in items {
+        let row = tx
+            .query_one(&stmt, &[&it.student_id, &it.amount, &proof_url, &catatan, &submitted_by])
+            .await
+            .context("ajukan_batch: insert")?;
+        ids.push(row.get(0));
+    }
+    tx.commit().await.context("ajukan_batch: commit")?;
+    Ok(ids)
+}
+
+/// Santri (dari daftar `ids`) yang pengajuannya MASIH diperiksa.
+///
+/// Dipakai menolak kiriman ganda: keluarga yang menekan kirim dua kali — atau
+/// dari dua perangkat — menghasilkan dua baris `menunggu` identik yang bisa
+/// diverifikasi dua pengurus berbeda, dan setorannya tercatat dua kali.
+pub async fn punya_pengajuan_menunggu(pool: &Pool, ids: &[i64]) -> Result<Vec<String>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT DISTINCT u.full_name FROM bills b \
+               JOIN users u ON u.id = b.user_id \
+              WHERE b.user_id = ANY($1) AND b.status = 'menunggu' \
+              ORDER BY u.full_name",
+            &[&ids],
+        )
+        .await
+        .context("punya_pengajuan_menunggu")?;
+    Ok(rows.into_iter().map(|r| r.get(0)).collect())
 }
 
 /// Antrean verifikasi — terlama dulu, supaya tak ada yang menunggu selamanya
@@ -351,6 +442,13 @@ pub struct TunggakanRow {
 /// LATERAL, bukan `GROUP BY`: yang dicari cuma SATU baris per santri (periode
 /// lunas dengan `expired_date` terbesar), dan `idx_bills_lunas_per_santri`
 /// melayaninya langsung tanpa mengagregasi seluruh riwayat pembayaran pondok.
+///
+/// Santri yang pengajuannya SEDANG DIPERIKSA dikeluarkan. Keluarga yang baru
+/// saja mentransfer dan mengunggah bukti tetap belum punya baris `lunas`, jadi
+/// tanpa pengecualian ini ia muncul di sini dan bisa dikirimi WhatsApp "mohon
+/// dapat melanjutkan pembayaran" — pesan yang langsung menyangkal apa yang ia
+/// lihat di layarnya sendiri ("Menunggu diperiksa"). Ini kejadian yang justru
+/// paling sering tepat di hari-hari sibuk setoran.
 pub async fn periode_terlewat(pool: &Pool) -> Result<Vec<TunggakanRow>> {
     let c = pool.get().await?;
     let kelas = super::kelas_utama_lateral("u.id");
@@ -373,6 +471,10 @@ pub async fn periode_terlewat(pool: &Pool) -> Result<Vec<TunggakanRow>> {
           WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
             AND (akhir.expired_date IS NULL \
                  OR akhir.expired_date < (NOW() AT TIME ZONE 'Asia/Jakarta')::date) \
+            AND NOT EXISTS ( \
+                SELECT 1 FROM bills m \
+                 WHERE m.user_id = u.id AND m.status = 'menunggu' \
+            ) \
           ORDER BY akhir.expired_date NULLS LAST, u.full_name"
     );
     let rows = c.query(&sql, &[]).await.context("periode_terlewat")?;
@@ -393,6 +495,12 @@ pub async fn periode_terlewat(pool: &Pool) -> Result<Vec<TunggakanRow>> {
 
 /// Nomor tujuan pengingat untuk sekumpulan santri: nomor santri sendiri +
 /// SEMUA orang tua yang terhubung.
+///
+/// Perannya DISARING di sini, bukan dipercayakan pada layar. `user_ids` datang
+/// dari klien; tanpa `role IN ('santri','santri_finance')` seorang pemegang
+/// santri_finance cukup menebak id pengurus untuk mengirimkan pesan penagihan
+/// dari nomor WhatsApp resmi pondok ke HP admin, guru, atau orang tua mana pun
+/// — dan `tandai_diingatkan` akan mencatatnya seolah wajar.
 pub struct TujuanWa {
     pub user_id: i64,
     pub student_name: String,
@@ -412,7 +520,8 @@ pub async fn tujuan_pengingat(pool: &Pool, ids: &[i64]) -> Result<Vec<TujuanWa>>
                                   AND COALESCE(o.phone_number,'') <> '' ), \
                         NULLIF(u.phone_number, '')), NULL) AS nomor \
                FROM users u \
-              WHERE u.id = ANY($1) AND u.is_active = TRUE",
+              WHERE u.id = ANY($1) AND u.is_active = TRUE \
+                AND u.role IN ('santri', 'santri_finance')",
             &[&ids],
         )
         .await

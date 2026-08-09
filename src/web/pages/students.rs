@@ -26,16 +26,7 @@ use crate::web::components::{
 pub fn StudentsPage() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { students_data().await });
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            if crate::web::components::is_auth_error(&e.to_string()) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(data);
 
     // "list" | "verify"
     let tab = RwSignal::new("list".to_string());

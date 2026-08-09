@@ -33,17 +33,7 @@ fn live_state_badge(state: &str) -> (&'static str, &'static str) {
 pub fn StafDashboardPage() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { staf_home_data().await });
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            let msg = e.to_string();
-            if crate::web::components::is_auth_error(&msg) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(data);
 
     view! {
         <Title text="Dashboard Staf — AFM SMART" />

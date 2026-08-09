@@ -13,17 +13,7 @@ use crate::web::components::{DeviceFrame, NotifBell, SheetIzin};
 pub fn IzinPage() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { izin_data().await });
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            let msg = e.to_string();
-            if crate::web::components::is_auth_error(&msg) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(data);
 
     // ── State formulir ──────────────────────────────────────────────────────
     let kind = RwSignal::new("sick".to_string());
@@ -67,7 +57,7 @@ pub fn IzinPage() -> impl IntoView {
                 }
                 Err(e) => {
                     let msg = e.to_string();
-                    let msg = msg.rsplit(": ").next().unwrap_or(&msg).to_string();
+                    let msg = crate::web::components::pesan_galat(&msg);
                     error.set(Some(msg));
                 }
             }

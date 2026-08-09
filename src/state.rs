@@ -15,6 +15,14 @@ use crate::service::storage::StorageService;
 pub struct AppState {
     pub pool: Pool,
     pub jwt: JwtService,
+    /// Rahasia mentah yang sama dengan yang dipakai `jwt`.
+    ///
+    /// `JwtService` menyimpan kunci dalam bentuk yang sudah disiapkan dan tak
+    /// bisa dibaca balik, sedangkan langganan kalender butuh menurunkan token
+    /// URL-nya sendiri (`service::ics`) dari rahasia yang sama. Disimpan di
+    /// sini supaya tak ada rahasia KEDUA yang harus ikut dikelola operator —
+    /// dan supaya mengganti `JWT_SECRET` sekaligus mencabut semua langganan.
+    pub jwt_secret: String,
     /// RustFS untuk rekaman siaran; None = simpan lokal (RUSTFS_ENDPOINT kosong).
     pub storage: Option<Arc<StorageService>>,
     /// Redis: link undangan registrasi + pending registration/OTP (lihat
@@ -36,12 +44,22 @@ impl AppState {
     pub fn new(
         pool: Pool,
         jwt: JwtService,
+        jwt_secret: String,
         storage: Option<Arc<StorageService>>,
         redis: ConnectionManager,
         http: reqwest::Client,
         waha: Arc<WahaConfig>,
     ) -> Self {
-        Self { pool, jwt, storage, redis, http, waha, live_bus: Mutex::new(HashMap::new()) }
+        Self {
+            pool,
+            jwt,
+            jwt_secret,
+            storage,
+            redis,
+            http,
+            waha,
+            live_bus: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Kunci `live_bus`, TAHAN keracunan (poisoning).

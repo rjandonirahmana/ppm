@@ -18,6 +18,9 @@ pub mod components;
 // Deteksi tipe berkas dari isinya — dipakai SEMUA jalur unggah.
 #[cfg(feature = "ssr")]
 pub mod filetype;
+// Langganan kalender .ics (server, axum — diambil Google tanpa cookie).
+#[cfg(feature = "ssr")]
+pub mod ics;
 // Unduh laporan PDF/Excel (server, axum — di luar server-fn).
 #[cfg(feature = "ssr")]
 pub mod export;

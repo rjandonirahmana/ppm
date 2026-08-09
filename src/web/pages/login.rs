@@ -77,7 +77,7 @@ pub fn LoginPage() -> impl IntoView {
                 Err(e) => {
                     // Ambil pesan inti tanpa prefix ServerFnError.
                     let msg = e.to_string();
-                    let msg = msg.rsplit(": ").next().unwrap_or(&msg).to_string();
+                    let msg = crate::web::components::pesan_galat(&msg);
                     error.set(Some(msg));
                     busy.set(false);
                 }

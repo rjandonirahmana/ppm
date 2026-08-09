@@ -131,6 +131,7 @@ async fn main() -> Result<()> {
     let state = Arc::new(AppState::new(
         pool,
         ppm::auth::JwtService::new(&cfg.jwt_secret),
+        cfg.jwt_secret.clone(),
         storage,
         redis,
         http,
@@ -434,6 +435,13 @@ async fn main() -> Result<()> {
 
     let app: axum::Router = axum::Router::new()
         .route("/healthz", get(|| async { "ok" }))
+        // Langganan kalender: diambil server Google, bukan peramban santri —
+        // wewenangnya dari token di URL, bukan cookie. Didaftarkan sebelum
+        // catch-all Leptos supaya tak tertelan router halaman.
+        .route(
+            "/kalender.ics",
+            get(ppm::web::ics::feed).layer(axum::Extension(state.clone())),
+        )
         .merge(device_routes)
         .merge(live_audio_routes)
         .merge(materials_routes)

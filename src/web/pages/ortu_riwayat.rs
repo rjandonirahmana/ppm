@@ -35,17 +35,7 @@ pub fn OrtuRiwayatPage() -> impl IntoView {
         },
     );
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = home.get() {
-            let msg = e.to_string();
-            if crate::web::components::is_auth_error(&msg) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(home);
 
     view! {
         <Title text="Riwayat Kehadiran Anak — AFM SMART" />

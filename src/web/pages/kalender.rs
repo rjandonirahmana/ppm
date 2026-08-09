@@ -39,16 +39,7 @@ pub fn KalenderPage() -> impl IntoView {
     });
     let data = Resource::new(move || ym.get(), |(y, m)| async move { academic_calendar_data(y, m).await });
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            if crate::web::components::is_auth_error(&e.to_string()) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(data);
 
     view! {
         <Title text="Kalender Akademik — AFM SMART" />

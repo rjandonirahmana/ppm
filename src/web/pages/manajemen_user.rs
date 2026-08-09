@@ -21,7 +21,9 @@ use crate::web::api::{
     managed_users_data, set_anak_ortu_action, set_user_active_action, set_users_active_action,
     update_managed_user_action,
 };
-use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader, Sheet};
+use crate::web::components::{
+    DeviceFrame, EmptyState, FetchError, FlashMsg, MobileHeader, Sheet,
+};
 
 const STATUS: &[(&str, &str)] = &[
     ("nonaktif", "Nonaktif"),
@@ -310,17 +312,7 @@ pub fn ManajemenUserPage() -> impl IntoView {
                         </div>
                     </div>
 
-                    {move || {
-                        msg.get()
-                            .map(|(ok, t)| {
-                                let cls = if ok {
-                                    "p-2.5 bg-secondary-container text-on-secondary-container rounded-lg text-body-sm"
-                                } else {
-                                    "p-2.5 bg-error-container text-on-error-container rounded-lg text-body-sm"
-                                };
-                                view! { <div class=cls>{t}</div> }
-                            })
-                    }}
+                    <FlashMsg pesan=msg />
 
                     // ── Bilah aksi massal ────────────────────────────────
                     // Hanya muncul saat ada yang tercentang: bilah yang selalu

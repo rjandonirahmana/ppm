@@ -91,10 +91,37 @@ pub async fn upload_proof(
     }
 }
 
+/// Baca isian `items` (JSON) atau pasangan `amount`/`student_id` gaya lama.
+///
+/// Bentuk JSON dipakai sejak orang tua boleh membayar beberapa anak dalam satu
+/// transfer: `[{"student_id":12,"amount":500000},{"student_id":15,"amount":500000}]`.
+/// Nominal disaring ke digit saja — pengguna mengetik "500.000" karena itulah
+/// yang terlihat di aplikasi banknya.
+fn urai_items(json: &str) -> Option<Vec<crate::repository::PengajuanAnak>> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let arr = v.as_array()?;
+    let mut out = Vec::with_capacity(arr.len());
+    for it in arr {
+        let student_id = it.get("student_id")?.as_i64()?;
+        let amount = match it.get("amount")? {
+            serde_json::Value::Number(n) => n.as_i64()?,
+            serde_json::Value::String(s) => {
+                s.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().ok()?
+            }
+            _ => return None,
+        };
+        out.push(crate::repository::PengajuanAnak { student_id, amount });
+    }
+    Some(out)
+}
+
 /// POST /api/bills/request — santri / orang tua MENGAJUKAN pembayaran.
 ///
-/// multipart: `amount` (rupiah, wajib), `file` (foto bukti transfer, wajib),
-/// `student_id` (opsional; kosong = diri sendiri), `note` (opsional).
+/// multipart: `file` (foto bukti transfer, wajib), `note` (opsional), dan
+/// salah satu dari:
+///   • `items` — JSON `[{student_id, amount}, …]` untuk satu transfer yang
+///     mencakup BEBERAPA anak (orang tua dengan lebih dari satu anak);
+///   • `amount` + `student_id` — bentuk tunggal (santri untuk dirinya sendiri).
 ///
 /// SATU request, bukan dua. Memisahkan "buat baris" dan "unggah bukti" akan
 /// meninggalkan pengajuan tanpa bukti setiap kali unggahannya gagal di tengah —
@@ -120,6 +147,7 @@ pub async fn request_payment(
 
     let mut amount: i64 = 0;
     let mut student_id: i64 = 0;
+    let mut items: Option<Vec<crate::repository::PengajuanAnak>> = None;
     let mut catatan = String::new();
     let mut file_bytes: Option<Vec<u8>> = None;
     loop {
@@ -140,6 +168,19 @@ pub async fn request_payment(
             "student_id" => {
                 student_id = field.text().await.unwrap_or_default().trim().parse().unwrap_or(0);
             }
+            "items" => {
+                let raw = field.text().await.unwrap_or_default();
+                match urai_items(&raw) {
+                    Some(v) => items = Some(v),
+                    // Bentuknya rusak = permintaan yang tak bisa ditafsirkan.
+                    // Jatuh diam-diam ke jalur tunggal akan menyimpan kiriman
+                    // untuk SATU anak padahal keluarga memilih dua.
+                    None => {
+                        return (StatusCode::BAD_REQUEST, "Daftar santri tidak terbaca.")
+                            .into_response()
+                    }
+                }
+            }
             "note" => catatan = field.text().await.unwrap_or_default(),
             "file" | "image" => match field.bytes().await {
                 Ok(b) => file_bytes = Some(b.to_vec()),
@@ -149,24 +190,31 @@ pub async fn request_payment(
         }
     }
 
-    let student_id = if student_id > 0 { student_id } else { claims.user_id };
-    if let Err(e) = crate::service::finance::periksa_nominal(amount) {
-        return (StatusCode::BAD_REQUEST, pesan_pengguna(&e)).into_response();
-    }
-    match crate::service::finance::boleh_mengajukan(&state.pool, claims.user_id, student_id).await {
-        Ok(true) => {}
-        Ok(false) => {
-            return (
-                StatusCode::FORBIDDEN,
-                "Anda tidak terhubung dengan santri ini. Hubungi admin untuk menautkan akun.",
-            )
-                .into_response()
-        }
-        Err(e) => {
-            crate::service::telegram::report_error(500, "Cek koneksi ortu", e.to_string());
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Gagal memeriksa akses, coba lagi.")
-                .into_response();
-        }
+    // Bentuk tunggal disusun jadi daftar satu isi, supaya sisa handler ini
+    // hanya punya SATU jalur — satu tempat validasi, satu tempat penyimpanan.
+    let items = items.unwrap_or_else(|| {
+        vec![crate::repository::PengajuanAnak {
+            student_id: if student_id > 0 { student_id } else { claims.user_id },
+            amount,
+        }]
+    });
+
+    // Seluruh isi kiriman diperiksa SEBELUM fotonya diunggah: menolak setelah
+    // unggahan selesai berarti membuang kuota keluarga untuk sesuatu yang sudah
+    // bisa diketahui sejak awal — dan meninggalkan berkas yatim di penyimpanan.
+    if let Err(e) =
+        crate::service::finance::periksa_kiriman(&state.pool, claims.user_id, &items).await
+    {
+        let pesan = pesan_pengguna(&e);
+        // Galat yang BUKAN pesan-untuk-pengguna berarti kegagalan sistem
+        // (DB tak terjangkau), bukan masukan yang salah.
+        let kode = if pesan == "Data tidak valid." {
+            crate::service::telegram::report_error(500, "Periksa kiriman bayar", e.to_string());
+            StatusCode::INTERNAL_SERVER_ERROR
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        return (kode, pesan).into_response();
     }
 
     let Some(bytes) =
@@ -187,10 +235,11 @@ pub async fn request_payment(
             .into_response();
     };
 
+    // Satu bukti untuk seluruh kiriman — buktinya memang satu lembar transfer.
     let key = format!(
         "bills/{}-{}.{}",
         chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
-        student_id,
+        claims.user_id,
         crate::web::filetype::ext_for(content_type)
     );
     let url = match storage.upload_bytes(bytes, &key, content_type).await {
@@ -206,17 +255,20 @@ pub async fn request_payment(
     };
 
     let catatan = catatan.trim().chars().take(300).collect::<String>();
-    match crate::repository::ajukan_pembayaran(
+    match crate::repository::ajukan_pembayaran_batch(
         &state.pool,
-        student_id,
+        &items,
         claims.user_id,
-        amount,
         &url,
         &catatan,
     )
     .await
     {
-        Ok(id) => (StatusCode::OK, Json(json!({ "id": id, "url": url }))).into_response(),
+        Ok(ids) => (
+            StatusCode::OK,
+            Json(json!({ "ids": ids, "jumlah": ids.len(), "url": url })),
+        )
+            .into_response(),
         Err(e) => {
             crate::service::telegram::report_error(500, "Simpan pengajuan bayar", e.to_string());
             (StatusCode::INTERNAL_SERVER_ERROR, "Gagal menyimpan pengajuan, coba lagi.")

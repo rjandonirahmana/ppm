@@ -7,7 +7,8 @@ use leptos_meta::Title;
 
 use crate::models::ProfilData;
 use crate::web::api::{
-    add_ipk_action, delete_ipk_action, logout_action, profil_data, update_contact_action,
+    add_ipk_action, delete_ipk_action, kalender_langganan_path, logout_action, profil_data,
+    update_contact_action,
     update_profile_action,
 };
 use crate::web::components::{DeviceFrame, MobileHeader};
@@ -111,17 +112,7 @@ pub fn ProfilPage() -> impl IntoView {
         });
     };
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            let msg = e.to_string();
-            if crate::web::components::is_auth_error(&msg) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(data);
 
     view! {
         <Title text="Profil — AFM SMART" />
@@ -326,6 +317,8 @@ pub fn ProfilPage() -> impl IntoView {
                             </div>
                         </Show>
 
+                        <LanggananKalender />
+
                         // ── Pengaturan Akun ────────────────────────────────
                         <div class="ppm-card p-5">
                             <div class="flex items-center gap-2 mb-4">
@@ -473,5 +466,132 @@ fn SettingLink(icon: &'static str, label: &'static str, href: &'static str) -> i
             <span class="flex-1 text-body-md font-medium">{label}</span>
             <span class="material-symbols-outlined text-on-surface-variant">"arrow_forward"</span>
         </a>
+    }
+}
+
+/// Kartu "Langganan Kalender": alamat `.ics` pribadi + cara memasangnya.
+///
+/// KENAPA TAUTAN, BUKAN KIRIMAN MINGGUAN. Menulis langsung ke Google Calendar
+/// seseorang mustahil tanpa izin OAuth per-orang, dan mengirim jadwal sepekan
+/// sebagai deretan tautan "Tambah ke Calendar" berarti belasan tautan dalam
+/// satu pesan. Dengan berlangganan, pemasangannya cukup SEKALI dan sesudah itu
+/// Google yang menarik sendiri — jadwal yang digeser ikut bergeser, yang libur
+/// berubah jadi dicoret, tanpa satu pun pesan yang perlu dikirim.
+///
+/// Alamatnya diambil dari server, tak pernah disusun di browser: tokennya
+/// diturunkan dari rahasia server, dan kalau browser bisa menghitungnya, siapa
+/// pun tinggal mengganti angka id di URL untuk membaca jadwal orang lain.
+#[component]
+fn LanggananKalender() -> impl IntoView {
+    let path = Resource::new(|| (), |_| async move { kalender_langganan_path().await });
+    let buka = RwSignal::new(false);
+    let disalin = RwSignal::new(false);
+
+    // Origin ditambahkan di klien — server tak selalu tahu nama domain
+    // publiknya sendiri (di belakang proxy, header Host bisa apa saja).
+    let url_penuh = move || {
+        let p = path.get().and_then(|r| r.ok()).unwrap_or_default();
+        if p.is_empty() {
+            return String::new();
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(o) = web_sys::window().and_then(|w| w.location().origin().ok()) {
+                return format!("{o}{p}");
+            }
+        }
+        p
+    };
+
+    let salin = move |_| {
+        let u = url_penuh();
+        if u.is_empty() {
+            return;
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(w) = web_sys::window() {
+                let _ = w.navigator().clipboard().write_text(&u);
+            }
+        }
+        disalin.set(true);
+    };
+
+    view! {
+        <div class="ppm-card p-5">
+            <div class="flex items-center gap-2 mb-1">
+                <span class="material-symbols-outlined text-on-background">"event_repeat"</span>
+                <h2 class="text-body-lg font-bold text-on-background">"Langganan Kalender"</h2>
+            </div>
+            <p class="text-body-sm text-on-surface-variant mb-3">
+                "Pasang sekali di Google Calendar — sesudah itu jadwalmu ikut terbarui sendiri, \
+                 termasuk kalau ada sesi yang digeser atau libur."
+            </p>
+
+            <Suspense fallback=|| {
+                view! { <div class="h-10 bg-surface-container rounded-xl animate-pulse"></div> }
+            }>
+                {move || {
+                    let u = url_penuh();
+                    (!u.is_empty())
+                        .then(|| {
+                            view! {
+                                <div class="bg-surface-container rounded-xl p-3 space-y-2">
+                                    <p class="text-[11px] text-on-surface-variant break-all font-mono">
+                                        {u.clone()}
+                                    </p>
+                                    <button
+                                        class="w-full py-2.5 rounded-lg bg-primary text-on-primary text-body-sm font-semibold press cursor-pointer"
+                                        on:click=salin
+                                    >
+                                        {move || {
+                                            if disalin.get() { "Tersalin ✓" } else { "Salin alamat" }
+                                        }}
+                                    </button>
+                                </div>
+                            }
+                        })
+                }}
+            </Suspense>
+
+            // Petunjuknya dilipat: yang sudah pernah memasang tak perlu membaca
+            // ulang enam langkah setiap membuka profilnya.
+            <button
+                class="w-full flex items-center justify-between pt-3 cursor-pointer"
+                on:click=move |_| buka.update(|o| *o = !*o)
+                aria-expanded=move || buka.get().to_string()
+            >
+                <span class="text-body-sm font-semibold text-primary">"Cara memasang"</span>
+                <span
+                    class="material-symbols-outlined text-on-surface-variant transition-transform"
+                    class:rotate-180=move || buka.get()
+                >
+                    "expand_more"
+                </span>
+            </button>
+            <Show when=move || buka.get() fallback=|| ()>
+                <ol class="text-body-sm text-on-surface-variant space-y-1.5 pt-2 list-decimal list-inside">
+                    <li>"Salin alamat di atas."</li>
+                    <li>
+                        "Buka " <span class="font-semibold">"calendar.google.com"</span>
+                        " lewat peramban (bukan aplikasi Google Calendar)."
+                    </li>
+                    <li>
+                        "Di kiri, klik tanda " <span class="font-semibold">"+"</span>
+                        " di sebelah \"Kalender lain\" → \"Dari URL\"."
+                    </li>
+                    <li>"Tempel alamatnya, lalu \"Tambahkan kalender\"."</li>
+                </ol>
+                <p class="text-[11px] text-on-surface-variant pt-2">
+                    "Google menarik pembaruan setiap beberapa jam, bukan seketika — untuk kabar \
+                     mendadak tetap lihat pengumuman di aplikasi. Jangan bagikan alamat ini: \
+                     siapa pun yang memilikinya bisa melihat jadwalmu."
+                </p>
+                <p class="text-[11px] text-on-surface-variant pt-1">
+                    "Aplikasi Google Calendar di HP tidak bisa menambah alamat langsung — pasang \
+                     sekali lewat peramban, nanti otomatis muncul juga di HP."
+                </p>
+            </Show>
+        </div>
     }
 }

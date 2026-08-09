@@ -26,7 +26,14 @@ pub fn BerandaPage() -> impl IntoView {
     // lalu dipilah per kategori di bawah: tiga resource terpisah berarti tiga
     // request untuk tabel berisi puluhan baris, dan tiga saat berbeda di mana
     // bagian halaman muncul.
-    let gallery = Resource::new(
+    // BLOCKING, tak seperti `artikel` di bawahnya. Kepala halaman adalah hal
+    // PERTAMA yang terlihat: dengan resource biasa, HTML pertama yang dikirim
+    // berisi `HeroPolos` dan video baru menyusul — pengunjung melihat hero
+    // polos berkedip lalu berganti video, dan perayap yang tak menjalankan JS
+    // tak pernah melihat videonya sama sekali. Tabelnya puluhan baris dengan
+    // index, jadi menunggunya murah. Kegagalan DB tetap turun anggun ke
+    // `HeroPolos` — yang ditambahkan hanya jeda, bukan titik gagal baru.
+    let gallery = Resource::new_blocking(
         || (),
         |_| async move { crate::web::api::activity_photos_data().await },
     );

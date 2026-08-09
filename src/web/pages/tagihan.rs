@@ -15,13 +15,17 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{fmt_rupiah, BillItem, SessionUser, StudentSearchItem, TunggakanItem};
+use crate::models::{
+    fmt_rupiah, BillItem, ChildChip, SessionUser, StudentSearchItem, TunggakanItem,
+};
 use crate::web::api::{
     create_bill_action, delete_bill_action, finance_student_search, kirim_pengingat_bayar_action,
     mark_bill_paid_action, paid_bills_data, pending_bills_data, reject_bill_action,
     student_bills_data, tunggakan_data, unpaid_bills_data, verify_bill_action,
 };
-use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader};
+use crate::web::components::{
+    DeviceFrame, EmptyState, FetchError, FlashMsg, MobileHeader,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FINANCE — daftar belum bayar + kelola
@@ -302,7 +306,7 @@ fn PengajuanRow(b: BillItem, refetch: impl Fn() + Copy + Send + Sync + 'static) 
                 Ok(()) => refetch(),
                 Err(e) => {
                     let t = e.to_string();
-                    err.set(t.rsplit(": ").next().unwrap_or(&t).to_string());
+                    err.set(crate::web::components::pesan_galat(&t));
                 }
             }
             busy.set(false);
@@ -321,7 +325,7 @@ fn PengajuanRow(b: BillItem, refetch: impl Fn() + Copy + Send + Sync + 'static) 
                 Ok(()) => refetch(),
                 Err(e) => {
                     let t = e.to_string();
-                    err.set(t.rsplit(": ").next().unwrap_or(&t).to_string());
+                    err.set(crate::web::components::pesan_galat(&t));
                 }
             }
             busy.set(false);
@@ -519,21 +523,69 @@ fn UnpaidRow(
     let id = b.id;
     let method = RwSignal::new("transfer".to_string());
     let busy = RwSignal::new(false);
+    // Dulu kedua aksi memakai `let _ = …`: kegagalan server ditelan, daftar
+    // tetap disegarkan, dan pengurus menyimpulkan sendiri apa yang terjadi.
+    // Padahal server justru punya jawaban yang berguna — "Pembayaran Anda
+    // sendiri harus diperiksa pengurus lain", atau (sejak guard status)
+    // "sudah diproses".
+    let err = RwSignal::new(String::new());
+    let pesan = move |e: ServerFnError| {
+        let t = e.to_string();
+        err.set(crate::web::components::pesan_galat(&t));
+    };
 
     let pay = move |_| {
         if busy.get_untracked() { return; }
         busy.set(true);
+        err.set(String::new());
         let m = method.get_untracked();
         leptos::task::spawn_local(async move {
-            let _ = mark_bill_paid_action(id, None, m).await;
-            refetch();
+            match mark_bill_paid_action(id, None, m).await {
+                Ok(()) => refetch(),
+                Err(e) => pesan(e),
+            }
             busy.set(false);
         });
     };
+    // Menghapus catatan keuangan adalah satu-satunya aksi di halaman ini yang
+    // tak bisa dibatalkan, dan sebelumnya ia berjarak SATU ketuk tak sengaja
+    // pada ikon 36px. Konfirmasi menyebut nama santri & judulnya supaya yang
+    // membaca tahu baris mana yang akan hilang — di daftar panjang, "yakin
+    // hapus?" tidak menjawab pertanyaan yang sebenarnya.
+    //
+    // StoredValue, bukan String langsung: closure yang MEMINDAHKAN sebuah
+    // String tidak `Fn` (hanya `FnOnce`), sedangkan handler on:click harus bisa
+    // dipanggil berkali-kali. StoredValue sendiri Copy; isinya diambil saat
+    // dipakai.
+    let nama_konfirmasi = StoredValue::new(format!("{} — {}", b.student_name, b.title));
     let del = move |_| {
+        if busy.get_untracked() {
+            return;
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let ok = web_sys::window()
+                .and_then(|w| {
+                    w.confirm_with_message(&format!(
+                        "Hapus catatan periode ini?\n\n{}\n\nTindakan ini tidak bisa dibatalkan.",
+                        nama_konfirmasi.get_value()
+                    ))
+                    .ok()
+                })
+                .unwrap_or(false);
+            if !ok {
+                return;
+            }
+        }
+        let _ = &nama_konfirmasi;
+        busy.set(true);
+        err.set(String::new());
         leptos::task::spawn_local(async move {
-            let _ = delete_bill_action(id).await;
-            refetch();
+            match delete_bill_action(id).await {
+                Ok(()) => refetch(),
+                Err(e) => pesan(e),
+            }
+            busy.set(false);
         });
     };
 
@@ -570,12 +622,18 @@ fn UnpaidRow(
                     "Tandai Lunas"
                 </button>
                 <Show when=move || can_manage.get() fallback=|| ()>
-                    <button class="w-9 h-9 rounded-lg bg-error-container/60 text-error flex items-center justify-center shrink-0"
+                    <button class="w-11 h-11 rounded-lg bg-error-container/60 text-error flex items-center justify-center shrink-0 disabled:opacity-50"
+                        prop:disabled=move || busy.get()
                         on:click=del aria-label="Hapus catatan pembayaran">
                         <span class="material-symbols-outlined text-[18px]">"delete"</span>
                     </button>
                 </Show>
             </div>
+            <Show when=move || !err.get().is_empty() fallback=|| ()>
+                <div class="p-2 bg-error-container text-on-error-container rounded-lg text-[11px]" role="alert">
+                    {move || err.get()}
+                </div>
+            </Show>
         </div>
     }
 }
@@ -640,7 +698,7 @@ fn PanelTerlewat(
                 }
                 Err(e) => {
                     let t = e.to_string();
-                    msg.set(Some((false, t.rsplit(": ").next().unwrap_or(&t).to_string())));
+                    msg.set(Some((false, crate::web::components::pesan_galat(&t))));
                 }
             }
             busy.set(false);
@@ -653,17 +711,7 @@ fn PanelTerlewat(
     let n_belum = d.belum_pernah.len();
 
     view! {
-        {move || {
-            msg.get()
-                .map(|(ok, t)| {
-                    let cls = if ok {
-                        "p-2.5 bg-secondary-container text-on-secondary-container rounded-lg text-body-sm"
-                    } else {
-                        "p-2.5 bg-error-container text-on-error-container rounded-lg text-body-sm"
-                    };
-                    view! { <div class=cls>{t}</div> }
-                })
-        }}
+        <FlashMsg pesan=msg />
 
         // ── Bilah aksi massal ────────────────────────────────────────────
         <Show when=move || !dipilih.get().is_empty() fallback=|| ()>
@@ -681,13 +729,20 @@ fn PanelTerlewat(
                         // punya dua orang tua terhubung, dan konfirmasi yang
                         // menyebut angka terlalu kecil membuat pengurus mengira
                         // kirimannya lebih sempit dari kenyataannya.
-                        let nomor: i64 = terlewat
-                            .get_value()
-                            .iter()
-                            .chain(belum.get_value().iter())
-                            .filter(|t| ids.contains(&t.user_id))
-                            .map(|t| t.jumlah_ortu + i64::from(t.punya_hp))
-                            .sum();
+                        // `with_value` MEMINJAM; `get_value` mengklon seluruh
+                        // Vec. Daftar ini bisa berisi ratusan santri berisi
+                        // lima String masing-masing — menghitung jumlah nomor
+                        // lewat `get_value` berarti ribuan alokasi String hanya
+                        // untuk menjumlahkan dua angka, dan itu terjadi setiap
+                        // kali tombolnya ditekan.
+                        let hitung = |v: &Vec<TunggakanItem>| -> i64 {
+                            v.iter()
+                                .filter(|t| ids.contains(&t.user_id))
+                                .map(|t| t.jumlah_ortu + i64::from(t.punya_hp))
+                                .sum()
+                        };
+                        let nomor: i64 =
+                            terlewat.with_value(hitung) + belum.with_value(hitung);
                         kirim(
                             ids,
                             format!(
@@ -928,7 +983,7 @@ fn CreateBillForm(refetch: impl Fn() + Copy + Send + Sync + 'static) -> impl Int
                     picked.set(None); q.set(String::new()); results.set(Vec::new());
                     refetch();
                 }
-                Err(e) => { let m = e.to_string(); msg.set(Some((false, m.rsplit(": ").next().unwrap_or(&m).to_string()))); }
+                Err(e) => { let m = e.to_string(); msg.set(Some((false, crate::web::components::pesan_galat(&m)))); }
             }
             busy.set(false);
         });
@@ -1075,7 +1130,7 @@ pub fn MyBillsPage() -> impl IntoView {
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Pembayaran Saya" subtitle="Ajukan & pantau pembayaran" back_href="/santri" />
                 <div class="px-5 pt-5 space-y-3 stagger">
-                    <FormAjukanBayar student_id=0 refetch=refetch />
+                    <FormAjukanBayar refetch=refetch />
                     <Suspense fallback=|| {
                         view! { <div class="h-20 bg-surface-container rounded-2xl animate-pulse"></div> }
                     }>
@@ -1222,18 +1277,68 @@ pub fn RiwayatBayarList(list: Vec<BillItem>) -> impl IntoView {
 // benar, bukan sisa kode mati.
 #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
 pub fn FormAjukanBayar(
-    /// 0 = santri yang sedang login. Selain itu: id anak (dipakai orang tua).
-    #[prop(into)]
-    student_id: Signal<i64>,
+    /// Anak yang bisa dibayarkan lewat form ini.
+    ///
+    /// KOSONG = santri membayar untuk dirinya sendiri (server memakai id sesi).
+    /// Satu anak = terpilih otomatis, tanpa daftar centang. Dua atau lebih =
+    /// pengguna memilih sendiri siapa saja yang ditutup oleh transfer ini.
+    #[prop(into, optional)]
+    anak: Signal<Vec<ChildChip>>,
     refetch: impl Fn() + Copy + Send + Sync + 'static,
 ) -> impl IntoView {
     let buka = RwSignal::new(false);
-    let nominal = RwSignal::new(String::new());
+    // Nominal PER anak: (student_id, teks). Untuk mode santri isinya satu baris
+    // ber-id 0. Vec, bukan map: urutannya harus mengikuti daftar anak di layar,
+    // dan jumlah anaknya segelintir.
+    let nominal: RwSignal<Vec<(i64, String)>> = RwSignal::new(vec![(0, String::new())]);
     let catatan = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
     let nama_berkas = RwSignal::new(String::new());
     let file_input: NodeRef<leptos::html::Input> = NodeRef::new();
+
+    // Daftar anak berubah (halaman ortu selesai memuat) → siapkan barisnya.
+    // Anak tunggal langsung terpilih: menyuruh orang mencentang satu-satunya
+    // pilihan yang ada hanya menambah langkah tanpa menawarkan apa pun.
+    Effect::new(move |_| {
+        let list = anak.get();
+        if list.is_empty() {
+            nominal.set(vec![(0, String::new())]);
+        } else if list.len() == 1 {
+            nominal.set(vec![(list[0].id, String::new())]);
+        } else {
+            // Pertahankan nominal yang sudah diketik untuk anak yang masih ada.
+            let lama = nominal.get_untracked();
+            nominal.set(
+                lama.into_iter().filter(|(id, _)| list.iter().any(|c| c.id == *id)).collect(),
+            );
+        }
+    });
+
+    let terpilih = move |id: i64| nominal.get().iter().any(|(i, _)| *i == id);
+    let toggle = move |id: i64| {
+        nominal.update(|v| {
+            if let Some(i) = v.iter().position(|(x, _)| *x == id) {
+                v.remove(i);
+            } else {
+                v.push((id, String::new()));
+            }
+        });
+    };
+    let set_nominal = move |id: i64, teks: String| {
+        nominal.update(|v| {
+            if let Some(slot) = v.iter_mut().find(|(x, _)| *x == id) {
+                slot.1 = teks;
+            }
+        });
+    };
+    let digit = |s: &str| -> i64 {
+        s.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0)
+    };
+    // Total ditampilkan supaya orang tua bisa mencocokkannya dengan angka di
+    // bukti transfer sebelum mengirim — kesalahan yang paling mudah terjadi
+    // saat satu setoran dibagi ke beberapa anak.
+    let total = move || nominal.get().iter().map(|(_, t)| digit(t)).sum::<i64>();
 
     let on_pick = move |_ev: leptos::ev::Event| {
         #[cfg(target_arch = "wasm32")]
@@ -1255,13 +1360,34 @@ pub fn FormAjukanBayar(
         }
         // Divalidasi di klien SEBELUM mengunggah foto: menyuruh orang menunggu
         // unggahan 3 MB selesai hanya untuk dibalas "nominal kosong" adalah
-        // pemborosan kuota yang bisa dicegah satu baris.
-        let angka: String =
-            nominal.get_untracked().chars().filter(|c| c.is_ascii_digit()).collect();
-        if angka.is_empty() || angka.parse::<i64>().unwrap_or(0) <= 0 {
-            msg.set(Some((false, "Isi dulu jumlah yang ditransfer.".into())));
+        // pemborosan kuota yang bisa dicegah beberapa baris.
+        let baris = nominal.get_untracked();
+        if baris.is_empty() {
+            msg.set(Some((false, "Pilih dulu santri yang mau dibayarkan.".into())));
             return;
         }
+        if baris.iter().any(|(_, t)| digit(t) <= 0) {
+            msg.set(Some((
+                false,
+                if baris.len() > 1 {
+                    "Isi jumlah untuk setiap santri yang dicentang.".into()
+                } else {
+                    "Isi dulu jumlah yang ditransfer.".to_string()
+                },
+            )));
+            return;
+        }
+        // JSON dirakit tangan, bukan lewat serde: satu-satunya konsumennya
+        // adalah handler kita sendiri, bentuknya dua field angka, dan menarik
+        // serde_json ke bundel WASM demi ini tak sepadan.
+        let items_json = format!(
+            "[{}]",
+            baris
+                .iter()
+                .map(|(id, t)| format!("{{\"student_id\":{},\"amount\":{}}}", id, digit(t)))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
         #[cfg(target_arch = "wasm32")]
         {
             use wasm_bindgen::JsCast;
@@ -1272,12 +1398,11 @@ pub fn FormAjukanBayar(
             };
             busy.set(true);
             msg.set(None);
-            let sid = student_id.get_untracked();
             let cat = catatan.get_untracked();
+            let jumlah_anak = baris.len();
             leptos::task::spawn_local(async move {
                 let form = web_sys::FormData::new().unwrap();
-                let _ = form.append_with_str("amount", &angka);
-                let _ = form.append_with_str("student_id", &sid.to_string());
+                let _ = form.append_with_str("items", &items_json);
                 let _ = form.append_with_str("note", &cat);
                 let _ = form.append_with_blob("file", &file);
 
@@ -1314,11 +1439,25 @@ pub fn FormAjukanBayar(
                 if ok {
                     msg.set(Some((
                         true,
-                        "Terkirim. Pengurus akan memeriksa bukti transfermu dan menetapkan \
-                         masa berlakunya."
-                            .into(),
+                        if jumlah_anak > 1 {
+                            format!(
+                                "Terkirim untuk {jumlah_anak} santri. Pengurus akan memeriksa \
+                                 bukti transfernya dan menetapkan masa berlaku masing-masing."
+                            )
+                        } else {
+                            "Terkirim. Pengurus akan memeriksa bukti transfermu dan menetapkan \
+                             masa berlakunya."
+                                .to_string()
+                        },
                     )));
-                    nominal.set(String::new());
+                    // Nominal dikosongkan, PILIHAN ANAKNYA dipertahankan —
+                    // orang tua yang baru saja membayar dua anaknya kemungkinan
+                    // besar akan membayar keduanya lagi bulan depan.
+                    nominal.update(|v| {
+                        for slot in v.iter_mut() {
+                            slot.1.clear();
+                        }
+                    });
                     catatan.set(String::new());
                     nama_berkas.set(String::new());
                     if let Some(inp) = file_input.get_untracked() {
@@ -1340,7 +1479,7 @@ pub fn FormAjukanBayar(
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let _ = (&busy, &msg, &student_id, &catatan);
+            let _ = (&busy, &msg, &catatan, &items_json);
         }
     };
 
@@ -1364,17 +1503,7 @@ pub fn FormAjukanBayar(
                 </span>
             </button>
 
-            {move || {
-                msg.get()
-                    .map(|(ok, t)| {
-                        let cls = if ok {
-                            "p-2.5 bg-secondary-container text-on-secondary-container rounded-lg text-body-sm"
-                        } else {
-                            "p-2.5 bg-error-container text-on-error-container rounded-lg text-body-sm"
-                        };
-                        view! { <div class=cls role="alert">{t}</div> }
-                    })
-            }}
+            <FlashMsg pesan=msg />
 
             <Show when=move || buka.get() fallback=|| ()>
                 <div class="space-y-2.5">
@@ -1383,19 +1512,115 @@ pub fn FormAjukanBayar(
                          (dari tanggal berapa sampai kapan) ditetapkan pengurus setelah \
                          bukti dicocokkan dengan rekening pondok."
                     </p>
-                    <div>
-                        <label class="text-[11px] text-on-surface-variant ml-1">
-                            "Jumlah ditransfer (rupiah)"
-                        </label>
-                        <input
-                            class=field
-                            r#type="text"
-                            inputmode="numeric"
-                            placeholder="mis. 500000"
-                            prop:value=move || nominal.get()
-                            on:input=move |e| nominal.set(event_target_value(&e))
-                        />
-                    </div>
+                    // ── Siapa yang dibayarkan ───────────────────────────
+                    // Daftar centang hanya muncul bila anaknya lebih dari satu.
+                    // Satu transfer bisa menutup beberapa anak sekaligus, dan
+                    // memaksa orang tua mengirim dua kali berarti ia memotret
+                    // bukti yang sama dua kali — sementara pengurus menerima
+                    // dua kiriman yang tak terlihat berhubungan.
+                    {move || {
+                        let list = anak.get();
+                        (list.len() > 1)
+                            .then(|| {
+                                view! {
+                                    <div class="space-y-1.5">
+                                        <p class="text-[11px] text-on-surface-variant ml-1">
+                                            "Untuk siapa transfer ini? Boleh lebih dari satu."
+                                        </p>
+                                        {list
+                                            .into_iter()
+                                            .map(|c| {
+                                                let id = c.id;
+                                                let nama = c.name.clone();
+                                                view! {
+                                                    <div class="rounded-xl bg-surface-container overflow-hidden">
+                                                        // Seluruh baris jadi area ketuk — kotak
+                                                        // centang 20px saja terlalu kecil di HP.
+                                                        <label class="flex items-center gap-2.5 px-3 py-3 cursor-pointer">
+                                                            <input
+                                                                type="checkbox"
+                                                                class="w-6 h-6 accent-primary shrink-0"
+                                                                prop:checked=move || terpilih(id)
+                                                                on:change=move |_| toggle(id)
+                                                            />
+                                                            <span class="text-body-md text-on-surface flex-1 min-w-0 truncate">
+                                                                {nama.clone()}
+                                                            </span>
+                                                        </label>
+                                                        <Show when=move || terpilih(id) fallback=|| ()>
+                                                            <div class="px-3 pb-3">
+                                                                <input
+                                                                    class="w-full bg-surface border-0 rounded-lg px-3 py-2.5 text-body-md text-on-surface"
+                                                                    r#type="text"
+                                                                    inputmode="numeric"
+                                                                    placeholder="Jumlah untuk santri ini (mis. 500000)"
+                                                                    aria-label=format!("Jumlah untuk {}", nama.clone())
+                                                                    prop:value=move || {
+                                                                        nominal
+                                                                            .get()
+                                                                            .iter()
+                                                                            .find(|(x, _)| *x == id)
+                                                                            .map(|(_, t)| t.clone())
+                                                                            .unwrap_or_default()
+                                                                    }
+                                                                    on:input=move |e| set_nominal(id, event_target_value(&e))
+                                                                />
+                                                            </div>
+                                                        </Show>
+                                                    </div>
+                                                }
+                                            })
+                                            .collect_view()}
+                                        // Total dipajang supaya orang tua bisa mencocokkannya
+                                        // dengan angka di bukti transfer SEBELUM mengirim.
+                                        <div class="flex items-center justify-between px-1 pt-0.5">
+                                            <span class="text-[11px] text-on-surface-variant">
+                                                {move || format!("{} santri dipilih", nominal.get().len())}
+                                            </span>
+                                            <span class="text-body-sm font-bold text-on-background tabular-nums">
+                                                {move || format!("Total {}", fmt_rupiah(total()))}
+                                            </span>
+                                        </div>
+                                    </div>
+                                }
+                            })
+                    }}
+
+                    // Anak tunggal / santri sendiri: satu isian saja.
+                    {move || {
+                        (anak.get().len() <= 1)
+                            .then(|| {
+                                view! {
+                                    <div>
+                                        <label class="text-[11px] text-on-surface-variant ml-1">
+                                            "Jumlah ditransfer (rupiah)"
+                                        </label>
+                                        <input
+                                            class=field
+                                            r#type="text"
+                                            inputmode="numeric"
+                                            placeholder="mis. 500000"
+                                            prop:value=move || {
+                                                nominal
+                                                    .get()
+                                                    .first()
+                                                    .map(|(_, t)| t.clone())
+                                                    .unwrap_or_default()
+                                            }
+                                            on:input=move |e| {
+                                                let teks = event_target_value(&e);
+                                                nominal
+                                                    .update(|v| {
+                                                        if let Some(slot) = v.first_mut() {
+                                                            slot.1 = teks;
+                                                        }
+                                                    });
+                                            }
+                                        />
+                                    </div>
+                                }
+                            })
+                    }}
                     <label class="flex items-center gap-2 py-2.5 px-3 rounded-xl border-2 border-dashed border-outline-variant text-body-sm text-on-surface-variant cursor-pointer">
                         <span class="material-symbols-outlined text-[20px] text-primary">
                             "photo_camera"
@@ -1447,15 +1672,23 @@ fn MyBillRow(b: BillItem, refetch: impl Fn() + Copy + Send + Sync + 'static) -> 
     let proof_url = b.proof_url.clone();
     let has_proof = !proof_url.is_empty();
     let uploading = RwSignal::new(false);
+    // Hasil unggahan dulu DIBUANG seluruhnya (`let _ = …fetch…`). Server justru
+    // menolak dengan kalimat yang berguna ("maks 10MB", "harus berupa gambar"),
+    // tapi tak satu pun sampai ke layar: pemuat berhenti, daftar disegarkan,
+    // buktinya tidak ada — dan santri menyimpulkan aplikasinya rusak, atau
+    // lebih buruk, mengira unggahannya berhasil.
+    let gagal = RwSignal::new(String::new());
     let file_input: NodeRef<leptos::html::Input> = NodeRef::new();
 
     let on_pick = move |_ev: leptos::ev::Event| {
         #[cfg(target_arch = "wasm32")]
         {
+            use wasm_bindgen::JsCast;
             let Some(input) = file_input.get() else { return };
             let Some(files) = input.files() else { return };
             let Some(file) = files.get(0) else { return };
             uploading.set(true);
+            gagal.set(String::new());
             leptos::task::spawn_local(async move {
                 let form = web_sys::FormData::new().unwrap();
                 let _ = form.append_with_str("bill_id", &id.to_string());
@@ -1464,14 +1697,43 @@ fn MyBillRow(b: BillItem, refetch: impl Fn() + Copy + Send + Sync + 'static) -> 
                 let opts = web_sys::RequestInit::new();
                 opts.set_method("POST");
                 opts.set_body(form.as_ref());
+                let mut ok = false;
                 if let Ok(req) = web_sys::Request::new_with_str_and_init("/api/bills/proof", &opts) {
-                    let _ = wasm_bindgen_futures::JsFuture::from(win.fetch_with_request(&req)).await;
+                    match wasm_bindgen_futures::JsFuture::from(win.fetch_with_request(&req)).await {
+                        Ok(resp) => {
+                            let resp: web_sys::Response = resp.dyn_into().unwrap();
+                            if resp.ok() {
+                                ok = true;
+                            } else {
+                                let teks =
+                                    wasm_bindgen_futures::JsFuture::from(resp.text().unwrap())
+                                        .await
+                                        .ok()
+                                        .and_then(|t| t.as_string())
+                                        .unwrap_or_default();
+                                gagal.set(if teks.trim().is_empty() {
+                                    "Unggahan ditolak server. Coba foto lain.".to_string()
+                                } else {
+                                    teks
+                                });
+                            }
+                        }
+                        Err(_) => gagal.set(
+                            "Koneksi terputus saat mengunggah. Coba lagi setelah sinyalnya \
+                             stabil."
+                                .to_string(),
+                        ),
+                    }
                 }
                 uploading.set(false);
-                refetch();
+                // Hanya menyegarkan bila benar-benar tersimpan — refetch setelah
+                // gagal menghapus pesannya dari layar sebelum sempat dibaca.
+                if ok {
+                    refetch();
+                }
             });
         }
-        let _ = &file_input;
+        let _ = (&file_input, &gagal);
     };
 
     // Santri melihat layar ini juga — jadi kata yang dipakai bukan tuduhan.
@@ -1533,13 +1795,18 @@ fn MyBillRow(b: BillItem, refetch: impl Fn() + Copy + Send + Sync + 'static) -> 
             // ditimpa diam-diam, supaya jejak penolakannya tetap terbaca.
             {(b.status == "belum").then(|| view! {
                 <div>
-                    <label class="inline-flex items-center gap-2 text-body-sm text-primary font-semibold cursor-pointer">
+                    <label class="inline-flex items-center gap-2 py-2 text-body-sm text-primary font-semibold cursor-pointer">
                         <span class="material-symbols-outlined text-[18px]">"cloud_upload"</span>
                         {move || if uploading.get() { "Mengunggah…" } else if has_proof { "Ganti bukti" } else { "Unggah bukti bayar" }}
                         <input type="file" node_ref=file_input accept="image/*" class="hidden" on:change=on_pick />
                     </label>
                 </div>
             })}
+            <Show when=move || !gagal.get().is_empty() fallback=|| ()>
+                <p class="p-2 bg-error-container text-on-error-container rounded-lg text-[11px]" role="alert">
+                    {move || gagal.get()}
+                </p>
+            </Show>
             {has_proof.then({ let url = proof_url.clone(); move || view! {
                 <a href=url.clone() target="_blank" class="inline-flex items-center gap-1 text-body-sm text-on-surface-variant">
                     <span class="material-symbols-outlined text-[16px]">"fact_check"</span> "Bukti terunggah"

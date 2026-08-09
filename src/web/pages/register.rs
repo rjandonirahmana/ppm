@@ -34,10 +34,7 @@ pub fn RegisterPage() -> impl IntoView {
     let error = RwSignal::new(Option::<String>::None);
     let info = RwSignal::new(Option::<String>::None);
 
-    let strip = |e: ServerFnError| {
-        let s = e.to_string();
-        s.rsplit(": ").next().unwrap_or(&s).to_string()
-    };
+    let strip = crate::web::components::pesan_galat;
 
     // Validasi kode referal → tampil peran, lanjut ke form.
     let do_validate = move || {

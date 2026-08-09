@@ -9,6 +9,13 @@
 //! Form pengajuannya SATU komponen dengan layar santri (`FormAjukanBayar`) —
 //! isinya memang sama, dan menyalinnya ke dua halaman membuat keduanya
 //! menyimpang begitu ada satu isian ditambahkan.
+//!
+//! DUA PERAN CHIP ANAK. Satu transfer sering menutup BEBERAPA anak sekaligus,
+//! jadi pemilihan "siapa yang dibayarkan" ada di dalam form (daftar centang +
+//! nominal per anak). Chip di halaman ini tinggal mengatur satu hal lain:
+//! riwayat siapa yang sedang ditampilkan di bawah. Keduanya sengaja dipisah —
+//! menggabungkannya berarti melihat riwayat anak kedua diam-diam mengubah
+//! kepada siapa bukti transfer yang sudah diisi akan dikirim.
 
 use leptos::prelude::*;
 use leptos_meta::Title;
@@ -34,16 +41,7 @@ pub fn OrtuPembayaranPage() -> impl IntoView {
         }
     });
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = home.get() {
-            if crate::web::components::is_auth_error(&e.to_string()) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(home);
 
     // Kunci resource-nya id anak: berganti anak = daftar yang lain sama sekali,
     // bukan penyaringan atas daftar yang sudah ada.
@@ -96,6 +94,9 @@ pub fn OrtuPembayaranPage() -> impl IntoView {
                                             {banyak
                                                 .then(|| {
                                                     view! {
+                                                        <p class="text-[11px] text-on-surface-variant">
+                                                            "Riwayat pembayaran yang ditampilkan:"
+                                                        </p>
                                                         <div class="flex gap-2 overflow-x-auto pb-1">
                                                             {h
                                                                 .children
@@ -130,11 +131,25 @@ pub fn OrtuPembayaranPage() -> impl IntoView {
                         }}
                     </Suspense>
 
-                    // Form baru dirender setelah ada anak terpilih — mengirim
-                    // bukti tanpa tahu atas nama siapa tak berarti apa-apa.
-                    <Show when=move || anak.get().is_some() fallback=|| ()>
+                    // Form menerima SELURUH daftar anak, bukan yang sedang
+                    // dilihat riwayatnya: satu transfer boleh menutup beberapa
+                    // anak, dan form-lah yang menawarkan pilihannya.
+                    <Show
+                        when=move || {
+                            home.get()
+                                .and_then(|r| r.ok())
+                                .map(|h| !h.children.is_empty())
+                                .unwrap_or(false)
+                        }
+                        fallback=|| ()
+                    >
                         <FormAjukanBayar
-                            student_id=Signal::derive(move || anak.get().unwrap_or(0))
+                            anak=Signal::derive(move || {
+                                home.get()
+                                    .and_then(|r| r.ok())
+                                    .map(|h| h.children)
+                                    .unwrap_or_default()
+                            })
                             refetch=refetch
                         />
                     </Show>

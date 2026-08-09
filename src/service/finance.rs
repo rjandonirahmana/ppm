@@ -58,6 +58,55 @@ pub fn periksa_nominal(amount: i64) -> Result<()> {
     Ok(())
 }
 
+/// Berapa anak yang boleh masuk dalam satu kiriman.
+///
+/// Bukan aturan pondok — pagar salah kirim. Keluarga terbesar di sini punya
+/// segelintir anak; angka di atas itu berarti isian yang dibuat program, bukan
+/// orang tua yang sedang membayar.
+const MAX_ANAK_PER_KIRIMAN: usize = 10;
+
+/// Periksa seluruh isi satu kiriman multi-anak SEBELUM apa pun disimpan:
+/// nominal tiap anak sah, tak ada anak ganda, pengaju berhak atas semuanya, dan
+/// tak satu pun sedang punya pengajuan yang belum diperiksa.
+///
+/// Dijalankan sekaligus, bukan per-anak sambil menyimpan: kiriman yang separuh
+/// masuk membuat keluarga melihat satu anak tercatat dan menyimpulkan yang lain
+/// hilang, lalu mengirim ulang — dan setoran yang sama tercatat dua kali.
+pub async fn periksa_kiriman(
+    pool: &Pool,
+    aktor_id: i64,
+    items: &[repo::PengajuanAnak],
+) -> Result<()> {
+    if items.is_empty() {
+        bail_user!("Pilih dulu santri yang mau dibayarkan.");
+    }
+    if items.len() > MAX_ANAK_PER_KIRIMAN {
+        bail_user!("Terlalu banyak santri dalam satu kiriman (maks {MAX_ANAK_PER_KIRIMAN}).");
+    }
+    let mut ids: Vec<i64> = items.iter().map(|i| i.student_id).collect();
+    ids.sort_unstable();
+    let sebelum = ids.len();
+    ids.dedup();
+    if ids.len() != sebelum {
+        bail_user!("Ada santri yang terpilih dua kali.");
+    }
+    for it in items {
+        periksa_nominal(it.amount)?;
+        if !boleh_mengajukan(pool, aktor_id, it.student_id).await? {
+            bail_user!("Anda tidak terhubung dengan salah satu santri yang dipilih.");
+        }
+    }
+    let menunggu = repo::punya_pengajuan_menunggu(pool, &ids).await?;
+    if !menunggu.is_empty() {
+        bail_user!(
+            "Masih ada pengajuan yang sedang diperiksa untuk {}. Tunggu hasilnya dulu \
+             supaya setoran tidak tercatat dua kali.",
+            ringkas_nama(&menunggu)
+        );
+    }
+    Ok(())
+}
+
 /// Daftar pembayaran satu santri untuk layarnya sendiri / layar orang tuanya.
 /// Guard kepemilikan dijalankan di sini, bukan diserahkan ke pemanggil.
 pub async fn riwayat_santri(

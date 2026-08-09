@@ -9,7 +9,9 @@ use crate::web::api::{
     create_curriculum_action, delete_curriculum_action, kekosongan_materi,
     update_curriculum_action,
 };
-use crate::web::components::{kartu_grid, EmptyState};
+use crate::web::components::{
+    EmptyState, FlashMsg, kartu_grid,
+};
 
 // ── Tab KURIKULUM (migrasi 17) ───────────────────────────────────────────────
 
@@ -356,17 +358,7 @@ fn BuatKurikulumForm(
             view! {
                 <form class="ppm-card p-4 space-y-3 anim-in" method="post" on:submit=submit>
                     <h3 class="text-body-md font-bold text-on-background">"Materi/Kitab Baru"</h3>
-                    {move || {
-                        msg.get()
-                            .map(|(ok, t)| {
-                                let cls = if ok {
-                                    "p-2.5 bg-secondary-container text-on-secondary-container rounded-lg text-body-sm"
-                                } else {
-                                    "p-2.5 bg-error-container text-on-error-container rounded-lg text-body-sm"
-                                };
-                                view! { <div class=cls>{t}</div> }
-                            })
-                    }}
+                    <FlashMsg pesan=msg />
                     // Judul & keterangan TIDAK diketik di sini — semuanya ikut
                     // dari materi yang dipilih (books), supaya tak ada dua
                     // versi judul untuk kitab yang sama.

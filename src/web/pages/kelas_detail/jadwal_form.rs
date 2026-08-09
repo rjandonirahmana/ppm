@@ -5,6 +5,7 @@
 use leptos::prelude::*;
 
 use crate::web::api::create_schedule_action;
+use crate::web::components::FlashMsg;
 
 /// Picker tanggal manual (recurrence 'custom') = KALENDER bulanan ala kalender
 /// akademik: klik hari untuk pilih/batal (loncat-loncat), navigasi bulan ‹ ›.
@@ -218,7 +219,7 @@ pub(super) fn BuatJadwalForm(
                     let m = e.to_string();
                     msg.set(Some((
                         false,
-                        m.rsplit(": ").next().unwrap_or(&m).to_string(),
+                        crate::web::components::pesan_galat(&m),
                     )));
                 }
             }
@@ -250,17 +251,7 @@ pub(super) fn BuatJadwalForm(
                     on:submit=submit
                 >
                     <h3 class="text-body-md font-bold text-on-background">"Jadwal Baru"</h3>
-                    {move || {
-                        msg.get()
-                            .map(|(ok, t)| {
-                                let cls = if ok {
-                                    "p-2.5 bg-secondary-container text-on-secondary-container rounded-lg text-body-sm"
-                                } else {
-                                    "p-2.5 bg-error-container text-on-error-container rounded-lg text-body-sm"
-                                };
-                                view! { <div class=cls>{t}</div> }
-                            })
-                    }}
+                    <FlashMsg pesan=msg />
                     <input
                         type="text"
                         class=field

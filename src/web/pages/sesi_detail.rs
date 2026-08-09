@@ -19,7 +19,9 @@ use crate::web::api::{
     set_session_actual_detail_action, set_session_book_action, set_session_live,
     set_session_pamong_action, set_session_target_action, set_session_teacher_action,
 };
-use crate::web::components::{DeviceFrame, FetchError, MobileHeader, SwipeArea};
+use crate::web::components::{
+    DeviceFrame, FetchError, FlashMsg, MobileHeader, SwipeArea,
+};
 
 #[component]
 pub fn SesiDetailPage() -> impl IntoView {
@@ -1079,17 +1081,7 @@ fn AbsensiVerifikasiPanel(
                 }}
             </div>
 
-            {move || {
-                msg.get()
-                    .map(|(ok, t)| {
-                        let cls = if ok {
-                            "p-2.5 bg-secondary-container text-on-secondary-container rounded-lg text-body-sm"
-                        } else {
-                            "p-2.5 bg-error-container text-on-error-container rounded-lg text-body-sm"
-                        };
-                        view! { <div class=cls>{t}</div> }
-                    })
-            }}
+            <FlashMsg pesan=msg />
 
             <div class="divide-y divide-outline-variant/40">
                 {attendance

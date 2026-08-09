@@ -33,16 +33,7 @@ pub fn KontrolPenggunaPage() -> impl IntoView {
     let hari = RwSignal::new(3_i32);
     let logs = Resource::new(move || hari.get(), |h| async move { activity_log_data(h).await });
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            if crate::web::components::is_auth_error(&e.to_string()) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(data);
 
     view! {
         <Title text="User Control — AFM SMART" />
@@ -607,7 +598,7 @@ fn RfidPanel() -> impl IntoView {
                                 let m = e.to_string();
                                 view! {
                                     <p class="text-body-sm text-on-surface-variant py-2">
-                                        {m.rsplit(": ").next().unwrap_or(&m).to_string()}
+                                        {crate::web::components::pesan_galat(&m)}
                                     </p>
                                 }
                                     .into_any()

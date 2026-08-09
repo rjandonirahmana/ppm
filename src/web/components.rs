@@ -1410,6 +1410,38 @@ where
     });
 }
 
+/// Kotak hasil aksi: hijau bila berhasil, merah bila gagal.
+///
+/// Menggantikan blok `msg.get().map(|(ok, t)| { let cls = if ok {…} })` yang
+/// disalin 25× di 13 halaman — semuanya dengan kelas Tailwind yang sama persis,
+/// diketik ulang setiap kali.
+///
+/// `role="alert"` dipasang di SINI, bukan diserahkan ke pemanggil. Dari 25
+/// salinan itu hanya satu yang memasangnya, jadi 24 perubahan status lain tak
+/// pernah diumumkan ke pembaca layar — dan itulah harga sebenarnya dari
+/// menyalin markup: perbaikan aksesibilitas berhenti di satu salinan.
+#[component]
+pub fn FlashMsg(pesan: RwSignal<Option<(bool, String)>>) -> impl IntoView {
+    view! {
+        {move || {
+            pesan
+                .get()
+                .map(|(ok, t)| {
+                    let cls = if ok {
+                        "p-2.5 bg-secondary-container text-on-secondary-container rounded-lg text-body-sm"
+                    } else {
+                        "p-2.5 bg-error-container text-on-error-container rounded-lg text-body-sm"
+                    };
+                    view! {
+                        <div class=cls role="alert">
+                            {t}
+                        </div>
+                    }
+                })
+        }}
+    }
+}
+
 /// Kotak pencarian dengan ikon — dipakai daftar kelas, santri, pengguna, tagihan.
 #[component]
 pub fn KotakCari(

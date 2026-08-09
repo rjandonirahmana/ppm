@@ -17,17 +17,7 @@ pub fn OrtuIzinPage() -> impl IntoView {
     // Daftar anak utk form (ambil dari parent_home tanpa monitor detail).
     let home = Resource::new(|| (), |_| async move { parent_home(None).await });
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = permits.get() {
-            let msg = e.to_string();
-            if crate::web::components::is_auth_error(&msg) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(permits);
 
     let show_form = RwSignal::new(false);
     let filter = RwSignal::new("all".to_string());
@@ -78,7 +68,7 @@ pub fn OrtuIzinPage() -> impl IntoView {
                 }
                 Err(e) => {
                     let m = e.to_string();
-                    let m = m.rsplit(": ").next().unwrap_or(&m).to_string();
+                    let m = crate::web::components::pesan_galat(&m);
                     msg.set(Some((false, m)));
                 }
             }

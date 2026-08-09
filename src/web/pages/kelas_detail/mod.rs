@@ -49,16 +49,7 @@ pub fn KelasDetailPage() -> impl IntoView {
         |id| async move { kelas_detail(id).await },
     );
 
-    Effect::new(move |_| {
-        if let Some(Err(e)) = data.get() {
-            if crate::web::components::is_auth_error(&e.to_string()) {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
-            }
-        }
-    });
+    crate::web::components::guard_sesi(data);
 
     // Tab aktif: "santri" | "jadwal" | "sesi".
     let tab = RwSignal::new("santri".to_string());

@@ -120,7 +120,8 @@ async fn alur_siaran_chunk_data_download() {
         session: "default".into(),
         api_key: String::new(),
     });
-    let app = router(Arc::new(AppState::new(pool, jwt, None, redis, http, waha)));
+    let app =
+        router(Arc::new(AppState::new(pool, jwt, "secret-uji".into(), None, redis, http, waha)));
 
     // Tanpa login → 401; santri kirim chunk → 403.
     let r = app.clone().oneshot(req("GET", "/api/live-audio/9/data", None, b"")).await.unwrap();

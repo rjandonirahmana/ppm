@@ -11,7 +11,9 @@ use crate::web::api::{
     set_session_teacher_action,
 };
 use crate::web::components::AdminOnly;
-use crate::web::components::{kartu_grid, EmptyState};
+use crate::web::components::{
+    EmptyState, FlashMsg, kartu_grid,
+};
 
 // ── Tab SESI ──────────────────────────────────────────────────────────────────
 
@@ -269,7 +271,7 @@ fn BuatSesiForm(
                     let m = e.to_string();
                     msg.set(Some((
                         false,
-                        m.rsplit(": ").next().unwrap_or(&m).to_string(),
+                        crate::web::components::pesan_galat(&m),
                     )));
                 }
             }
@@ -301,17 +303,7 @@ fn BuatSesiForm(
                     on:submit=submit
                 >
                     <h3 class="text-body-md font-bold text-on-background">"Sesi Baru"</h3>
-                    {move || {
-                        msg.get()
-                            .map(|(ok, t)| {
-                                let cls = if ok {
-                                    "p-2.5 bg-secondary-container text-on-secondary-container rounded-lg text-body-sm"
-                                } else {
-                                    "p-2.5 bg-error-container text-on-error-container rounded-lg text-body-sm"
-                                };
-                                view! { <div class=cls>{t}</div> }
-                            })
-                    }}
+                    <FlashMsg pesan=msg />
                     <input
                         type="text"
                         class=field

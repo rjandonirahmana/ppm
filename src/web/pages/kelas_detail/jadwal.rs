@@ -205,7 +205,7 @@ fn JadwalCard(
                     let s = e.to_string();
                     msg.set(Some((
                         false,
-                        s.rsplit(": ").next().unwrap_or(&s).to_string(),
+                        crate::web::components::pesan_galat(&s),
                     )));
                 }
             }
