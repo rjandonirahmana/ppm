@@ -231,6 +231,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/kontrol-pengguna") view=KontrolPenggunaPage />
                 <Route path=path!("/manajemen-user") view=ManajemenUserPage />
                 <Route path=path!("/setelan") view=SetelanPage />
+                <Route path=path!("/status-server") view=StatusServerPage />
                 <Route path=path!("/rekap-mingguan") view=RekapMingguanPage />
                 <Route path=path!("/students") view=StudentsPage />
                 <Route path=path!("/kelas") view=KelasPage />
@@ -246,6 +247,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/orang-tua") view=OrtuBerandaPage />
                 <Route path=path!("/orang-tua/izin") view=OrtuIzinPage />
                 <Route path=path!("/orang-tua/riwayat") view=OrtuRiwayatPage />
+                <Route path=path!("/orang-tua/pembayaran") view=OrtuPembayaranPage />
                 <Route path=path!("/koneksi-ortu") view=KoneksiOrtuPage />
             </FlatRoutes>
             // Navbar bawah PERSISTEN — di luar <FlatRoutes> agar tak ikut

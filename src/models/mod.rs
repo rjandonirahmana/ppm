@@ -20,6 +20,7 @@ pub mod parent;
 pub mod rekap;
 pub mod santri;
 pub mod schedule;
+pub mod server;
 
 pub use admin::*;
 pub use article::*;
@@ -39,3 +40,4 @@ pub use parent::*;
 pub use rekap::*;
 pub use santri::*;
 pub use schedule::*;
+pub use server::*;

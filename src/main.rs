@@ -62,6 +62,12 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    // Jam uptime aplikasi dimulai DI SINI, bukan saat halaman /status-server
+    // pertama kali dibuka — kalau tidak, angkanya selalu mulai dari nol setiap
+    // kali ada yang membuka halamannya, dan justru menyembunyikan restart yang
+    // ingin ia perlihatkan.
+    ppm::service::server::catat_waktu_mulai();
+
     let cfg = AppConfig::from_env()?;
     tracing::info!(host = %cfg.host, port = cfg.port, "Config loaded");
 
@@ -410,6 +416,13 @@ async fn main() -> Result<()> {
         .route(
             "/api/bills/proof",
             post(ppm::web::bills::upload_proof)
+                .layer(DefaultBodyLimit::max(limits::body_limit(limits::IMAGE_MAX))),
+        )
+        .route(
+            // Pengajuan pembayaran oleh santri/orang tua (migrasi 75): nominal
+            // + foto bukti dalam SATU multipart.
+            "/api/bills/request",
+            post(ppm::web::bills::request_payment)
                 .layer(DefaultBodyLimit::max(limits::body_limit(limits::IMAGE_MAX))),
         )
         .layer(axum::Extension(state.clone()));

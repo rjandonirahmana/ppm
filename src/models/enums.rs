@@ -183,7 +183,9 @@ impl BillStatus {
 
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Unpaid => "Belum Bayar",
+            // Bukan "Belum Bayar": lihat catatan bahasa di web/pages/tagihan.rs
+            // — santri melihat label ini di layarnya sendiri.
+            Self::Unpaid => "Periode Berjalan",
             Self::Paid => "Lunas",
         }
     }

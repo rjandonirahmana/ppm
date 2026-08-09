@@ -152,6 +152,99 @@ pub async fn respond_connection(
     Ok(n > 0)
 }
 
+// ── Penyambungan oleh PENGELOLA (admin/ketua, halaman manajemen user) ────────
+//
+// Alur biasa menuntut persetujuan santri: ortu mencari anaknya, santri menekan
+// "Setujui". Itu benar sebagai bawaan — koneksi memberi akses ke data pribadi
+// seseorang, dan yang berhak mengizinkannya adalah orangnya sendiri.
+//
+// Tapi alur itu buntu untuk sebagian keluarga: santri yang belum pernah membuka
+// aplikasi tak bisa menyetujui apa pun, sementara wali sudah menunggu. Selama
+// ini satu-satunya jalan keluarnya adalah UPDATE langsung ke produksi. Karena
+// pengelola sudah dipercaya mengubah peran dan menonaktifkan akun, ia juga
+// boleh menetapkan hubungan ini. Jalur santri TIDAK dihapus — ini pintu kedua,
+// bukan penggantinya.
+
+/// Satu anak yang terhubung (atau menunggu) ke seorang ortu, dengan identitas
+/// pembeda: pada daftar induk ada puluhan nama kembar, dan pengelola harus bisa
+/// memastikan ia melepas/menyambung anak yang benar tanpa membuka halaman lain.
+pub struct AnakRow {
+    pub student_id: i64,
+    pub full_name: String,
+    pub nis: Option<String>,
+    pub class_name: Option<String>,
+    /// "pending" | "connected".
+    pub status: String,
+}
+
+/// Anak-anak seorang ortu untuk layar pengelola (pending + connected).
+pub async fn children_of_parent(pool: &Pool, parent_id: i64) -> Result<Vec<AnakRow>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT pc.student_id, u.full_name, u.nis, cl.name, pc.status \
+             FROM parent_connections pc \
+             JOIN users u ON u.id = pc.student_id \
+             LEFT JOIN classes cl ON cl.id = ( \
+                 SELECT cp.class_id FROM class_participants cp \
+                 WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1 \
+             ) \
+             WHERE pc.parent_id = $1 AND pc.status IN ('pending','connected') \
+             ORDER BY (pc.status = 'connected') DESC, u.full_name",
+            &[&parent_id],
+        )
+        .await
+        .context("children_of_parent")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| AnakRow {
+            student_id: r.get(0),
+            full_name: r.get(1),
+            nis: r.get(2),
+            class_name: r.get(3),
+            status: r.get(4),
+        })
+        .collect())
+}
+
+/// Sambungkan ortu ↔ santri LANGSUNG (status `connected`) atas nama pengelola.
+///
+/// Idempotent: permintaan yang sudah ada — termasuk yang pernah `rejected` —
+/// diangkat menjadi `connected`, bukan gagal karena UNIQUE. Pengelola yang
+/// menyambungkan ulang sesudah salah tolak tak perlu tahu ada baris lama.
+pub async fn admin_link_child(pool: &Pool, parent_id: i64, student_id: i64) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "INSERT INTO parent_connections (parent_id, student_id, status, responded_at) \
+             VALUES ($1, $2, 'connected', NOW()) \
+             ON CONFLICT (parent_id, student_id) DO UPDATE \
+                SET status = 'connected', responded_at = NOW() \
+              WHERE parent_connections.status <> 'connected'",
+            &[&parent_id, &student_id],
+        )
+        .await
+        .context("admin_link_child")?;
+    Ok(n > 0)
+}
+
+/// Putuskan hubungan ortu ↔ santri (dihapus, bukan ditandai ditolak).
+///
+/// Dihapus supaya pengelola yang keliru bisa menyambungkan ulang lewat jalur
+/// mana pun — termasuk permintaan baru dari ortu — tanpa menabrak baris lama
+/// berstatus `rejected` yang tak terlihat di layar mana pun.
+pub async fn admin_unlink_child(pool: &Pool, parent_id: i64, student_id: i64) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "DELETE FROM parent_connections WHERE parent_id = $1 AND student_id = $2",
+            &[&parent_id, &student_id],
+        )
+        .await
+        .context("admin_unlink_child")?;
+    Ok(n > 0)
+}
+
 /// Info dasar anak (nama, nis, kelas utama).
 pub async fn child_info(pool: &Pool, student_id: i64) -> Result<Option<StudentRow>> {
     let c = pool.get().await?;

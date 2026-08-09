@@ -389,6 +389,20 @@ pub async fn set_active(pool: &Pool, user_id: i64, active: bool) -> Result<bool>
     Ok(n > 0)
 }
 
+/// Peran seorang user. `None` = akunnya tak ada.
+///
+/// Dibaca ulang dari DB — bukan diambil dari baris yang kebetulan sudah ada di
+/// layar — untuk aksi yang hanya sah pada peran tertentu: daftar di layar bisa
+/// berumur beberapa menit, dan peran orang bisa berubah di antaranya.
+pub async fn role_of_user(pool: &Pool, user_id: i64) -> Result<Option<String>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt("SELECT role FROM users WHERE id = $1", &[&user_id])
+        .await
+        .context("role_of_user")?;
+    Ok(row.map(|r| r.get(0)))
+}
+
 // Roles yang valid di sistem. SYNC dengan migration 44 database constraint.
 const VALID_ROLES: &[&str] =
     &["admin", "ketua", "dewan_guru", "supervisor", "santri", "santri_finance", "parent"];

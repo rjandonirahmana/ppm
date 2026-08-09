@@ -412,8 +412,8 @@ fn FinanceTools() -> impl IntoView {
         <Show when=is_finance fallback=|| ()>
             <section>
                 <h2 class="text-headline-sm text-on-background mb-3">"Alat Keuangan"</h2>
-                // Satu pintu saja: /tagihan sudah punya tab "Belum Bayar" &
-                // "Riwayat Pembayaran" di dalamnya — tak perlu kartu terpisah.
+                // Satu pintu saja: /tagihan sudah punya tab "Periode Berjalan"
+                // & "Riwayat Pembayaran" di dalamnya — tak perlu kartu terpisah.
                 <a
                     href="/tagihan"
                     class="ppm-card p-4 flex items-center gap-3 press hover:border-primary transition-colors"

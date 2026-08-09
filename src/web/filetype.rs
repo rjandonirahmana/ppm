@@ -25,9 +25,20 @@ pub fn sniff(b: &[u8]) -> Option<&'static str> {
             _ => None,
         };
     }
-    // MP4: penanda `ftyp` ada di offset 4, bukan 0.
-    if b.len() >= 8 && &b[4..8] == b"ftyp" {
-        return Some("video/mp4");
+    // Keluarga ISO-BMFF: penanda `ftyp` ada di offset 4, bukan 0. MP4, MOV
+    // (QuickTime), dan HEIC memakai wadah yang SAMA — pembedanya "major brand"
+    // di offset 8..12. Sebelumnya semuanya dijawab `video/mp4`, sehingga foto
+    // HEIC dari iPhone tersimpan berlabel video dan rekaman .mov ditolak karena
+    // label ekstensinya tak cocok dengan hasil sniff.
+    if b.len() >= 12 && &b[4..8] == b"ftyp" {
+        return Some(match &b[8..12] {
+            // "qt  " = QuickTime murni (kamera iPhone sebelum dikonversi).
+            b"qt  " => "video/quicktime",
+            b"heic" | b"heix" | b"hevc" | b"hevx" | b"heim" | b"heis" | b"mif1" | b"msf1" => {
+                "image/heic"
+            }
+            _ => "video/mp4",
+        });
     }
     if b.starts_with(&[0xFF, 0xD8, 0xFF]) {
         return Some("image/jpeg");
@@ -81,7 +92,9 @@ pub fn ext_for(mime: &str) -> &'static str {
         "audio/wav" => "wav",
         "audio/ogg" => "ogg",
         "video/mp4" => "mp4",
+        "video/quicktime" => "mov",
         "video/webm" => "webm",
+        "image/heic" => "heic",
         _ => "bin",
     }
 }
@@ -113,6 +126,20 @@ mod tests {
         assert_eq!(sniff(&[0xFF, 0xFB, 0x90, 0x00]), Some("audio/mpeg"));
         assert_eq!(sniff(&[0x1A, 0x45, 0xDF, 0xA3]), Some("video/webm"));
         assert_eq!(sniff(b"\0\0\0\x20ftypmp42"), Some("video/mp4"));
+    }
+
+    /// MP4, MOV, dan HEIC berbagi wadah ISO-BMFF (`ftyp` di offset 4); yang
+    /// membedakan hanya major brand. Tanpa pembedaan ini rekaman .mov dari
+    /// iPhone ditolak (label ekstensi ≠ hasil sniff) dan foto HEIC tersimpan
+    /// berlabel video.
+    #[test]
+    fn membedakan_keluarga_ftyp() {
+        assert_eq!(sniff(b"\0\0\0\x14ftypqt  "), Some("video/quicktime"));
+        assert_eq!(sniff(b"\0\0\0\x18ftypheic"), Some("image/heic"));
+        assert_eq!(sniff(b"\0\0\0\x18ftypmif1"), Some("image/heic"));
+        assert_eq!(sniff(b"\0\0\0\x20ftypisom"), Some("video/mp4"));
+        // Header terpotong (< 12 byte) tak boleh ditebak sebagai video.
+        assert_eq!(sniff(b"\0\0\0\x20ftyp"), None);
     }
 
     /// WAV dan WEBP sama-sama berawalan "RIFF" — yang membedakan byte 8..12.

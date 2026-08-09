@@ -153,6 +153,28 @@ pub struct ProfilEdit {
     pub pendidikan_status: String,
 }
 
+/// Satu anak yang tertaut ke akun orang tua — dipakai panel "Anak" di sheet
+/// Edit Profil (/manajemen-user), hanya muncul bila perannya `parent`.
+///
+/// Membawa NIS & kelas, bukan nama saja: daftar induk pondok ini memuat 90 nama
+/// yang muncul lebih dari sekali, dan melepas anak yang salah dari akun ortu
+/// berarti orang tua itu kehilangan akses ke data anaknya tanpa tahu sebabnya.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnakOrtu {
+    pub student_id: i64,
+    pub full_name: String,
+    /// "-" bila santri belum punya NIS.
+    pub nis: String,
+    /// "-" bila belum masuk kelas mana pun.
+    pub class_name: String,
+    /// "Terhubung" bila sudah disetujui, "Menunggu persetujuan santri" bila
+    /// permintaan ortu belum dijawab anaknya.
+    pub status_label: String,
+    /// true = `connected`. Dipisah dari labelnya supaya layar tak perlu
+    /// membandingkan teks untuk memilih warna lencana.
+    pub terhubung: bool,
+}
+
 /// Label status kemubalighan (migrasi 73) untuk layar.
 pub fn mubalegh_label(kode: &str) -> &'static str {
     match kode {

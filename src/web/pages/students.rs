@@ -152,7 +152,13 @@ pub fn StudentsPage() -> impl IntoView {
                                         let stage = d.verify_stage.clone();
                                         let pending_n = d.pending.len();
                                         let students = StoredValue::new(d.students.clone());
-                                        let total = d.students.len();
+                                        // COUNT(*) dari server, BUKAN panjang daftar yang
+                                        // kebetulan sudah termuat. `d.students` hanya
+                                        // halaman pertama (10 baris) — memakai `.len()`
+                                        // di sini membuat layar menulis "Total 10 santri
+                                        // terdaftar" pada pondok berisi 512 santri, dan
+                                        // angka itu bahkan tak berubah saat digulir.
+                                        let total = d.total_santri.max(0) as usize;
                                         let pending = StoredValue::new(d.pending.clone());
                                         let verified_today = d.verified_today;
 

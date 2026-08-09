@@ -1568,8 +1568,13 @@ pub async fn delete_material_action(id: i64) -> Result<(), ServerFnError> {
 // Tampil publik di beranda; kelola (hapus/urutkan) hanya admin/dewan_guru.
 // Upload file lewat POST /api/activity-photos/upload (multipart, di luar sini).
 
+// `ketua` ikut: halaman /galeri sudah menampilkan seluruh kontrol kelola untuk
+// peran ini (lihat `pages/galeri.rs`), jadi tanpa dia di daftar ini ketua
+// melihat tombol unggah/hapus/urutkan yang SELALU gagal — dan gagalnya diam
+// (403 tanpa badan pesan), sehingga terbaca sebagai "unggah rusak". Daftar
+// yang sama juga dipakai handler unggah di `web/activity_photos.rs`.
 #[cfg(feature = "ssr")]
-const GALLERY_MANAGE_ROLES: &[&str] = &["admin", "dewan_guru"];
+pub(crate) const GALLERY_MANAGE_ROLES: &[&str] = &["admin", "ketua", "dewan_guru"];
 
 /// Daftar foto kegiatan terurut — PUBLIK (dipakai beranda + halaman kelola).
 #[server(GetActivityPhotos, "/api-fn")]
@@ -1765,13 +1770,25 @@ pub async fn guest_status_action(
 }
 
 // ── Tagihan santri (migrasi 37) ───────────────────────────────────────────────
-// FINANCE = lihat belum-bayar + tandai lunas + verifikasi (admin, ketua,
-// santri_finance). BILL_ADMIN = buat/hapus tagihan (admin, ketua).
+//
+// ADMIN SENGAJA TIDAK ADA DI SINI. Di seluruh aplikasi lain `ketua` adalah
+// superset `admin` (lihat `models::role_satisfies`) — keuangan adalah SATU-
+// SATUNYA tempat hubungan itu tak berlaku, dan itu keputusan sadar: siapa yang
+// sudah/belum menyetorkan uang adalah urusan keluarga santri, bukan informasi
+// yang perlu dipegang siapa pun yang kebetulan mengurus akun dan perangkat.
+//
+// Karena `role_satisfies` hanya memberi `ketua` hak `admin` (bukan sebaliknya),
+// menulis "ketua" tanpa "admin" di sini sudah cukup untuk menutup admin — tak
+// perlu daftar larangan terpisah. JANGAN tambahkan "admin" ke dua konstanta di
+// bawah tanpa memastikan itu memang yang diminta.
+//
+// FINANCE = lihat + tandai lunas + verifikasi (ketua, santri_finance).
+// BILL_ADMIN = catat/hapus pembayaran (ketua).
 
 #[cfg(feature = "ssr")]
-const FINANCE_ROLES: &[&str] = &["admin", "ketua", "santri_finance"];
+const FINANCE_ROLES: &[&str] = &["ketua", "santri_finance"];
 #[cfg(feature = "ssr")]
-const BILL_ADMIN_ROLES: &[&str] = &["admin", "ketua"];
+const BILL_ADMIN_ROLES: &[&str] = &["ketua"];
 
 /// Daftar santri yang BELUM membayar (finance).
 #[server(GetUnpaidBills, "/api-fn")]
@@ -1790,7 +1807,15 @@ pub async fn paid_bills_data() -> Result<Vec<crate::models::BillItem>, ServerFnE
     crate::repository::list_paid(&state.pool, 500).await.map_err(err)
 }
 
-/// Buat tagihan untuk seorang santri (admin/ketua). Tanggal "YYYY-MM-DD".
+/// Catat pembayaran seorang santri (admin/ketua). Tanggal "YYYY-MM-DD".
+///
+/// `sudah_dibayar` = uang SUDAH diterima: catatan langsung tersimpan lunas dan
+/// masuk Riwayat Pembayaran. Itu kasus yang paling sering di pondok ini —
+/// pengurus memasukkan setoran yang sudah lama diterima — dan memaksanya lewat
+/// dua langkah (buat "belum" → tandai lunas) membuat santri yang sebenarnya
+/// sudah bayar sempat tampil di daftar periode berjalan.
+///
+/// `metode`/`tanggal_bayar` diabaikan bila `sudah_dibayar` false.
 #[server(CreateBill, "/api-fn")]
 pub async fn create_bill_action(
     user_id: i64,
@@ -1799,18 +1824,52 @@ pub async fn create_bill_action(
     started: String,
     expired: String,
     note: String,
+    sudah_dibayar: bool,
+    metode: String,
+    tanggal_bayar: String,
 ) -> Result<i64, ServerFnError> {
-    require_roles(BILL_ADMIN_ROLES).await?;
+    let sess = require_roles(BILL_ADMIN_ROLES).await?;
     let state = app_state().await?;
     let parse = |s: &str| chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d");
-    let sd = parse(&started).map_err(|_| ServerFnError::new("Tanggal mulai tidak valid (YYYY-MM-DD)."))?;
-    let ed = parse(&expired).map_err(|_| ServerFnError::new("Tanggal jatuh tempo tidak valid."))?;
-    if price <= 0 {
-        return Err(ServerFnError::new("Nominal tagihan harus > 0."));
+    let sd = parse(&started).map_err(|_| ServerFnError::new("Tanggal mulai periode tidak valid (YYYY-MM-DD)."))?;
+    let ed = parse(&expired).map_err(|_| ServerFnError::new("Tanggal akhir periode tidak valid."))?;
+    if ed < sd {
+        return Err(ServerFnError::new("Akhir periode tidak boleh sebelum awal periode."));
     }
-    crate::repository::create_bill(&state.pool, user_id, title.trim(), price, sd, ed, note.trim())
-        .await
-        .map_err(err)
+    if price <= 0 {
+        return Err(ServerFnError::new("Nominal harus lebih dari 0."));
+    }
+    let paid = if sudah_dibayar {
+        // Metode dipetakan ke nilai yang dikenal, bukan diteruskan apa adanya:
+        // daftar riwayat mengelompokkan berdasarkan teks ini.
+        let method = match metode.trim() {
+            "tunai" => "tunai",
+            _ => "transfer",
+        };
+        // Tanggal bayar kosong = hari ini (WIB) — pengurus yang mencatat
+        // setoran hari itu tak perlu mengisi apa pun.
+        let paid_date = if tanggal_bayar.trim().is_empty() {
+            crate::service::fmt::today_wib()
+        } else {
+            parse(&tanggal_bayar)
+                .map_err(|_| ServerFnError::new("Tanggal bayar tidak valid (YYYY-MM-DD)."))?
+        };
+        Some(crate::repository::PembayaranTercatat { method, paid_date, verified_by: sess.id })
+    } else {
+        None
+    };
+    crate::repository::create_bill(
+        &state.pool,
+        user_id,
+        title.trim(),
+        price,
+        sd,
+        ed,
+        note.trim(),
+        paid,
+    )
+    .await
+    .map_err(err)
 }
 
 /// Tandai tagihan LUNAS + verifikasi (finance). `paid_amount` None = penuh.
@@ -1853,6 +1912,113 @@ pub async fn my_bills_data() -> Result<Vec<crate::models::BillItem>, ServerFnErr
     let sess = require_roles(&["santri", "santri_finance"]).await?;
     let state = app_state().await?;
     crate::repository::list_for_user(&state.pool, sess.id).await.map_err(err)
+}
+
+// ── Pengajuan pembayaran & verifikasinya (migrasi 75) ────────────────────────
+//
+// Unggahan bukti transfer TIDAK lewat sini — berkas multipart tak bisa masuk
+// server fn Leptos; lihat handler `POST /api/bills/request` di `web/bills.rs`.
+
+/// Antrean pengajuan yang menunggu diperiksa (ketua & santri_finance).
+#[server(GetPendingBills, "/api-fn")]
+pub async fn pending_bills_data() -> Result<Vec<crate::models::BillItem>, ServerFnError> {
+    require_roles(FINANCE_ROLES).await?;
+    let state = app_state().await?;
+    crate::repository::list_menunggu(&state.pool, 200).await.map_err(err)
+}
+
+/// Setujui satu pengajuan + tetapkan periode berlakunya.
+#[server(VerifyBill, "/api-fn")]
+pub async fn verify_bill_action(
+    bill_id: i64,
+    judul: String,
+    started: String,
+    expired: String,
+    paid_amount: i64,
+    metode: String,
+) -> Result<(), ServerFnError> {
+    let sess = require_roles(FINANCE_ROLES).await?;
+    let state = app_state().await?;
+    // Pemegang santri_finance tak boleh meloloskan setorannya sendiri —
+    // memverifikasi pembayaran diri sendiri meniadakan gunanya verifikasi.
+    // Aturan yang sama sudah berlaku di `mark_bill_paid_action`.
+    tolak_verifikasi_sendiri(&state, &sess, bill_id).await?;
+    crate::service::finance::setujui(
+        &state.pool,
+        bill_id,
+        &judul,
+        &started,
+        &expired,
+        paid_amount,
+        &metode,
+        sess.id,
+    )
+    .await
+    .map_err(err)
+}
+
+/// Tolak satu pengajuan dengan alasan yang dibaca keluarga.
+#[server(RejectBill, "/api-fn")]
+pub async fn reject_bill_action(bill_id: i64, alasan: String) -> Result<(), ServerFnError> {
+    let sess = require_roles(FINANCE_ROLES).await?;
+    let state = app_state().await?;
+    tolak_verifikasi_sendiri(&state, &sess, bill_id).await?;
+    crate::service::finance::tolak(&state.pool, bill_id, &alasan, sess.id).await.map_err(err)
+}
+
+/// Guard bersama: santri_finance tak memutuskan nasib pembayarannya sendiri.
+#[cfg(feature = "ssr")]
+async fn tolak_verifikasi_sendiri(
+    state: &std::sync::Arc<crate::state::AppState>,
+    sess: &SessionUser,
+    bill_id: i64,
+) -> Result<(), ServerFnError> {
+    if crate::models::role_satisfies(&sess.role, &["santri"])
+        && crate::repository::bill_owner(&state.pool, bill_id).await.map_err(err)? == Some(sess.id)
+    {
+        return Err(ServerFnError::new(
+            "Pembayaran Anda sendiri harus diperiksa pengurus lain.",
+        ));
+    }
+    Ok(())
+}
+
+/// Riwayat pembayaran satu santri — dibuka santri untuk dirinya sendiri, atau
+/// orang tua untuk anak yang koneksinya sudah disetujui. Guardnya di service.
+#[server(GetStudentBills, "/api-fn")]
+pub async fn student_bills_data(
+    student_id: i64,
+) -> Result<Vec<crate::models::BillItem>, ServerFnError> {
+    let sess = require_session().await?;
+    let state = app_state().await?;
+    let target = if student_id > 0 { student_id } else { sess.id };
+    crate::service::finance::riwayat_santri(&state.pool, sess.id, target).await.map_err(err)
+}
+
+/// Santri yang periode bayarnya sudah habis + yang belum pernah tercatat.
+#[server(GetTunggakan, "/api-fn")]
+pub async fn tunggakan_data() -> Result<crate::models::TunggakanData, ServerFnError> {
+    require_roles(FINANCE_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::finance::tunggakan(&state.pool).await.map_err(err)
+}
+
+/// Kirim pengingat WhatsApp ke santri terpilih + orang tuanya yang terhubung.
+///
+/// TIDAK ADA "kirim ke semua": batas [`MAX_PENGINGAT_SEKALI`] ditegakkan di
+/// service. Pesan WhatsApp tak bisa ditarik kembali, dan satu klik yang menagih
+/// ratusan keluarga adalah kekeliruan yang tak punya jalan pulang.
+///
+/// [`MAX_PENGINGAT_SEKALI`]: crate::service::finance::MAX_PENGINGAT_SEKALI
+#[server(KirimPengingatBayar, "/api-fn")]
+pub async fn kirim_pengingat_bayar_action(
+    user_ids: Vec<i64>,
+) -> Result<String, ServerFnError> {
+    require_roles(FINANCE_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::finance::kirim_pengingat(&state.http, &state.waha, &state.pool, &user_ids)
+        .await
+        .map_err(err)
 }
 
 /// Satu HALAMAN daftar santri (gulir-tak-berujung /students).
@@ -2514,4 +2680,106 @@ pub async fn update_managed_user_action(
         .await
         .map(|_| ())
         .map_err(err)
+}
+
+// ── Anak-anak sebuah akun orang tua (admin/ketua) ────────────────────────────
+//
+// Jalur normal koneksi ortu↔santri butuh persetujuan SANTRI (lihat
+// repository/parents.rs). Itu tetap berlaku dan tetap yang dianjurkan; blok ini
+// hanya menyediakan jalan bagi pengurus saat santrinya belum pernah membuka
+// aplikasi — sebelumnya satu-satunya cara adalah SQL langsung ke produksi.
+
+/// Daftar anak sebuah akun `parent` (terhubung + menunggu persetujuan).
+///
+/// Balasan KOSONG untuk user non-parent, bukan galat: layar memanggil ini
+/// begitu sheet Edit Profil terbuka, dan peran user bisa saja baru diubah.
+#[server(AnakOrtuData, "/api-fn")]
+pub async fn anak_ortu_data(
+    parent_id: i64,
+) -> Result<Vec<crate::models::AnakOrtu>, ServerFnError> {
+    require_roles(USER_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    let rows =
+        crate::repository::children_of_parent(&state.pool, parent_id).await.map_err(err)?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let terhubung = r.status == "connected";
+            crate::models::AnakOrtu {
+                student_id: r.student_id,
+                full_name: r.full_name,
+                nis: r.nis.filter(|s| !s.is_empty()).unwrap_or_else(|| "-".into()),
+                class_name: r.class_name.filter(|s| !s.is_empty()).unwrap_or_else(|| "-".into()),
+                status_label: if terhubung {
+                    "Terhubung".into()
+                } else {
+                    "Menunggu persetujuan santri".into()
+                },
+                terhubung,
+            }
+        })
+        .collect())
+}
+
+/// Sambungkan/lepas seorang santri dari akun ortu (admin/ketua).
+///
+/// Menyambungkan menetapkan status `connected` LANGSUNG — persetujuan santri
+/// diwakili oleh pengurus yang menekan tombolnya.
+#[server(SetAnakOrtu, "/api-fn")]
+pub async fn set_anak_ortu_action(
+    parent_id: i64,
+    student_id: i64,
+    /// true = sambungkan, false = lepaskan.
+    sambung: bool,
+) -> Result<String, ServerFnError> {
+    require_roles(USER_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    // Peran diperiksa di server, bukan cuma disembunyikan di layar: menautkan
+    // "anak" ke akun santri/guru akan memberi orang itu akses data orang lain
+    // lewat halaman /orang-tua tanpa pernah tampak salah di layar mana pun.
+    let peran = crate::repository::role_of_user(&state.pool, parent_id).await.map_err(err)?;
+    match peran.as_deref() {
+        Some("parent") => {}
+        Some(_) => {
+            return Err(ServerFnError::new(
+                "Anak hanya bisa ditautkan ke akun berperan Orang Tua. Ubah perannya dulu.",
+            ))
+        }
+        None => return Err(ServerFnError::new("Akun tidak ditemukan.")),
+    }
+    if sambung {
+        let ok = crate::repository::admin_link_child(&state.pool, parent_id, student_id)
+            .await
+            .map_err(err)?;
+        Ok(if ok { "Anak ditautkan.".into() } else { "Anak itu sudah tertaut.".into() })
+    } else {
+        crate::repository::admin_unlink_child(&state.pool, parent_id, student_id)
+            .await
+            .map_err(err)?;
+        Ok("Anak dilepas dari akun ini.".into())
+    }
+}
+
+/// Cari santri untuk ditautkan ke akun ortu (admin/ketua) — nama/NIS.
+#[server(AnakOrtuSearch, "/api-fn")]
+pub async fn anak_ortu_search(q: String) -> Result<Vec<StudentSearchItem>, ServerFnError> {
+    require_roles(USER_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::kelas::search_students(&state.pool, &q, 0, None).await.map_err(err)
+}
+
+/// Keadaan mesin tempat aplikasi berjalan: CPU, memori, uptime, kolam DB.
+///
+/// ADMIN & KETUA — sama dengan alat pengelolaan lain di /staf. Ketua memang
+/// tak mengurus servernya sendiri, tapi dialah yang lebih dulu mendengar
+/// "aplikasinya lemot" dari pengurus lain, dan halaman ini yang membuatnya
+/// bisa menyebutkan angkanya alih-alih meneruskan keluhan tanpa isi.
+///
+/// Panggilannya menahan ~300 ms: pemakaian CPU adalah SELISIH dua cuplikan
+/// `/proc/stat`, dan satu cuplikan saja hanya memberi total sejak mesin menyala.
+#[server(ServerStatusData, "/api-fn")]
+pub async fn server_status_data() -> Result<crate::models::ServerStatus, ServerFnError> {
+    require_roles(&["admin", "ketua"]).await?;
+    let state = app_state().await?;
+    Ok(crate::service::server::status(&state.pool).await)
 }

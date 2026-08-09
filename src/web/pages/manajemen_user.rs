@@ -15,10 +15,11 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{ManagedUser, ProfilEdit};
+use crate::models::{AnakOrtu, ManagedUser, ProfilEdit, StudentSearchItem};
 use crate::web::api::{
-    angkatan_tersedia_data, change_user_role_action, managed_users_data, set_user_active_action,
-    set_users_active_action, update_managed_user_action,
+    anak_ortu_data, anak_ortu_search, angkatan_tersedia_data, change_user_role_action,
+    managed_users_data, set_anak_ortu_action, set_user_active_action, set_users_active_action,
+    update_managed_user_action,
 };
 use crate::web::components::{DeviceFrame, EmptyState, FetchError, MobileHeader, Sheet};
 
@@ -701,6 +702,10 @@ fn FormProfil(
                 }
             })}
 
+        // Panel anak hanya untuk akun Orang Tua — lihat penjelasannya di
+        // komponen `PanelAnak`.
+        {(u.role == "parent").then(|| view! { <PanelAnak parent_id=id /> })}
+
         // ── Ganti peran ──────────────────────────────────────────────────
         // Dipisah dari tombol "Simpan": mengubah peran mengubah HAK AKSES, dan
         // itu tak boleh ikut terkirim diam-diam saat seseorang cuma
@@ -751,6 +756,215 @@ fn FormProfil(
         >
             {move || if busy.get() { "Menyimpan…" } else { "Simpan" }}
         </button>
+    }
+}
+
+/// Daftar & pengelolaan ANAK untuk satu akun Orang Tua.
+///
+/// KENAPA ADA DI SINI. Koneksi ortu↔santri lahir dari permintaan ortu yang
+/// harus DISETUJUI SANTRI — dan itu benar sebagai bawaan, karena koneksi
+/// membuka data pribadi seseorang. Tapi alurnya buntu justru untuk keluarga
+/// yang paling butuh: santri yang belum pernah membuka aplikasi tak bisa
+/// menyetujui apa pun, sementara walinya sudah menunggu. Sebelum panel ini,
+/// satu-satunya jalan keluarnya adalah menulis SQL langsung ke produksi.
+///
+/// Berdiri SENDIRI dari tombol "Simpan" di atasnya: menautkan anak berlaku
+/// seketika (dan bisa dibatalkan seketika), bukan menunggu penyimpanan profil.
+/// Menggabungkannya akan membuat pengelola yang cuma membetulkan ejaan nama
+/// ikut mengirim perubahan hak akses tanpa bermaksud demikian.
+#[component]
+fn PanelAnak(parent_id: i64) -> impl IntoView {
+    let anak = Resource::new(move || parent_id, |id| async move { anak_ortu_data(id).await });
+    let cari = RwSignal::new(String::new());
+    let hasil = RwSignal::new(Vec::<StudentSearchItem>::new());
+    let busy = RwSignal::new(false);
+    let pesan = RwSignal::new(Option::<(bool, String)>::None);
+
+    let telusuri = move |_| {
+        let q = cari.get_untracked();
+        if q.trim().len() < 2 {
+            pesan.set(Some((false, "Ketik minimal 2 huruf nama, atau NIS lengkap.".into())));
+            return;
+        }
+        pesan.set(None);
+        leptos::task::spawn_local(async move {
+            match anak_ortu_search(q).await {
+                Ok(r) => hasil.set(r),
+                Err(e) => pesan.set(Some((false, e.to_string()))),
+            }
+        });
+    };
+
+    let ubah = move |student_id: i64, sambung: bool| {
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        leptos::task::spawn_local(async move {
+            match set_anak_ortu_action(parent_id, student_id, sambung).await {
+                Ok(t) => {
+                    pesan.set(Some((true, t)));
+                    // Hasil pencarian dikosongkan setelah menautkan: baris yang
+                    // baru saja ditambahkan sudah pindah ke daftar di atasnya,
+                    // dan membiarkannya di sini mengundang klik kedua.
+                    if sambung {
+                        hasil.set(Vec::new());
+                        cari.set(String::new());
+                    }
+                    anak.refetch();
+                }
+                Err(e) => pesan.set(Some((false, e.to_string()))),
+            }
+            busy.set(false);
+        });
+    };
+
+    view! {
+        <div class="mt-2 mb-4 p-3 rounded-xl border border-outline-variant/60 space-y-2.5">
+            <div>
+                <p class="text-body-sm font-semibold text-on-background">"Anak"</p>
+                <p class="text-[11px] text-on-surface-variant">
+                    "Santri yang datanya boleh dilihat akun ini di halaman Orang Tua."
+                </p>
+            </div>
+
+            {move || {
+                pesan
+                    .get()
+                    .map(|(ok, t)| {
+                        let cls = if ok {
+                            "p-2 bg-secondary-container text-on-secondary-container rounded-lg text-[11px]"
+                        } else {
+                            "p-2 bg-error-container text-on-error-container rounded-lg text-[11px]"
+                        };
+                        view! { <div class=cls>{t}</div> }
+                    })
+            }}
+
+            <Suspense fallback=|| {
+                view! { <div class="h-10 bg-surface-container rounded-lg animate-pulse"></div> }
+            }>
+                {move || {
+                    anak.get()
+                        .map(|res| match res {
+                            Err(e) => {
+                                view! {
+                                    <p class="text-[11px] text-error">{e.to_string()}</p>
+                                }
+                                    .into_any()
+                            }
+                            Ok(list) if list.is_empty() => {
+                                view! {
+                                    <p class="text-[11px] text-on-surface-variant">
+                                        "Belum ada anak tertaut. Cari di bawah untuk menautkan."
+                                    </p>
+                                }
+                                    .into_any()
+                            }
+                            Ok(list) => {
+                                view! {
+                                    <div class="space-y-1.5">
+                                        {list
+                                            .into_iter()
+                                            .map(|a: AnakOrtu| {
+                                                let sid = a.student_id;
+                                                let terhubung = a.terhubung;
+                                                view! {
+                                                    <div class="flex items-center gap-2 bg-surface-container rounded-lg px-2.5 py-2">
+                                                        <div class="flex-1 min-w-0">
+                                                            <p class="text-body-sm font-semibold text-on-background truncate">
+                                                                {a.full_name}
+                                                            </p>
+                                                            <p class="text-[10px] text-on-surface-variant truncate">
+                                                                {format!("{} · {} · {}", a.nis, a.class_name, a.status_label)}
+                                                            </p>
+                                                        </div>
+                                                        // Permintaan yang masih menunggu bisa langsung
+                                                        // disetujui pengelola — itulah kebuntuan yang
+                                                        // membuat panel ini ada.
+                                                        {(!terhubung)
+                                                            .then(|| {
+                                                                view! {
+                                                                    <button
+                                                                        class="px-2.5 py-1 rounded-lg bg-primary text-on-primary text-[11px] font-semibold press cursor-pointer disabled:opacity-50 shrink-0"
+                                                                        prop:disabled=move || busy.get()
+                                                                        on:click=move |_| ubah(sid, true)
+                                                                    >
+                                                                        "Setujui"
+                                                                    </button>
+                                                                }
+                                                            })}
+                                                        <button
+                                                            class="px-2.5 py-1 rounded-lg border border-error/40 text-error text-[11px] font-semibold cursor-pointer disabled:opacity-50 shrink-0"
+                                                            prop:disabled=move || busy.get()
+                                                            on:click=move |_| ubah(sid, false)
+                                                        >
+                                                            "Lepas"
+                                                        </button>
+                                                    </div>
+                                                }
+                                            })
+                                            .collect_view()}
+                                    </div>
+                                }
+                                    .into_any()
+                            }
+                        })
+                }}
+            </Suspense>
+
+            // ── Tautkan anak baru ────────────────────────────────────────
+            <div class="flex gap-2">
+                <input
+                    type="search"
+                    placeholder="Cari nama atau NIS santri…"
+                    class="flex-1 min-w-0 bg-surface-container border-0 rounded-lg px-2.5 py-2 text-body-sm text-on-surface"
+                    prop:value=move || cari.get()
+                    on:input=move |ev| cari.set(event_target_value(&ev))
+                    on:keydown=move |ev| {
+                        if ev.key() == "Enter" {
+                            ev.prevent_default();
+                            telusuri(());
+                        }
+                    }
+                />
+                <button
+                    class="px-3 py-2 rounded-lg border border-outline-variant text-body-sm font-semibold text-on-surface hover:border-primary hover:text-primary transition-colors cursor-pointer shrink-0"
+                    on:click=move |_| telusuri(())
+                >
+                    "Cari"
+                </button>
+            </div>
+
+            {move || {
+                let r = hasil.get();
+                (!r.is_empty())
+                    .then(|| {
+                        view! {
+                            <div class="max-h-40 overflow-y-auto space-y-1">
+                                {r
+                                    .into_iter()
+                                    .map(|s| {
+                                        let sid = s.id;
+                                        view! {
+                                            <button
+                                                class="w-full text-left px-2.5 py-2 bg-surface-container rounded-lg hover:bg-secondary-container/50 cursor-pointer disabled:opacity-50"
+                                                prop:disabled=move || busy.get()
+                                                on:click=move |_| ubah(sid, true)
+                                            >
+                                                <span class="text-body-sm text-on-surface">{s.name}</span>
+                                                <span class="text-[10px] text-on-surface-variant">
+                                                    {format!(" · {} · {}", s.nis, s.class_name)}
+                                                </span>
+                                            </button>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </div>
+                        }
+                    })
+            }}
+        </div>
     }
 }
 

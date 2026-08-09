@@ -49,12 +49,18 @@ struct MediaDraft {
 /// Video hanya masuk akal di kepala halaman depan; grid kegiatan & fasilitas
 /// menampilkan puluhan petak sekaligus, dan video di sana berarti berbelas MB
 /// terunduh untuk petak yang mungkin tak pernah dilihat.
+///
+/// `.mov` disebut lewat ekstensi, bukan cuma MIME: sebagian Android/iOS
+/// melaporkan `File.type` kosong untuk rekaman QuickTime, dan penyaring yang
+/// hanya menyebut MIME membuat berkas itu tampak REDUP di pemilih berkas —
+/// pengelola menyimpulkan videonya tak bisa diunggah padahal server menerimanya.
 fn accept_for(cat: MediaCategory) -> &'static str {
     match cat {
         MediaCategory::VideoUtama => {
-            "video/mp4,video/webm,image/jpeg,image/png,image/webp,image/gif"
+            "video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,\
+             image/jpeg,image/png,image/webp,image/gif"
         }
-        _ => "image/jpeg,image/png,image/webp,image/gif",
+        _ => "image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif",
     }
 }
 
@@ -147,7 +153,14 @@ pub fn GaleriPage() -> impl IntoView {
             // Jenis dari `File.type` (ditetapkan browser dari isi/ekstensi) —
             // server tetap memeriksa magic number-nya, ini cuma untuk memilih
             // bentuk pratinjau.
-            let is_video = file.type_().starts_with("video/");
+            //
+            // Nama berkas dipakai sebagai cadangan: sebagian peramban Android
+            // melaporkan `File.type` KOSONG untuk .mov/.mkv, dan pratinjau yang
+            // salah bentuk (<img> untuk video) tampil sebagai kotak rusak —
+            // pengelola membatalkan unggahan yang sebenarnya baik-baik saja.
+            let nama = file.name().to_lowercase();
+            let is_video = file.type_().starts_with("video/")
+                || [".mp4", ".mov", ".webm", ".m4v"].iter().any(|e| nama.ends_with(e));
             match web_sys::Url::create_object_url_with_blob(&file) {
                 Ok(u) => {
                     pending_idx.set(idx);
@@ -237,9 +250,19 @@ pub fn GaleriPage() -> impl IntoView {
                     "/api/activity-photos/upload",
                     &opts,
                 ) {
-                    if let Ok(resp) =
-                        wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&req)).await
-                    {
+                    let kirim =
+                        wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&req)).await;
+                    // `fetch` sendiri gagal (koneksi putus di tengah unggahan,
+                    // atau berkas ditolak lapisan transport sebelum sampai ke
+                    // handler kita) — dulu jatuh ke pesan generik yang menyuruh
+                    // "periksa berkas", padahal berkasnya tak pernah bersalah.
+                    if kirim.is_err() {
+                        gagal = "Koneksi terputus saat mengunggah. Berkas besar butuh \
+                                 jaringan stabil — coba lagi, atau pakai video yang lebih \
+                                 pendek (maks 100MB)."
+                            .to_string();
+                    }
+                    if let Ok(resp) = kirim {
                         let resp: web_sys::Response = resp.dyn_into().unwrap();
                         if resp.ok() {
                             if let Ok(js) =

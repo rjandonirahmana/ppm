@@ -512,6 +512,25 @@ fn MonitorPanel(m: ChildMonitor) -> impl IntoView {
         </div>
         </div>
 
+        // Pembayaran — pintunya di beranda, bukan di navbar: navbar orang tua
+        // sudah lima item, dan label "Pembayaran" membuatnya membungkus dua
+        // baris di layar 360px. Pola yang sama dipakai dashboard santri.
+        <a
+            href="/orang-tua/pembayaran"
+            class="ppm-card p-4 flex items-center gap-3 press hover:border-primary transition-colors"
+        >
+            <span class="w-11 h-11 ppm-tile shrink-0">
+                <span class="material-symbols-outlined">"payments"</span>
+            </span>
+            <div class="flex-1 min-w-0">
+                <p class="text-body-md font-semibold text-on-background">"Pembayaran"</p>
+                <p class="text-[11px] text-on-surface-variant">
+                    "Kirim bukti transfer & lihat masa berlakunya"
+                </p>
+            </div>
+            <span class="material-symbols-outlined text-on-surface-variant">"chevron_right"</span>
+        </a>
+
         // Permohonan izin
         <div>
             <div class="flex items-center justify-between mb-3">

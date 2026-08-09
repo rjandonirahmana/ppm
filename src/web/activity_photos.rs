@@ -16,8 +16,12 @@ use serde_json::json;
 
 use crate::state::AppState;
 
+/// Peran yang boleh mengelola galeri — SATU sumber bersama server fn galeri
+/// (`web/api.rs::GALLERY_MANAGE_ROLES`). Dipisah sebelumnya, dan daftarnya
+/// sempat berbeda dari yang dipakai halaman: ketua melihat tombol unggah tapi
+/// selalu ditolak 403.
 fn is_manager(role: &str) -> bool {
-    matches!(role, "admin" | "dewan_guru")
+    crate::web::api::GALLERY_MANAGE_ROLES.contains(&role)
 }
 
 /// Baca satu angka bidikan dari field multipart; apa pun yang tak terbaca
@@ -31,6 +35,9 @@ fn parse_f32(field: Result<String, axum::extract::multipart::MultipartError>, df
 }
 
 /// Ekstensi/mime yang diterima galeri — gambar DAN video (migrasi 69).
+///
+/// `.mov` ikut diterima: itu format bawaan kamera iPhone, dan menolaknya berarti
+/// pengelola harus mengonversi dulu setiap klip sebelum bisa mengunggah.
 fn classify_media(filename: &str) -> Option<&'static str> {
     let ext = filename.rsplit('.').next()?.to_lowercase();
     Some(match ext.as_str() {
@@ -39,9 +46,33 @@ fn classify_media(filename: &str) -> Option<&'static str> {
         "webp" => "image/webp",
         "gif" => "image/gif",
         "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
         "webm" => "video/webm",
         _ => return None,
     })
+}
+
+/// Kenapa sebuah berkas ditolak — dalam kalimat yang bisa ditindaklanjuti.
+///
+/// HEIC diberi penjelasan sendiri karena itu format bawaan iPhone dan penyebab
+/// penolakan yang paling sering: pesan "jenis file tidak didukung" saja membuat
+/// pengelola menyimpulkan unggahannya rusak, padahal cukup mengubah setelan
+/// kamera sekali.
+fn alasan_ditolak(filename: &str) -> String {
+    let ext = filename.rsplit('.').next().unwrap_or_default().to_lowercase();
+    match ext.as_str() {
+        "heic" | "heif" => "Foto HEIC (bawaan iPhone) belum didukung peramban. Ubah di HP: \
+             Pengaturan → Kamera → Format → \"Paling Kompatibel\", lalu foto ulang; \
+             atau bagikan fotonya sebagai JPG lebih dulu."
+            .to_string(),
+        "" => "Berkas tanpa ekstensi tidak bisa dikenali — gunakan jpg/png/webp/gif \
+             atau mp4/mov/webm."
+            .to_string(),
+        lain => format!(
+            "Jenis berkas \".{lain}\" tidak didukung galeri. Gunakan jpg, png, webp, gif \
+             (foto) atau mp4, mov, webm (video)."
+        ),
+    }
 }
 
 /// POST /api/activity-photos/upload
@@ -62,7 +93,14 @@ pub async fn upload(
         Err(s) => return s.into_response(),
     };
     if !is_manager(&claims.role) {
-        return StatusCode::FORBIDDEN.into_response();
+        // Dengan badan pesan, bukan 403 kosong: klien menampilkan teks balasan
+        // apa adanya, dan 403 tanpa isi muncul di layar sebagai "Unggah gagal —
+        // periksa berkas/koneksi" yang menuduh hal yang salah.
+        return (
+            StatusCode::FORBIDDEN,
+            "Peran Anda tidak berhak mengelola galeri. Hubungi admin.",
+        )
+            .into_response();
     }
 
     let Some(storage) = state.storage.clone() else {
@@ -118,11 +156,7 @@ pub async fn upload(
         return (StatusCode::BAD_REQUEST, "File wajib diunggah.").into_response();
     };
     let Some(content_type) = classify_media(&filename) else {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Jenis file tidak didukung (gunakan jpg/png/webp/gif atau mp4/webm).",
-        )
-            .into_response();
+        return (StatusCode::BAD_REQUEST, alasan_ditolak(&filename)).into_response();
     };
     let kind = crate::models::MediaKind::of_mime(content_type);
     // Batas ISI dibedakan per jenis meski rute-nya satu: layer body di router
@@ -143,10 +177,24 @@ pub async fn upload(
     // cek ini, berkas apa pun bisa dinamai `.png` lalu tersimpan berlabel
     // `image/png` dan disajikan kembali dengan label itu.
     if !crate::web::filetype::matches(&bytes, content_type) {
+        // Kasus tersering bukan berkas palsu, melainkan foto HEIC iPhone yang
+        // namanya berakhiran .jpg — jadi isinya disebutkan bila terdeteksi.
+        let isi = crate::web::filetype::sniff(&bytes);
         return (
             StatusCode::BAD_REQUEST,
-            "Isi file tidak cocok dengan ekstensinya — pastikan ini benar-benar \
-             gambar atau video.",
+            match isi {
+                Some("image/heic") => "Berkas ini sebenarnya foto HEIC (bawaan iPhone) meski \
+                     bernama lain. Ubah di HP: Pengaturan → Kamera → Format → \"Paling \
+                     Kompatibel\", atau bagikan sebagai JPG lebih dulu."
+                    .to_string(),
+                Some(nyata) => format!(
+                    "Isi berkas ({nyata}) tidak cocok dengan ekstensi namanya. Ganti nama \
+                     berkasnya sesuai isi, lalu unggah ulang."
+                ),
+                None => "Isi berkas tidak dikenali sebagai gambar atau video — pastikan \
+                     berkasnya tidak rusak."
+                    .to_string(),
+            },
         )
             .into_response();
     }

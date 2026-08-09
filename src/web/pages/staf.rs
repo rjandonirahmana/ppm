@@ -81,9 +81,51 @@ pub fn StafDashboardPage() -> impl IntoView {
     }
 }
 
+/// Petak "Alat Administrasi": (ikon, label, tautan, peran yang boleh).
+///
+/// Kolom terakhir KOSONG = tampil untuk semua yang bisa membuka /staf; kalau
+/// terisi, hanya peran itu. Perlu karena /staf bukan cuma milik admin — dewan
+/// guru dan pamong juga mendarat di sini (lihat `staf_home_data`), dan petak
+/// yang selalu berujung "akses ditolak" hanya melatih mereka mengabaikan pesan
+/// galat.
+///
+/// Daftar peran di sini WAJIB cermin dari gerbang server fn masing-masing
+/// (`web/api.rs`). Ini penampilan saja — menyembunyikan petak bukan pengamanan;
+/// yang menolak tetap server.
+const ALAT: &[(&str, &str, &str, &[&str])] = &[
+    ("school", "Kelas", "/kelas", &[]),
+    ("groups", "Santri", "/students", &[]),
+    ("stars", "Poin", "/poin", &[]),
+    ("cast_for_education", "Sesi", "/sesi", &[]),
+    ("summarize", "Rekap", "/rekap-mingguan", &[]),
+    // KETUA saja, bukan admin — lihat alasannya di blok tagihan `web/api.rs`:
+    // siapa yang sudah/belum menyetor adalah urusan keluarga santri.
+    ("payments", "Pembayaran", "/tagihan", &["ketua"]),
+    ("grid_on", "Galeri", "/galeri", &[]),
+    ("article", "Artikel", "/kelola-artikel", &[]),
+    ("shield", "Kontrol", "/kontrol-pengguna", &["admin", "ketua"]),
+    ("manage_accounts", "User", "/manajemen-user", &["admin", "ketua"]),
+    ("settings", "Setelan", "/setelan", &["admin", "ketua"]),
+    ("monitoring", "Server", "/status-server", &["admin", "ketua"]),
+];
+
 #[component]
 fn StafBody(d: StafHome) -> impl IntoView {
     let StafHome { name, total_santri, santri_growth_month, hadir_today, pct, izin_pending, live, latest } = d;
+
+    // Peran dari konteks sesi global, disetel lewat Effect (klien saja) supaya
+    // render SSR dan render hidrasi pertama sama — membacanya langsung di view
+    // memicu peringatan hydration-mismatch.
+    let session = use_context::<Resource<Option<crate::models::SessionUser>>>();
+    let peran = RwSignal::new(String::new());
+    Effect::new(move |_| {
+        let r = session
+            .and_then(|s| s.get())
+            .flatten()
+            .map(|u| u.role)
+            .unwrap_or_default();
+        peran.set(r);
+    });
 
     view! {
         <div>
@@ -170,29 +212,27 @@ fn StafBody(d: StafHome) -> impl IntoView {
         <div>
             <h3 class="text-body-lg font-bold text-on-background mb-2">"Alat Administrasi"</h3>
             <div class="grid grid-cols-4 gap-2">
-                {[
-                    ("school", "Kelas", "/kelas"),
-                    ("groups", "Santri", "/students"),
-                    ("stars", "Poin", "/poin"),
-                    ("cast_for_education", "Sesi", "/sesi"),
-                    ("summarize", "Rekap", "/rekap-mingguan"),
-                    ("payments", "Pembayaran", "/tagihan"),
-                    ("grid_on", "Galeri", "/galeri"),
-                    ("article", "Artikel", "/kelola-artikel"),
-                    ("shield", "Kontrol", "/kontrol-pengguna"),
-                    ("manage_accounts", "User", "/manajemen-user"),
-                    ("settings", "Setelan", "/setelan"),
-                ]
-                    .into_iter()
-                    .map(|(icon, label, href)| {
-                        view! {
-                            <a href=href class="bg-surface-container rounded-2xl p-3 flex flex-col items-center gap-1.5 press">
-                                <span class="material-symbols-outlined text-primary">{icon}</span>
-                                <span class="text-[11px] font-medium text-on-surface-variant">{label}</span>
-                            </a>
-                        }
-                    })
-                    .collect_view()}
+                {move || {
+                    // `role_satisfies`, bukan perbandingan langsung: ketua
+                    // adalah superset admin di seluruh aplikasi, jadi petak
+                    // ber-syarat "admin" juga harus terbuka untuknya. Kecuali
+                    // Pembayaran, yang justru KEBALIKANNYA — dan itu jalan
+                    // sendiri karena daftarnya menyebut "ketua", bukan "admin".
+                    let r = peran.get();
+                    ALAT.iter()
+                        .filter(move |(_, _, _, boleh)| {
+                            boleh.is_empty() || crate::models::role_satisfies(&r, boleh)
+                        })
+                        .map(|(icon, label, href, _)| {
+                            view! {
+                                <a href=*href class="bg-surface-container rounded-2xl p-3 flex flex-col items-center gap-1.5 press">
+                                    <span class="material-symbols-outlined text-primary">{*icon}</span>
+                                    <span class="text-[11px] font-medium text-on-surface-variant">{*label}</span>
+                                </a>
+                            }
+                        })
+                        .collect_view()
+                }}
             </div>
         </div>
 
