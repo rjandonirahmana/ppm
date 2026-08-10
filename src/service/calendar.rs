@@ -1,8 +1,24 @@
-//! service/calendar.rs — Kalender akademik bulanan. Sesi kelas pada bulan
-//! tertentu, di-scope peran:
-//!   • admin/supervisor(pamong)/teacher(guru)/dewan_guru → SEMUA kelas
-//!   • parent → kelas anak-anak terhubung
-//!   • santri → kelas yang diikuti sendiri
+//! service/calendar.rs — Kalender akademik bulanan: SELURUH kegiatan pondok
+//! pada bulan tertentu, untuk SEMUA peran.
+//!
+//! Dulu isinya disaring per peran (santri hanya kelasnya sendiri, orang tua
+//! hanya kelas anaknya). Yang dibutuhkan justru sebaliknya: kalender akademik
+//! adalah papan pengumuman kegiatan pondok — santri perlu tahu ada apel
+//! mingguan, orang tua perlu tahu kapan pondok libur — dan menyembunyikan
+//! kegiatan kelas lain tak melindungi apa pun (isinya jadwal, bukan data
+//! pribadi) sambil membuat kalender terlihat nyaris kosong bagi kebanyakan
+//! penggunanya.
+//!
+//! DUA SUMBER, digabung:
+//!   • `class_sessions` — sesi yang sudah dibuat (bisa dibuka, punya status
+//!     berlangsung/selesai/libur);
+//!   • `class_schedules` — jadwal berulang, DIPROYEKSIKAN ke tanggal yang
+//!     sesinya belum dimaterialisasi (`projected = true`).
+//!
+//! Tanpa yang kedua, kalender kosong untuk tanggal lebih dari 7 hari ke depan:
+//! sesi hanya dibuat sejauh itu (`service::kelas::ensure_upcoming_all`),
+//! sementara kalender akademik justru dibuka untuk melihat jauh ke depan.
+//!
 //! Grid (leading_blanks Senin-first + days_in_month) dihitung di sini agar UI
 //! cukup me-render tanpa aritmetika tanggal.
 
@@ -33,9 +49,12 @@ fn month_bounds(year: i32, month: u32) -> Option<(NaiveDate, NaiveDate, u32)> {
     Some((first, last, last.day()))
 }
 
+/// `_user` sengaja tak dipakai: isinya sama untuk semua peran (lihat catatan
+/// modul). Parameternya dipertahankan karena pemanggilnya tetap harus
+/// membuktikan ada sesi yang sah — kalender bukan halaman publik.
 pub async fn calendar_data(
     pool: &Pool,
-    user: &SessionUser,
+    _user: &SessionUser,
     year: i32,
     month: u32,
 ) -> Result<CalendarData> {
@@ -49,22 +68,25 @@ pub async fn calendar_data(
         bail_user!("Tanggal tidak valid.");
     };
 
-    // Sesi bulan ini, di-scope peran. limit tinggi (semua sesi 1 bulan muat).
-    let (rows, scope_label) = match user.role.as_str() {
-        "admin" | "supervisor" | "teacher" | "dewan_guru" => {
-            (repo::all_sessions(pool, first, last, 2000).await?, "Semua kelas")
-        }
-        "parent" => (
-            repo::sessions_for_parent(pool, user.id, first, last, 2000).await?,
-            "Kelas anak Anda",
-        ),
-        _ => (
-            repo::sessions_for_student(pool, user.id, first, last, 2000).await?,
-            "Kelas Anda",
-        ),
-    };
+    // Sesi nyata bulan ini + jadwal yang berlaku di bulan yang sama. Keduanya
+    // diambil bersamaan: yang kedua hanya berguna bila yang pertama diketahui
+    // (proyeksi yang sudah punya sesi harus dibuang). limit tinggi — seluruh
+    // sesi satu bulan muat.
+    let (rows, plans) = tokio::try_join!(
+        repo::all_sessions(pool, first, last, 2000),
+        repo::schedules_in_range(pool, first, last),
+    )?;
+    let scope_label = "Semua kegiatan";
 
-    let items: Vec<CalendarItem> = rows
+    // Jadwal yang SUDAH punya sesi pada tanggal tertentu — kunci dedup
+    // proyeksi. Sesi ad-hoc (tanpa jadwal) tak masuk ke sini: ia tak mewakili
+    // jadwal mana pun, jadi tak boleh membungkam proyeksi apa pun.
+    let sudah_ada: std::collections::HashSet<(i64, NaiveDate)> = rows
+        .iter()
+        .filter_map(|r| r.class_schedule_id.map(|sid| (sid, r.session_date)))
+        .collect();
+
+    let mut items: Vec<CalendarItem> = rows
         .into_iter()
         .map(|r| {
             let (status_label, status_kind) = status_display(&r.status);
@@ -86,9 +108,58 @@ pub async fn calendar_data(
                 ),
                 status_kind: status_kind.into(),
                 status_label: status_label.into(),
+                projected: false,
             }
         })
         .collect();
+
+    // ── Proyeksi jadwal ke tanggal yang sesinya belum dibuat ─────────────────
+    for p in plans {
+        let custom = super::kelas::parse_dates(&p.custom_dates);
+        // Batas akhir jadwal dihormati: jadwal yang berakhir 10 Agustus tak
+        // boleh memunculkan kegiatan pada 20 Agustus hanya karena bulannya sama.
+        let sampai = p.end_date.map_or(last, |ed| last.min(ed));
+        if sampai < first {
+            continue;
+        }
+        for tanggal in super::kelas::dates_in_range(
+            &p.recurrence_type,
+            p.start_date,
+            &custom,
+            first,
+            sampai,
+        ) {
+            if sudah_ada.contains(&(p.schedule_id, tanggal)) {
+                continue;
+            }
+            let nama_kelas = p.class_name.clone();
+            items.push(CalendarItem {
+                day: tanggal.day(),
+                // 0 = tak ada sesi untuk dibuka. Layar memakai ini untuk
+                // menahan diri menawarkan detail yang belum ada.
+                session_id: 0,
+                time_label: p.start_time.format("%H:%M").to_string(),
+                title: p
+                    .title
+                    .clone()
+                    .filter(|t| !t.trim().is_empty())
+                    .unwrap_or_else(|| nama_kelas.clone()),
+                class_name: nama_kelas,
+                teacher: p.teacher.clone().unwrap_or_else(|| "-".into()),
+                category: crate::models::kategori_tampil(
+                    p.category.as_deref().unwrap_or_default(),
+                ),
+                status_kind: "scheduled".into(),
+                status_label: "Terjadwal".into(),
+                projected: true,
+            });
+        }
+    }
+
+    // Urut per tanggal lalu jam: sesi nyata dan proyeksi datang dari dua sumber
+    // terpisah, jadi tanpa ini keduanya tampil bergerombol sendiri-sendiri dan
+    // urutan jam dalam satu hari kacau.
+    items.sort_by(|a, b| a.day.cmp(&b.day).then_with(|| a.time_label.cmp(&b.time_label)));
 
     // Grid Senin-first: jumlah sel kosong sebelum tanggal 1.
     let leading_blanks = first.weekday().num_days_from_monday();

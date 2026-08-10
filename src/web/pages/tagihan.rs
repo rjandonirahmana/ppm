@@ -789,7 +789,7 @@ fn PanelTerlewat(
                                 <BarisTunggakan
                                     t=t
                                     busy=busy
-                                    tercentang=Signal::derive(move || dipilih.get().contains(&id))
+                                    tercentang=Signal::derive(move || dipilih.with(|v| v.contains(&id)))
                                     on_centang=move || toggle(id)
                                     on_kirim=move || {
                                         kirim(
@@ -839,7 +839,7 @@ fn PanelTerlewat(
                                             <BarisTunggakan
                                                 t=t
                                                 busy=busy
-                                                tercentang=Signal::derive(move || dipilih.get().contains(&id))
+                                                tercentang=Signal::derive(move || dipilih.with(|v| v.contains(&id)))
                                                 on_centang=move || toggle(id)
                                                 on_kirim=move || {
                                                     kirim(

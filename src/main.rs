@@ -326,7 +326,17 @@ async fn main() -> Result<()> {
     let static_routes: axum::Router = axum::Router::new()
         .nest_service(
             "/pkg",
-            tower_http::services::ServeDir::new(format!("{site_root}/pkg")),
+            // Sajikan `ppm.wasm.br` / `.gz` yang sudah dibuat saat build image
+            // (lihat Dockerfile) alih-alih mengompresi ulang tiap request lewat
+            // CompressionLayer. Isi berkasnya tetap, jadi hasil kompresinya pun
+            // tetap — tak ada alasan membayarnya berkali-kali dengan CPU VPS.
+            //
+            // Bila berkas .br/.gz tak ada (pengembangan lokal, `cargo leptos
+            // watch`), ServeDir menyajikan yang asli dan CompressionLayer di
+            // bawah mengompresi seperti biasa.
+            tower_http::services::ServeDir::new(format!("{site_root}/pkg"))
+                .precompressed_br()
+                .precompressed_gzip(),
         )
         .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
             axum::http::header::CACHE_CONTROL,

@@ -27,6 +27,27 @@ fn status_badge(kind: &str) -> &'static str {
     }
 }
 
+/// Tiga kategori kegiatan pondok, urut tampil di grid tanggal.
+///
+/// Label datang dari server sudah rapi (`models::kategori_tampil`), jadi yang
+/// dicocokkan di sini teks tampilnya — bukan kode mentahnya.
+const KATEGORI: [(&str, &str, &str); 3] = [
+    // (label dari server, warna titik, nama untuk legenda)
+    ("KBM", "bg-primary", "KBM"),
+    ("Bacaan", "bg-success", "Bacaan"),
+    ("Non-KBM", "bg-warning", "Non-KBM"),
+];
+
+/// Warna titik untuk satu kategori; kategori di luar ketiganya (teks bebas
+/// seperti "Piket") memakai warna netral, bukan disembunyikan.
+fn warna_kategori(kategori: &str) -> &'static str {
+    KATEGORI
+        .iter()
+        .find(|(label, _, _)| kategori.eq_ignore_ascii_case(label))
+        .map(|(_, warna, _)| *warna)
+        .unwrap_or("bg-on-surface-variant")
+}
+
 #[component]
 pub fn KalenderPage() -> impl IntoView {
     // (0,0) = sentinel bulan berjalan (server yang tentukan).
@@ -172,17 +193,65 @@ pub fn KalenderPage() -> impl IntoView {
                                                                             "aspect-square rounded-xl flex flex-col items-center justify-center gap-0.5 text-body-sm text-on-surface hover:bg-surface-container press"
                                                                         }
                                                                     };
+                                                                    // Kategori APA SAJA yang ada di tanggal
+                                                                    // ini — bukan sekadar "ada sesuatu".
+                                                                    // Satu titik seragam memaksa menekan
+                                                                    // tanggal satu per satu hanya untuk tahu
+                                                                    // hari itu KBM atau apel; tiga titik
+                                                                    // berwarna menjawabnya sekali lihat.
+                                                                    let kategori_hari: Vec<&'static str> = items
+                                                                        .with_value(|v| {
+                                                                            KATEGORI
+                                                                                .iter()
+                                                                                .filter(|(label, _, _)| {
+                                                                                    v.iter().any(|it| {
+                                                                                        it.day == day
+                                                                                            && it.category.eq_ignore_ascii_case(label)
+                                                                                    })
+                                                                                })
+                                                                                .map(|(_, warna, _)| *warna)
+                                                                                .collect()
+                                                                        });
+                                                                    // Kategori di luar ketiganya tetap harus
+                                                                    // terlihat — kalau tidak, tanggal yang
+                                                                    // isinya hanya "Piket" tampak kosong.
+                                                                    let ada_lain = items
+                                                                        .with_value(|v| {
+                                                                            v.iter().any(|it| {
+                                                                                it.day == day
+                                                                                    && warna_kategori(&it.category)
+                                                                                        == "bg-on-surface-variant"
+                                                                            })
+                                                                        });
                                                                     let dot = move || {
                                                                         if count == 0 {
                                                                             return ().into_any();
                                                                         }
                                                                         let selected = eff_day() == day;
-                                                                        let d_cls = if selected {
-                                                                            "w-1.5 h-1.5 rounded-full bg-on-primary"
-                                                                        } else {
-                                                                            "w-1.5 h-1.5 rounded-full bg-primary"
-                                                                        };
-                                                                        view! { <span class=d_cls></span> }.into_any()
+                                                                        let mut warna = kategori_hari.clone();
+                                                                        if ada_lain {
+                                                                            warna.push("bg-on-surface-variant");
+                                                                        }
+                                                                        view! {
+                                                                            <span class="flex items-center gap-0.5">
+                                                                                {warna
+                                                                                    .into_iter()
+                                                                                    .map(|w| {
+                                                                                        // Sel terpilih berlatar primary —
+                                                                                        // warna kategori di atasnya tak
+                                                                                        // terbaca, jadi di sana titiknya
+                                                                                        // memakai warna kontras tunggal.
+                                                                                        let c = if selected {
+                                                                                            "w-1.5 h-1.5 rounded-full bg-on-primary".to_string()
+                                                                                        } else {
+                                                                                            format!("w-1.5 h-1.5 rounded-full {w}")
+                                                                                        };
+                                                                                        view! { <span class=c></span> }
+                                                                                    })
+                                                                                    .collect_view()}
+                                                                            </span>
+                                                                        }
+                                                                            .into_any()
                                                                     };
                                                                     view! {
                                                                         <button
@@ -197,6 +266,26 @@ pub fn KalenderPage() -> impl IntoView {
                                                                 .collect_view()}
                                                         </div>
                                                     </SwipeArea>
+
+                                                    // Legenda warna. Titik
+                                                    // berwarna tanpa keterangan
+                                                    // hanya memindahkan tebakan,
+                                                    // bukan menghapusnya.
+                                                    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 pt-2">
+                                                        {KATEGORI
+                                                            .iter()
+                                                            .map(|(_, warna, nama)| {
+                                                                view! {
+                                                                    <span class="flex items-center gap-1 text-[10px] text-on-surface-variant">
+                                                                        <span class=format!(
+                                                                            "w-1.5 h-1.5 rounded-full {warna}",
+                                                                        )></span>
+                                                                        {*nama}
+                                                                    </span>
+                                                                }
+                                                            })
+                                                            .collect_view()}
+                                                    </div>
 
                                                     // Petunjuk sekali-tampil:
                                                     // gestur tak punya wujud,
@@ -275,10 +364,25 @@ fn SesiItem(it: CalendarItem) -> impl IntoView {
         && !it.title.trim().eq_ignore_ascii_case(kategori)
         && !it.title.to_lowercase().starts_with(&kategori.to_lowercase());
     let kategori = kategori_beda.then(|| kategori.to_string());
+    // Kegiatan yang sesinya belum dibuat ditampilkan lebih pudar dan diberi
+    // garis putus-putus: ia BENAR akan berlangsung menurut jadwal, tapi belum
+    // ada yang bisa dibuka — dan menyamakannya dengan sesi nyata berarti
+    // menjanjikan detail, absensi, dan siaran yang belum ada.
+    let projected = it.projected;
+    let kartu = if projected {
+        "ppm-card p-3 flex items-center gap-3 anim-in border border-dashed border-outline-variant bg-transparent opacity-80"
+    } else {
+        "ppm-card p-3 flex items-center gap-3 anim-in"
+    };
+    let aksen_waktu = if projected {
+        "text-body-sm font-bold text-on-surface-variant leading-none"
+    } else {
+        "text-body-sm font-bold text-primary leading-none"
+    };
     view! {
-        <div class="ppm-card p-3 flex items-center gap-3 anim-in">
+        <div class=kartu>
             <div class="w-12 shrink-0 text-center">
-                <p class="text-body-sm font-bold text-primary leading-none">{it.time_label}</p>
+                <p class=aksen_waktu>{it.time_label}</p>
                 {kategori
                     .map(|k| {
                         view! {
@@ -290,7 +394,20 @@ fn SesiItem(it: CalendarItem) -> impl IntoView {
                 <p class="text-body-sm font-semibold text-on-background truncate">{it.title}</p>
                 <p class="text-[11px] text-on-surface-variant truncate">{meta}</p>
             </div>
-            <span class=status_badge(&it.status_kind)>{it.status_label}</span>
+            {if projected {
+                view! {
+                    <span
+                        class="ppm-chip-sm bg-surface-container-high text-on-surface-variant shrink-0"
+                        title="Jadwal berulang — sesinya dibuat otomatis mendekati harinya"
+                    >
+                        "Belum dibuat"
+                    </span>
+                }
+                    .into_any()
+            } else {
+                view! { <span class=status_badge(&it.status_kind)>{it.status_label}</span> }
+                    .into_any()
+            }}
         </div>
     }
 }

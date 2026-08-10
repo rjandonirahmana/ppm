@@ -66,6 +66,32 @@ pub use users::*;
 /// Yang dibaca pemanggil hanya sembilan di bawah — sisanya biaya transfer
 /// murni. Menambah kolom baru ke `classes` juga jadi tak diam-diam memperbesar
 /// setiap query ini.
+/// Predikat "`kolom` jatuh pada HARI INI menurut WIB" — bentuk yang masih bisa
+/// memakai index.
+///
+/// Bentuk yang tampak paling wajar justru yang paling mahal:
+/// `(kolom AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE ...)::date`.
+/// Begitu kolomnya dibungkus fungsi, planner tak bisa lagi memakai btree di
+/// atasnya — dan index ekspresi pun mustahil dibuat karena ekspresinya STABLE,
+/// bukan IMMUTABLE. Hasilnya seq scan atas seluruh tabel, dijalankan setiap
+/// kali dashboard pamong/guru/admin dibuka, pada tabel yang tumbuh ±1 juta
+/// baris setahun (proyeksi migrasi 68).
+///
+/// Di sini kolomnya dibiarkan telanjang di kiri dan yang dihitung adalah BATAS
+/// harinya: tengah malam WIB hari ini, dan tengah malam berikutnya. Keduanya
+/// ekspresi konstan untuk satu query, jadi planner bisa mengubahnya menjadi
+/// pemindaian rentang.
+///
+/// Batas atasnya `<`, bukan `<=`: satu detik sebelum tengah malam berikutnya
+/// masih hari ini, tengah malamnya sendiri sudah besok.
+///
+/// Pemakaian: `format!("WHERE ... AND {}", hari_ini_wib("a.pamong_at"))`.
+pub(crate) fn hari_ini_wib(kolom: &str) -> String {
+    const AWAL: &str =
+        "(date_trunc('day', NOW() AT TIME ZONE 'Asia/Jakarta') AT TIME ZONE 'Asia/Jakarta')";
+    format!("{kolom} >= {AWAL} AND {kolom} < {AWAL} + INTERVAL '1 day'")
+}
+
 pub(crate) fn kelas_utama_lateral(user_col: &str) -> String {
     format!(
         "LEFT JOIN LATERAL ( \

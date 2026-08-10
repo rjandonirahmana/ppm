@@ -77,7 +77,13 @@ pub async fn riwayat(pool: &Pool, user_id: i64) -> Result<RiwayatData> {
         .into_iter()
         .map(|r| {
             let (status_label, kind) = status_display(&r.status);
-            let (points, note, _) = point_rule(&r.status);
+            // Angka yang SUDAH tercatat menang atas aturan umum. `point_rule`
+            // tinggal dipakai untuk KATA-nya ("Kedisiplinan", "Pelanggaran"),
+            // dan sebagai perkiraan bagi baris yang belum diverifikasi —
+            // barisan itu memang belum punya catatan poin, dan menampilkan 0
+            // di sana akan terbaca sebagai "bebas", padahal belum dinilai.
+            let (perkiraan, note, _) = point_rule(&r.status);
+            let points = r.points.unwrap_or(perkiraan);
             let title = r
                 .title
                 .or_else(|| r.gate_label.clone().map(|g| format!("Absensi - {g}")))

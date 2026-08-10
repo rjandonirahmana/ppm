@@ -399,13 +399,14 @@ pub async fn decide_session(
 
     let mut n = 0i64;
     if stage == "pamong" {
-        // Tahap pamong belum punya jalur set-based tersendiri: ia tak memberi
-        // poin, jadi biayanya satu UPDATE per baris tanpa insert menyertai.
-        for id in tolak.iter().chain(setuju.iter()) {
-            let approve = !reject_ids.contains(id);
-            if repo::decide_pamong(pool, *id, user_id, approve, actor).await? {
-                n += 1;
-            }
+        // Dua pernyataan — satu untuk yang ditolak, satu untuk yang disetujui —
+        // bukan satu pernyataan per santri. Bentuknya sama dengan tahap final
+        // di bawah; alasannya lengkap di `repo::decide_pamong_bulk`.
+        if !tolak.is_empty() {
+            n += repo::decide_pamong_bulk(pool, &tolak, user_id, false, actor).await?;
+        }
+        if !setuju.is_empty() {
+            n += repo::decide_pamong_bulk(pool, &setuju, user_id, true, actor).await?;
         }
         return Ok(n);
     }

@@ -93,14 +93,35 @@ mod ssr_helpers {
             // silakan masuk lagi" ≠ "tak berwenang".
             .map_err(|e| ServerFnError::new(e.as_str()))?;
 
-        // Peran diambil dari KLAIM TOKEN — tanpa query DB. Token diterbitkan
-        // ulang saat login, jadi peran yang berlaku adalah peran saat login.
+        // Peran & keaktifan dibaca SEGAR dari DB, tidak dari klaim token.
         //
-        // KONSEKUENSI yang harus disadari: mengubah peran atau menonaktifkan
-        // akun TIDAK berpengaruh pada orang yang sedang login sampai ia login
-        // lagi. Yang menentukan seberapa cepat perubahan itu menular adalah
-        // UMUR TOKEN (auth::TOKEN_DAYS) — bukan pengecekan di sini.
-        Ok(claims.into())
+        // Klaim token dulu dipercaya apa adanya dengan alasan "umur token yang
+        // membatasi kerusakan". Alasan itu tidak berlaku di sini: `get_session`
+        // MENANDATANGANI ULANG token setiap kunjungan, penuh 30 hari lagi, dari
+        // klaim lama. Artinya siapa pun yang membuka aplikasi sebulan sekali
+        // memperbarui tokennya tanpa batas — menonaktifkan akunnya atau
+        // menurunkan perannya tidak pernah berlaku, selamanya. Untuk sistem yang
+        // mengelola poin, izin, dan uang santri, "pencabutan akses yang tak
+        // pernah berlaku" bukan trade-off yang bisa diterima.
+        //
+        // Biayanya satu pencarian primary key per pemanggilan server fn. Nyaris
+        // semua server fn di berkas ini toh menyentuh DB sesudahnya, dan pool
+        // punya batas antre (config.rs) sehingga beban ini tak bisa menumpuk
+        // diam-diam.
+        //
+        // Akun yang dinonaktifkan dijawab "session_expired", bukan "forbidden":
+        // yang harus dilakukan orangnya memang masuk kembali, dan di sanalah
+        // login akan memberitahunya dengan kalimat yang benar.
+        let segar = crate::repository::session_user_aktif(&state.pool, claims.user_id)
+            .await
+            .map_err(|_| ServerFnError::new(GENERIC_SERVER_ERROR))?;
+        match segar {
+            Some(u) => Ok(u),
+            None => {
+                clear_auth_cookie();
+                Err(ServerFnError::new("session_expired"))
+            }
+        }
     }
 
     /// Sesi wajib + peran harus salah satu dari `roles`.
@@ -215,11 +236,17 @@ pub async fn change_password_action(
         .map_err(err)
 }
 
-/// Sesi saat ini (None bila belum login). Direkonstruksi murni dari claims
-/// JWT — zero query DB (pola sama e-ticketing get_session).
+/// Sesi saat ini (None bila belum login).
 ///
 /// SLIDING SESSION: bila token valid, token BARU di-sign dan cookie di-set
 /// ulang (umur penuh lagi). Pengguna aktif tak pernah diminta login ulang.
+///
+/// Justru KARENA sesinya diperpanjang tanpa batas, isinya WAJIB dibaca ulang
+/// dari DB. Versi lama menandatangani token baru dari klaim lama — peran dan
+/// keaktifan ikut disalin apa adanya — sehingga akun yang dinonaktifkan
+/// memperbarui sendiri masa berlakunya setiap kali pemiliknya membuka aplikasi.
+/// Perpanjangan tanpa pemeriksaan bukan "sesi yang nyaman", itu pencabutan
+/// akses yang tak pernah bisa dilakukan.
 #[server(GetSession, "/api-fn")]
 pub async fn get_session() -> Result<Option<SessionUser>, ServerFnError> {
     let state = app_state().await?;
@@ -231,15 +258,23 @@ pub async fn get_session() -> Result<Option<SessionUser>, ServerFnError> {
         clear_auth_cookie();
         return Ok(None);
     };
+    // Akun hilang atau dinonaktifkan → sesinya berakhir SEKARANG, bukan saat
+    // tokennya kebetulan habis 30 hari lagi.
+    let segar = crate::repository::session_user_aktif(&state.pool, claims.user_id)
+        .await
+        .map_err(|_| ServerFnError::new(GENERIC_SERVER_ERROR))?;
+    let Some(user) = segar else {
+        clear_auth_cookie();
+        return Ok(None);
+    };
     // Perpanjang sesi (best-effort; gagal sign bukan alasan menolak sesi).
-    // Peran ikut dari klaim — sesi diperpanjang, bukan diterbitkan ulang.
-    if let Ok(fresh) = state
-        .jwt
-        .sign(claims.user_id, &claims.name, &claims.phone, &claims.role)
-    {
+    // Nama & peran dari DB, bukan dari klaim: kalau tidak, token baru
+    // mengabadikan peran lama sampai 30 hari berikutnya. `phone` tetap dari
+    // klaim — ia identitas login yang tak berubah oleh tindakan pengurus.
+    if let Ok(fresh) = state.jwt.sign(user.id, &user.name, &claims.phone, &user.role) {
         set_auth_cookie(&fresh);
     }
-    Ok(Some(claims.into()))
+    Ok(Some(user))
 }
 
 #[server(LogoutAction, "/api-fn")]
@@ -539,9 +574,28 @@ pub async fn weekly_recap_data(
 
 /// Kreditkan reward mingguan (admin) untuk pekan `offset`. Return (jumlah santri,
 /// total poin) dikreditkan.
+///
+/// HANYA pekan yang SUDAH SELESAI (`offset >= 1`). Reward mingguan menilai
+/// pekan utuh — "tidak pernah alfa", "tidak pernah telat" — dan pekan yang masih
+/// berjalan belum bisa dinilai: santri yang hari Senin masih bersih bisa alfa
+/// hari Jumat. Lebih buruk lagi, kreditnya tak bisa diperbaiki: UNIQUE
+/// (user_id, week_start) dari migrasi 31 membuat satu-satunya percobaan itu
+/// permanen — yang terlanjur dikredit menyimpan reward yang tak ia peroleh, dan
+/// yang belakangan memenuhi syarat lebih tinggi tak bisa dinaikkan.
+///
+/// Migrasi 31 sendiri menuliskan niatnya: "dikreditkan pengurus tiap Senin
+/// untuk pekan sebelumnya". Sampai sekarang niat itu hanya hidup di komentar,
+/// sementara tombolnya tetap tampil di pekan berjalan.
 #[server(CreditWeeklyRewards, "/api-fn")]
 pub async fn credit_weekly_rewards_action(offset: i32) -> Result<(i64, i64), ServerFnError> {
     require_roles(&["admin"]).await?;
+    if offset < 1 {
+        return Err(ServerFnError::ServerError(
+            "Reward hanya bisa dikreditkan untuk pekan yang sudah selesai. \
+             Pindah ke pekan lalu, lalu kreditkan dari sana."
+                .into(),
+        ));
+    }
     let state = app_state().await?;
     crate::service::rekap::credit_weekly_rewards(&state.pool, offset)
         .await
@@ -2237,10 +2291,42 @@ pub async fn poin_data_action() -> Result<PoinData, ServerFnError> {
         .map_err(err)
 }
 
+/// Batas satu kali penyesuaian poin manual.
+///
+/// Layarnya hanya menawarkan ±1 dan ±5, tapi `delta` datang dari klien — dan
+/// server yang mempercayai angka apa pun berarti satu request rakitan tangan
+/// bisa menambah sejuta poin, tercatat rapi sebagai penyesuaian biasa. Poin
+/// adalah dasar prestasi, SP, dan pemanggilan; sekali angkanya bisa dikarang,
+/// seluruh bangunan aturan di atasnya ikut kehilangan arti.
+///
+/// 20 dipilih longgar: jauh di atas yang ditawarkan layar (5), masih di bawah
+/// nilai yang bisa mengubah tingkat prestasi seseorang dalam sekali klik.
+/// Penyesuaian yang benar-benar besar tetap bisa dilakukan — beberapa kali,
+/// masing-masing meninggalkan barisnya sendiri di buku besar.
+///
+/// Server-only: batas ini ditegakkan di tempat yang tak bisa dilewati klien,
+/// jadi badan server fn-lah satu-satunya pembacanya (di build WASM badan itu
+/// diganti pemanggil jaringan, dan constnya jadi tak terpakai).
+#[cfg(feature = "ssr")]
+const MAX_ADJUST_POIN: i32 = 20;
+
 /// Tambah/kurangi poin santri secara manual (dewan guru/admin saja).
 #[server(AdjustPoints, "/api-fn")]
 pub async fn adjust_points_action(student_id: i64, delta: i32, reason: String) -> Result<(), ServerFnError> {
     let sess = require_roles(&["admin", "dewan_guru"]).await?;
+    if delta == 0 {
+        return Err(ServerFnError::ServerError(
+            "Nilai penyesuaian tidak boleh 0.".into(),
+        ));
+    }
+    // DITOLAK, bukan dipotong diam-diam ke batas: kalau angkanya di luar batas,
+    // yang mengirim sedang salah paham — dan menyimpan 20 saat ia bermaksud 200
+    // menghasilkan catatan yang salah tanpa ada yang tahu.
+    if delta.abs() > MAX_ADJUST_POIN {
+        return Err(ServerFnError::ServerError(format!(
+            "Penyesuaian sekali jalan dibatasi ±{MAX_ADJUST_POIN} poin."
+        )));
+    }
     let state = app_state().await?;
     let reason = if reason.trim().is_empty() { "Penyesuaian manual".to_string() } else { reason };
     crate::repository::adjust_points(&state.pool, student_id, delta, &reason, sess.id)

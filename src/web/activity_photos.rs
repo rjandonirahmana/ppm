@@ -112,7 +112,10 @@ pub async fn upload(
     };
 
     let mut caption = String::new();
-    let mut file_bytes: Option<Vec<u8>> = None;
+    // Berkasnya ditulis ke DISK sambil diterima, bukan ditumpuk di RAM: rute ini
+    // menerima video sampai 100 MB, dan beberapa unggahan bersamaan cukup untuk
+    // menghabiskan memori VPS. Lihat `web::multipart`.
+    let mut berkas: Option<crate::web::multipart::BerkasSementara> = None;
     let mut filename = String::new();
     let (mut focus_x, mut focus_y, mut zoom) = crate::models::FOCUS_DEFAULT;
     let mut fit = crate::models::PhotoFit::Cover;
@@ -143,16 +146,25 @@ pub async fn upload(
             }
             "file" => {
                 filename = field.file_name().unwrap_or_default().to_string();
-                match field.bytes().await {
-                    Ok(b) => file_bytes = Some(b.to_vec()),
-                    Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+                // Batas yang dipasang di sini adalah batas KERAS rute (video);
+                // batas gambar yang lebih ketat baru bisa ditentukan setelah
+                // jenis isinya diketahui, jadi diperiksa di bawah.
+                match crate::web::multipart::terima_berkas(
+                    field,
+                    crate::web::limits::VIDEO_MAX,
+                    "video maks 100MB",
+                )
+                .await
+                {
+                    Ok(b) => berkas = Some(b),
+                    Err(resp) => return resp,
                 }
             }
             _ => {}
         }
     }
 
-    let Some(bytes) = file_bytes else {
+    let Some(berkas) = berkas else {
         return (StatusCode::BAD_REQUEST, "File wajib diunggah.").into_response();
     };
     let Some(content_type) = classify_media(&filename) else {
@@ -161,12 +173,14 @@ pub async fn upload(
     let kind = crate::models::MediaKind::of_mime(content_type);
     // Batas ISI dibedakan per jenis meski rute-nya satu: layer body di router
     // harus melonggar sampai ukuran video, dan tanpa pemeriksaan ini foto pun
-    // ikut boleh 100 MB.
+    // ikut boleh 100 MB. Berkas yang melewati batas gambar sudah terlanjur
+    // ditulis ke disk — tapi ke DISK, dan berkasnya terhapus begitu `berkas`
+    // habis masa pakainya di akhir fungsi ini.
     let (max, batas_pesan) = match kind {
         crate::models::MediaKind::Video => (crate::web::limits::VIDEO_MAX, "video maks 100MB"),
         crate::models::MediaKind::Image => (crate::web::limits::IMAGE_MAX, "gambar maks 10MB"),
     };
-    if bytes.is_empty() || bytes.len() > max {
+    if berkas.ukuran == 0 || berkas.ukuran > max {
         return (
             StatusCode::BAD_REQUEST,
             format!("Ukuran file tidak valid ({batas_pesan})."),
@@ -176,10 +190,10 @@ pub async fn upload(
     // Ekstensi cuma nama yang dipilih pengunggah; isinya yang menentukan. Tanpa
     // cek ini, berkas apa pun bisa dinamai `.png` lalu tersimpan berlabel
     // `image/png` dan disajikan kembali dengan label itu.
-    if !crate::web::filetype::matches(&bytes, content_type) {
+    if !berkas.cocok(content_type) {
         // Kasus tersering bukan berkas palsu, melainkan foto HEIC iPhone yang
         // namanya berakhiran .jpg — jadi isinya disebutkan bila terdeteksi.
-        let isi = crate::web::filetype::sniff(&bytes);
+        let isi = berkas.tipe_isi();
         return (
             StatusCode::BAD_REQUEST,
             match isi {
@@ -209,7 +223,8 @@ pub async fn upload(
         ext
     );
 
-    let url = match storage.upload_bytes(bytes, &key, content_type).await {
+    // Streaming dari disk (`upload_file`), bukan dari RAM (`upload_bytes`).
+    let url = match storage.upload_file(berkas.path(), &key, content_type).await {
         Ok(u) => u,
         Err(e) => {
             crate::service::telegram::report_error(502, "Activity photo upload", e.to_string());

@@ -345,8 +345,17 @@ pub fn PublicNav(#[prop(optional)] home: bool) -> impl IntoView {
         <nav class="sticky top-0 z-30 bg-surface/90 backdrop-blur border-b border-outline-variant/50">
             <div class="max-w-6xl mx-auto px-5 py-3 flex items-center justify-between gap-4">
                 <a href="/" class="flex items-center gap-3 shrink-0">
-                    <div class="w-10 h-10 spiritual-gradient rounded-xl flex items-center justify-center">
-                        <span class="material-symbols-outlined text-on-primary text-2xl">"mosque"</span>
+                    // Logo asli PPM Al-Faqih Mandiri, bukan glyph masjid bawaan
+                    // font — sama dengan halaman login. Alasnya PUTIH, bukan
+                    // gradasi hijau seperti dulu: logonya sendiri hijau dua-nada
+                    // dengan latar transparan, jadi di atas gradasi hijau ia
+                    // praktis lenyap.
+                    <div class="w-10 h-10 bg-white rounded-xl flex items-center justify-center overflow-hidden ring-1 ring-outline-variant/50 shrink-0">
+                        <img
+                            src="/icons/logo.png"
+                            alt="Logo PPM Al-Faqih Mandiri"
+                            class="w-full h-full object-contain p-1"
+                        />
                     </div>
                     <div class="leading-tight">
                         <p class="font-bold text-primary">"AFM SMART"</p>
@@ -437,7 +446,16 @@ pub fn PublicFooter() -> impl IntoView {
         <footer class="bg-primary text-on-primary">
             <div class="max-w-6xl mx-auto px-5 py-10 flex flex-col md:flex-row items-center justify-between gap-4">
                 <div class="flex items-center gap-3">
-                    <span class="material-symbols-outlined text-2xl">"mosque"</span>
+                    // Ubin putih seperti di navbar & login: kaki halaman
+                    // berlatar `bg-primary` (hijau tua), dan logo hijau di
+                    // atasnya takkan terbaca.
+                    <div class="w-10 h-10 bg-white rounded-xl flex items-center justify-center overflow-hidden shrink-0">
+                        <img
+                            src="/icons/logo.png"
+                            alt="Logo PPM Al-Faqih Mandiri"
+                            class="w-full h-full object-contain p-1"
+                        />
+                    </div>
                     <div class="leading-tight">
                         <p class="font-bold">"PPM Al-Faqih Mandiri"</p>
                         <p class="text-[11px] opacity-70 uppercase tracking-widest">

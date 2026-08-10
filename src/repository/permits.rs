@@ -608,9 +608,10 @@ pub async fn pamong_permits_decided_today(pool: &Pool, pamong_id: Option<i64>) -
              LEFT JOIN classes tc ON tc.id = p.class_id \
              {kelas} \
              WHERE p.pamong_status <> 'pending' \
-                AND (p.pamong_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date \
+                AND {hari} \
                 AND ($1::bigint IS NULL OR COALESCE(tc.pamong_id, cl.pamong_id) = $1)",
                 kelas = super::kelas_utama_lateral("p.user_id"),
+                hari = super::hari_ini_wib("p.pamong_at"),
             ),
             &[&pamong_id],
         )
@@ -731,10 +732,11 @@ pub async fn guru_permits_decided_today(pool: &Pool, wali_id: Option<i64>) -> Re
              LEFT JOIN classes tc ON tc.id = p.class_id \
              {kelas} \
              WHERE p.guru_status <> 'pending' \
-                AND (p.guru_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date \
+                AND {hari} \
                 AND ($1::bigint IS NULL \
                      OR COALESCE(p.wali_kelas_id, tc.wali_kelas_id, cl.wali_kelas_id) = $1)",
                 kelas = super::kelas_utama_lateral("p.user_id"),
+                hari = super::hari_ini_wib("p.guru_at"),
             ),
             &[&wali_id],
         )
@@ -804,7 +806,27 @@ pub async fn decide_guru_permit(
 ///
 /// Status yang ditulis mengikuti JENIS izin:
 ///   • `sick`  → status 'sick'  → 0 poin (PRD: sakit dgn surat sah tak memotong)
-///   • lainnya → status 'permit' → −izin_points
+///   • `leave` → status 'permit' → 0 poin (PRD: CUTI juga tak memotong)
+///   • lainnya → status 'permit' → −`class_schedules.izin_points` (migrasi 28),
+///     HANYA bila kolom itu diisi dan lebih dari 0. NULL atau 0 = kegiatan itu
+///     tak memotong poin, dan tak ada baris `point_logs` yang ditulis sama
+///     sekali (bukan baris berdelta 0 yang cuma meramaikan buku besar).
+///
+/// Aturan yang SAMA kini dibaca `attendance::DELTA_SQL`. Dulu jalur itu memberi
+/// 0 mati sementara jalur ini memotong sesuai preset, sehingga dua santri
+/// dengan izin serupa diperlakukan berbeda semata karena barisnya lahir dari
+/// jalur yang berbeda — dan tak satu pun layar memperlihatkan perbedaan itu.
+///
+/// `leave` = cuti resmi: magang, tugas akhir, lomba mewakili pondok, atau sakit
+/// yang butuh perawatan intensif di luar. PRD menyebut sakit dan cuti dalam
+/// satu tarikan napas sebagai yang TIDAK mengurangi poin, tapi dulu hanya
+/// `sick` yang dibebaskan — cuti jatuh ke cabang "lainnya" dan dipotong persis
+/// seperti izin keperluan biasa. Santri yang mewakili pondok berlomba pulang
+/// membawa minus poin.
+///
+/// Statusnya tetap 'permit' (bukan dipaksa jadi 'sick'): rekap membedakan sakit
+/// dari izin, dan menandai cuti sebagai sakit akan memalsukan angka itu. Yang
+/// dibedakan hanya potongan poinnya.
 ///
 /// `ON CONFLICT DO NOTHING`: baris yang SUDAH ada tak ditimpa. Santri yang
 /// ternyata hadir sebagian, atau yang sudah terlanjur dialpakan auto-absent,
@@ -849,13 +871,14 @@ pub async fn materialize_permit_attendance(pool: &Pool, permit_id: i64) -> Resul
              ), \
              lg AS ( \
                 INSERT INTO point_logs (user_id, delta, reason, category, attendance_id) \
-                SELECT ins.user_id, \
-                       -COALESCE(sch.izin_points, \
-                                 cat_default_points(COALESCE(sch.activity_type,'other'),'izin'))::int, \
+                SELECT ins.user_id, -sch.izin_points::int, \
                        'Kehadiran (' || ins.status || ') — izin disetujui', 'discipline', ins.id \
                   FROM ins \
-                  LEFT JOIN class_schedules sch ON sch.id = ins.class_schedule_id \
+                  JOIN class_schedules sch ON sch.id = ins.class_schedule_id \
+                  CROSS JOIN p \
                  WHERE ins.status = 'permit' \
+                   AND p.type NOT IN ('sick', 'leave') \
+                   AND COALESCE(sch.izin_points, 0) > 0 \
                 RETURNING user_id \
              ) \
              SELECT COUNT(*)::bigint FROM ins",

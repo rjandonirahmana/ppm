@@ -172,11 +172,17 @@ pub struct SessionRow {
     /// Kategori kelas (mis. "Pengajian", "Sholat") — menentukan boleh/tidaknya
     /// siaran suara direkam (lihat models::category_allows_recording).
     pub category: Option<String>,
+    /// Jadwal asal sesi ini; None = sesi ad-hoc yang dibuat tanpa jadwal.
+    ///
+    /// Dipakai kalender untuk mengenali sesi mana yang sudah mewakili sebuah
+    /// jadwal pada tanggal tertentu, sehingga proyeksi jadwal yang sama tak
+    /// ikut ditampilkan sebagai baris kedua (lihat [`schedules_in_range`]).
+    pub class_schedule_id: Option<i64>,
 }
 
 const SESSION_COLS: &str = "SELECT s.id, COALESCE(s.title, cs.title), c.name, s.session_date, \
      cs.start_time, s.status, t.full_name, s.teacher_id, COALESCE(cs.category, c.category), \
-     s.pamong_id \
+     s.pamong_id, s.class_schedule_id \
      FROM class_sessions s \
      JOIN classes c ON c.id = s.class_id \
      LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
@@ -194,7 +200,96 @@ fn row_to_session(r: tokio_postgres::Row) -> SessionRow {
         teacher_id: r.get(7),
         category: r.get(8),
         pamong_id: r.get(9),
+        class_schedule_id: r.get(10),
     }
+}
+
+/// Satu jadwal aktif yang rentang berlakunya menyentuh [since, until] —
+/// bahan PROYEKSI kalender.
+pub struct SchedulePlanRow {
+    pub schedule_id: i64,
+    pub class_name: String,
+    pub title: Option<String>,
+    pub start_time: NaiveTime,
+    pub category: Option<String>,
+    /// Wali kelas — pengampu yang wajar ditampilkan untuk kegiatan yang
+    /// sesinya belum dibuat (sesi nyata boleh punya pengajar pengganti).
+    pub teacher: Option<String>,
+    pub recurrence_type: String,
+    pub start_date: NaiveDate,
+    pub end_date: Option<NaiveDate>,
+    /// Tanggal manual recurrence 'custom', SUDAH disaring ke rentang yang diminta.
+    pub custom_dates: Vec<String>,
+}
+
+/// Jadwal aktif yang berlaku dalam rentang [since, until], untuk memproyeksikan
+/// kegiatan ke tanggal yang sesinya BELUM dimaterialisasi.
+///
+/// Kenapa perlu: `class_sessions` hanya dibuat untuk hari ini s/d 7 hari ke
+/// depan (`service::kelas::ensure_upcoming_all`), sedangkan kalender akademik
+/// dipakai justru untuk melihat jauh ke depan. Tanpa proyeksi, membuka bulan
+/// depan memperlihatkan kalender kosong melompong — seolah pondok tak punya
+/// kegiatan apa pun — padahal jadwal mingguannya jelas ada.
+///
+/// Recurrence-nya TIDAK dihitung di SQL melainkan oleh
+/// `service::kelas::dates_in_range`, satu-satunya penafsir daily/weekly/
+/// monthly/once/custom di aplikasi ini (pola yang sama dipakai
+/// `permits::affected_classes`).
+///
+/// `custom_dates` disaring DI SQL: daftarnya bertambah tiap tahun ajaran dan
+/// tak pernah menyusut, sementara yang dibutuhkan hanya tanggal di bulan yang
+/// sedang dilihat. Perbandingannya sebagai TEKS — format ISO "YYYY-MM-DD"
+/// berurutan leksikografis persis seperti tanggalnya, dan satu string cacat di
+/// data lama tak menggagalkan seluruh query seperti `::date`.
+pub async fn schedules_in_range(
+    pool: &Pool,
+    since: NaiveDate,
+    until: NaiveDate,
+) -> Result<Vec<SchedulePlanRow>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT cs.id, cl.name, cs.title, cs.start_time, \
+                    COALESCE(cs.category, cl.category), w.full_name, \
+                    cs.recurrence_type, cs.start_date, cs.end_date, \
+                    (SELECT COALESCE(jsonb_agg(d.v), '[]'::jsonb) \
+                       FROM jsonb_array_elements_text( \
+                              COALESCE(cs.custom_dates, '[]'::jsonb)) AS d(v) \
+                      WHERE d.v >= to_char($1::date, 'YYYY-MM-DD') \
+                        AND d.v <= to_char($2::date, 'YYYY-MM-DD')) \
+             FROM class_schedules cs \
+             JOIN classes cl ON cl.id = cs.class_id \
+             LEFT JOIN users w ON w.id = cl.wali_kelas_id \
+             WHERE cs.status = 'active' \
+               AND cl.status = 'active' \
+               AND cs.start_date <= $2 \
+               AND COALESCE(cs.end_date, $2) >= $1 \
+             ORDER BY cs.start_time, cl.name, cs.id",
+            &[&since, &until],
+        )
+        .await
+        .context("schedules_in_range")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| SchedulePlanRow {
+            schedule_id: r.get(0),
+            class_name: r.get(1),
+            title: r.get(2),
+            start_time: r.get(3),
+            category: r.get(4),
+            teacher: r.get(5),
+            recurrence_type: r.get(6),
+            start_date: r.get(7),
+            end_date: r.get(8),
+            custom_dates: r
+                .get::<_, Option<serde_json::Value>>(9)
+                .and_then(|v| {
+                    v.as_array()
+                        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                })
+                .unwrap_or_default(),
+        })
+        .collect())
 }
 
 /// SEMUA sesi (admin/pamong/dewan guru) dalam rentang [since, until] — untuk

@@ -407,7 +407,7 @@ pub fn ManajemenUserPage() -> impl IntoView {
                                                             <BarisUser
                                                                 u=u
                                                                 busy=busy
-                                                                tercentang=Signal::derive(move || dipilih.get().contains(&uid))
+                                                                tercentang=Signal::derive(move || dipilih.with(|v| v.contains(&uid)))
                                                                 on_centang=move || toggle_pilih(uid)
                                                                 on_edit=move || editing.set(Some(simpan.get_value()))
                                                                 on_toggle=move || ubah_status(simpan.get_value())

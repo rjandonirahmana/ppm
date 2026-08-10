@@ -547,7 +547,7 @@ fn AddMemberForm(
                                         // Sudah punya kelas KBM DAN kelas tujuan juga KBM →
                                         // mencentangnya berarti MEMINDAHKAN, bukan menambah.
                                         let pindah_dari = kelas_kbm.then(|| s.kbm_class.clone()).flatten();
-                                        let checked = move || selected.get().contains(&id);
+                                        let checked = move || selected.with(|v| v.contains(&id));
                                         view! {
                                             <label class="flex items-start gap-3 p-2.5 bg-surface-container rounded-lg anim-in cursor-pointer">
                                                 <input

@@ -12,7 +12,9 @@
 # Env WAJIB saat runtime: DATABASE_URL, REDIS_URL, JWT_SECRET
 # Opsional: WAHA_BASE_URL/SESSION/API_KEY, TELEGRAM_BOT_TOKEN/ADMIN_CHAT_ID,
 #           APP_BASE_URL, RUSTFS_ENDPOINT/ACCESS_KEY/SECRET_KEY/BUCKET/PUBLIC_URL,
-#           RECORDINGS_DIR (default ./recordings), DB_POOL_MAX_SIZE (default 8)
+#           RECORDINGS_DIR (default ./recordings), DB_POOL_MAX_SIZE (default 16),
+#           UPLOAD_TMP_DIR (default <temp OS>/ppm-upload — WAJIB di disk, bukan
+#           tmpfs; lihat web/multipart.rs)
 #
 # Run:  docker build -t ppm .
 #       docker run -p 3200:3000 --env-file .env ppm
@@ -25,7 +27,7 @@ RUN apk add --no-cache \
     musl-dev g++ make perl pkgconfig \
     openssl-dev openssl-libs-static \
     zlib-dev zlib-static \
-    curl binaryen
+    curl binaryen brotli
 
 # ── Kunci versi toolchain ─────────────────────────────────────────────────────
 # `rust-toolchain.toml` DISALIN DULUAN, sebelum apa pun yang memanggil cargo.
@@ -109,6 +111,24 @@ RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     && cp /app/target/release/ppm /app/ppm-bin \
     && cp -r /app/target/site /app/site-out \
     && test -f /app/site-out/pkg/*.wasm || (echo "ERROR: WASM file not found" && exit 1)
+
+# ── Pra-kompresi aset /pkg ────────────────────────────────────────────────────
+# Dulu `CompressionLayer` mengompresi ppm.wasm (1–3 MB) ULANG untuk setiap klien
+# yang belum punya salinannya — brotli kualitas tinggi atas berkas sebesar itu
+# adalah pekerjaan CPU yang terasa di VPS kecil, dan terjadi tepat pada momen
+# paling genting: kunjungan pertama seseorang, sebelum satu piksel pun tampil.
+#
+# Hasilnya selalu sama untuk berkas yang sama, jadi dikerjakan SEKALI di sini
+# dan disajikan `ServeDir::precompressed_*` (main.rs). Kualitas 11 sengaja
+# dipakai — di sini waktunya tak dibayar pengguna mana pun.
+#
+# Aman untuk pengembangan: tanpa berkas .br/.gz, ServeDir menyajikan yang asli
+# dan CompressionLayer mengambil alih seperti sebelumnya.
+RUN for f in /app/site-out/pkg/*.wasm /app/site-out/pkg/*.js /app/site-out/pkg/*.css; do \
+        [ -f "$f" ] || continue; \
+        brotli -q 11 -f -o "$f.br" "$f"; \
+        gzip -9 -c "$f" > "$f.gz"; \
+    done && ls -la /app/site-out/pkg/
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 # KENAPA Debian, padahal builder-nya Alpine: binari dari target musl bersifat

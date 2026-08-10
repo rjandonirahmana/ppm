@@ -37,4 +37,7 @@ pub mod live_events;
 // Upload file Materials Library (server, multipart — di luar server-fn).
 #[cfg(feature = "ssr")]
 pub mod materials;
+// Terima berkas multipart ke disk (streaming) — dipakai jalur unggah besar.
+#[cfg(feature = "ssr")]
+pub mod multipart;
 pub mod pages;

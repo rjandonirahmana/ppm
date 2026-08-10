@@ -1,6 +1,8 @@
 //! web/bills.rs — Santri unggah bukti bayar tagihan (migrasi 37). Handler axum
 //! multipart (di luar server-fn). Auth cookie; hanya boleh set bukti tagihan
-//! MILIK SENDIRI (guard di repo::set_proof). Balas JSON `{ url }`.
+//! MILIK SENDIRI yang masih berstatus `belum` (guard di repo::set_proof —
+//! layarnya pun hanya menawarkan tombolnya untuk status itu). Balas JSON
+//! `{ url }`.
 
 use std::sync::Arc;
 
@@ -79,10 +81,18 @@ pub async fn upload_proof(
         }
     };
 
-    // Guard kepemilikan di query (user_id = pengunggah).
+    // Guard kepemilikan DAN status ada di query (lihat `repo::set_proof`).
+    // Nol baris karena itu berarti salah satu dari dua hal, dan keduanya sama
+    // saja bagi pengunggah: tagihan itu bukan miliknya, atau sudah tak menerima
+    // bukti lagi (sudah lunas, sedang diperiksa, atau ditolak).
     match crate::repository::set_proof(&state.pool, bill_id, claims.user_id, &url).await {
         Ok(true) => (StatusCode::OK, Json(json!({ "url": url }))).into_response(),
-        Ok(false) => (StatusCode::FORBIDDEN, "Bukan tagihan Anda.").into_response(),
+        Ok(false) => (
+            StatusCode::FORBIDDEN,
+            "Tagihan ini sudah tidak menerima bukti bayar — mungkin sudah lunas, \
+             sedang diperiksa, atau bukan tagihan Anda.",
+        )
+            .into_response(),
         Err(e) => {
             crate::service::telegram::report_error(500, "Bill proof simpan", e.to_string());
             (StatusCode::INTERNAL_SERVER_ERROR, "Gagal menyimpan bukti, coba lagi.")
@@ -192,12 +202,25 @@ pub async fn request_payment(
 
     // Bentuk tunggal disusun jadi daftar satu isi, supaya sisa handler ini
     // hanya punya SATU jalur — satu tempat validasi, satu tempat penyimpanan.
-    let items = items.unwrap_or_else(|| {
-        vec![crate::repository::PengajuanAnak {
-            student_id: if student_id > 0 { student_id } else { claims.user_id },
-            amount,
-        }]
-    });
+    let mut items =
+        items.unwrap_or_else(|| vec![crate::repository::PengajuanAnak { student_id, amount }]);
+
+    // `student_id = 0` berarti "diri sendiri". Itulah yang dikirim layar santri:
+    // ia tak punya daftar anak untuk dipilih, jadi `FormAjukanBayar` menyusun
+    // satu baris ber-id 0 (lihat prop `anak`: kosong = membayar untuk dirinya).
+    //
+    // Penerjemahannya HARUS di sini, sesudah kedua bentuk disatukan — bukan di
+    // dalam cabang bentuk-tunggal saja seperti sebelumnya. Formnya selalu
+    // mengirim `items`, bentuk `amount`+`student_id` sudah tak pernah dipakai
+    // klien mana pun, sehingga id 0 lolos apa adanya ke `boleh_mengajukan` dan
+    // SETIAP pengajuan santri untuk dirinya sendiri ditolak dengan "Anda tidak
+    // terhubung dengan salah satu santri yang dipilih" — pesan yang tak masuk
+    // akal bagi orang yang sedang membayar tagihannya sendiri.
+    for it in &mut items {
+        if it.student_id <= 0 {
+            it.student_id = claims.user_id;
+        }
+    }
 
     // Seluruh isi kiriman diperiksa SEBELUM fotonya diunggah: menolak setelah
     // unggahan selesai berarti membuang kuota keluarga untuk sesuatu yang sudah
@@ -267,6 +290,16 @@ pub async fn request_payment(
         Ok(ids) => (
             StatusCode::OK,
             Json(json!({ "ids": ids, "jumlah": ids.len(), "url": url })),
+        )
+            .into_response(),
+        // Kiriman kembar yang berangkat bersamaan — ditangkap index unik
+        // (migrasi 76), bukan kegagalan sistem. Jawabannya disamakan dengan
+        // pemeriksaan di depan supaya pengirim tak menyimpulkan setorannya belum
+        // masuk lalu mengirim untuk ketiga kalinya.
+        Err(e) if crate::repository::pengajuan_ganda(&e) => (
+            StatusCode::CONFLICT,
+            "Pengajuan untuk santri ini sudah masuk dan sedang diperiksa. \
+             Tunggu hasilnya dulu supaya setoran tidak tercatat dua kali.",
         )
             .into_response(),
         Err(e) => {

@@ -315,9 +315,11 @@ pub async fn approved_today(pool: &Pool) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
-            "SELECT COUNT(*) FROM attendances \
-             WHERE pamong_status = 'approved' \
-               AND (pamong_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date",
+            &format!(
+                "SELECT COUNT(*) FROM attendances \
+                 WHERE pamong_status = 'approved' AND {hari}",
+                hari = super::hari_ini_wib("pamong_at"),
+            ),
             &[],
         )
         .await?;
@@ -457,12 +459,76 @@ pub async fn decide_pamong(
     Ok(n > 0)
 }
 
+/// Keputusan pamong untuk BANYAK absensi sekaligus — satu pernyataan.
+///
+/// Bentuk SQL-nya sama persis dengan [`decide_pamong`]; yang berubah hanya
+/// `a.id = $1` menjadi `a.id = ANY($1)`. Semua alasan di balik CTE penarikan
+/// poin dan guard pamong bertugas berlaku identik — dibaca di sana, jangan
+/// ditulis ulang di sini.
+///
+/// KENAPA ADA: pemanggilnya dulu mengulang [`decide_pamong`] di dalam `for`.
+/// Setiap putaran mengambil koneksi pool sendiri lalu menempuh satu perjalanan
+/// ke database, jadi menekan "verifikasi sesi" pada kelas 200 santri berarti
+/// 200 akuisisi koneksi dan 200 perjalanan berurutan — pada pool 16 koneksi,
+/// tombol itu menahan seluruh aplikasi. Dan bila koneksi putus di tengah,
+/// separuh sesi terverifikasi tanpa ada yang tahu di mana berhentinya. Persis
+/// alasan yang sudah ditulis untuk tahap final di [`decide_verify_bulk`];
+/// tahap pamong sekadar belum menyusul.
+///
+/// Return jumlah baris yang benar-benar berubah — yang sudah diputus orang
+/// lain lebih dulu tak ikut terhitung, tanpa menggagalkan sisanya.
+pub async fn decide_pamong_bulk(
+    pool: &Pool,
+    att_ids: &[i64],
+    approver: i64,
+    approve: bool,
+    pamong_id: Option<i64>,
+) -> Result<i64> {
+    if att_ids.is_empty() {
+        return Ok(0);
+    }
+    let status = if approve { "approved" } else { "rejected" };
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "WITH upd AS ( \
+                UPDATE attendances a SET pamong_status = $2, pamong_by = $3, pamong_at = NOW(), \
+                        verify_status = CASE WHEN $2 = 'rejected' THEN 'rejected' \
+                                             ELSE a.verify_status END \
+                 WHERE a.id = ANY($1::bigint[]) AND a.pamong_status = 'pending' \
+                    AND ($4::bigint IS NULL OR \
+                        (SELECT COALESCE(cs.pamong_id, cl.pamong_id) FROM class_sessions cs \
+                            JOIN classes cl ON cl.id = cs.class_id \
+                            WHERE cs.id = a.class_session_id) = $4) \
+                 RETURNING a.id \
+             ), \
+             tarik AS ( \
+                DELETE FROM point_logs \
+                 WHERE $2 = 'rejected' \
+                   AND attendance_id IN (SELECT id FROM upd) \
+                   AND category IN ('attendance', 'discipline') \
+                RETURNING 1 \
+             ) \
+             SELECT count(*)::bigint FROM upd",
+            &[&att_ids, &status, &approver, &pamong_id],
+        )
+        .await
+        .context("decide_pamong_bulk")?;
+    Ok(row.get(0))
+}
+
 pub struct RiwayatRow {
     pub status: String,
     pub scanned_at: DateTime<Utc>,
     pub gate_label: Option<String>,
     /// Judul jadwal/kelas (bila absensi tertaut jadwal).
     pub title: Option<String>,
+    /// Poin yang BENAR-BENAR tercatat untuk baris ini, dari buku besar.
+    ///
+    /// `None` = belum ada catatan poin sama sekali: absensinya belum
+    /// diverifikasi, atau nilainya memang nol sehingga tak ada baris yang
+    /// ditulis (`decide_verify` melewati `delta = 0`).
+    pub points: Option<i32>,
 }
 
 /// Seluruh riwayat kehadiran santri (terbaru dulu) + judul kelas.
@@ -470,7 +536,23 @@ pub async fn riwayat_all(pool: &Pool, user_id: i64, limit: i64) -> Result<Vec<Ri
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT a.status, a.scanned_at, a.gate_label, COALESCE(cs.title, c.name) \
+            // Poin diambil dari `point_logs`, BUKAN ditebak dari statusnya.
+            //
+            // Dulu layar riwayat menghitung sendiri angkanya lewat
+            // `models::point_rule` — tebakan yang tak pernah melihat buku besar.
+            // Tebakan itu tak mungkin benar: potongan sesungguhnya ditentukan
+            // `class_schedules.izin_points`/`late_points`/`absent_points` yang
+            // BEDA-BEDA per jadwal, sementara `point_rule` hanya tahu statusnya.
+            // Dan salah di layar inilah yang paling merusak kepercayaan: santri
+            // membandingkan riwayatnya dengan saldonya, lalu menyimpulkan
+            // aplikasinya berbohong.
+            //
+            // SUM, bukan satu baris: satu absensi bisa punya lebih dari satu
+            // catatan (mis. potongan izin dari materialisasi lalu penyesuaian
+            // pengurus). Yang ingin dilihat santri adalah dampak bersihnya.
+            "SELECT a.status, a.scanned_at, a.gate_label, COALESCE(cs.title, c.name), \
+                    (SELECT SUM(pl.delta)::int FROM point_logs pl \
+                      WHERE pl.attendance_id = a.id) \
              FROM attendances a \
              LEFT JOIN class_schedules cs ON cs.id = a.class_schedule_id \
              LEFT JOIN classes c ON c.id = cs.class_id \
@@ -486,6 +568,7 @@ pub async fn riwayat_all(pool: &Pool, user_id: i64, limit: i64) -> Result<Vec<Ri
             scanned_at: r.get(1),
             gate_label: r.get(2),
             title: r.get(3),
+            points: r.get(4),
         })
         .collect())
 }
@@ -676,9 +759,11 @@ pub async fn verified_today(pool: &Pool) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
-            "SELECT COUNT(*) FROM attendances \
-             WHERE verify_status = 'approved' \
-               AND (verified_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date",
+            &format!(
+                "SELECT COUNT(*) FROM attendances \
+                 WHERE verify_status = 'approved' AND {hari}",
+                hari = super::hari_ini_wib("verified_at"),
+            ),
             &[],
         )
         .await?;
@@ -709,26 +794,37 @@ pub async fn verified_today(pool: &Pool) -> Result<i64> {
 /// eksplisit dan `ELSE` dikembalikan ke 0 — status yang belum dikenal tak
 /// seharusnya diam-diam kena potongan terbesar.
 ///
-/// ── IZIN TIDAK MEMOTONG POIN ─────────────────────────────────────────────────
-/// `permit` sekarang bernilai 0, bukan `-izin_points`. Ini MEMPERBAIKI
-/// pertentangan yang sudah ada, bukan mengubah aturan sepihak:
-/// `models::point_rule` — yang dipakai menampilkan aturan poin ke santri —
-/// sejak dulu menyatakan `"permit" | "sick" => 0`, sementara mesin SQL di sini
-/// memotong sesuai preset PRD (KBM −3, Non-KBM −2, Apel −5). Jadi aplikasi
-/// menjanjikan satu hal ke santri dan melakukan hal lain ke saldonya.
+/// ── IZIN: SATU SUMBER, `class_schedules.izin_points` ─────────────────────────
+/// Nilai `permit` sempat ditulis 0 mati di sini untuk mengakhiri pertentangan
+/// dengan `models::point_rule` yang menampilkan 0 ke santri. Yang tak disadari
+/// saat itu: pertentangannya tidak hilang, hanya berpindah. Jalur
+/// `permits::materialize_permit_attendance` TETAP memotong `−izin_points`, jadi
+/// dua santri dengan izin serupa mendapat perlakuan berbeda semata karena
+/// barisnya lahir dari jalur yang berbeda. Komentar lama di sini bahkan
+/// menyatakan `class_schedules.izin_points` "tak lagi dibaca siapa pun" —
+/// tidak benar, dan justru membuat orang berhenti mencari.
 ///
-/// Yang menang adalah yang dijanjikan: santri yang MENGURUS izinnya dengan
-/// benar tak seharusnya dihukum sama seperti yang menghilang tanpa kabar —
-/// itulah gunanya membedakan `permit` dari `absent`.
+/// Sekarang KEDUA jalur membaca kolom yang sama, `class_schedules.izin_points`
+/// (migrasi 28) — kolom yang memang sudah ada untuk keperluan ini dan sudah
+/// bisa disunting dari form jadwal. Tak perlu setelan baru di tempat lain.
 ///
-/// Akibatnya kolom `class_schedules.izin_points` tak lagi dibaca siapa pun.
-/// Kolomnya SENGAJA dibiarkan (pola expand/contract, lihat migrasi 70): biner
-/// lama yang masih berjalan tetap boleh menulisinya tanpa galat. Buang di
-/// migrasi berikutnya setelah rilis ini benar-benar hidup.
+/// ATURANNYA: potongan berlaku HANYA bila `izin_points` diisi dan lebih dari 0.
+/// NULL berarti tidak memotong — BUKAN jatuh ke preset PRD seperti tiga kolom
+/// poin lainnya. Perbedaan yang disengaja: hadir/telat/alfa punya nilai wajar
+/// yang berlaku di kegiatan mana pun, sedangkan "apakah izin dihukum" adalah
+/// kebijakan yang berbeda-beda per kegiatan dan tak pantas ditebak preset.
+/// Diam berarti tidak memotong; yang memotong harus dinyatakan.
+///
+/// Karena letaknya di JADWAL, keputusannya bisa berbeda antar kegiatan dalam
+/// satu kelas yang sama — ngaji wajib hadir, kajian tambahan tidak — sesuatu
+/// yang setelan per-kelas tak bisa ungkapkan.
+///
+/// `izin_points` dijaga `>= 0` oleh CHECK migrasi 44, jadi "tidak null DAN
+/// lebih dari 0" cukup ditulis `COALESCE(sch.izin_points, 0)`.
 const DELTA_SQL: &str = "CASE \
      WHEN att.status = 'present' THEN COALESCE(sch.present_points, cat_default_points(COALESCE(sch.activity_type,'other'),'present'))::int \
      WHEN att.status = 'late' THEN -COALESCE(sch.late_points, cat_default_points(COALESCE(sch.activity_type,'other'),'late'))::int \
-     WHEN att.status = 'permit' THEN 0 \
+     WHEN att.status = 'permit' THEN -COALESCE(sch.izin_points, 0)::int \
      WHEN att.status = 'absent' THEN -COALESCE(sch.absent_points, cat_default_points(COALESCE(sch.activity_type,'other'),'absent'))::int \
      ELSE 0 \
    END";

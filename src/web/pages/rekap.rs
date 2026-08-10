@@ -282,8 +282,16 @@ pub fn RekapMingguanPage() -> impl IntoView {
                                                 // belum termuat — aman, karena server tetap
                                                 // memeriksa peran saat tombolnya ditekan.
                                                 <Suspense fallback=|| ()>
+                                                // Pekan berjalan TAK menampilkan tombolnya: nilainya
+                                                // belum bisa ditentukan (yang bersih hari Senin bisa
+                                                // alfa hari Jumat), dan kreditnya permanen — UNIQUE
+                                                // (user_id, week_start) migrasi 31 membuat percobaan
+                                                // pertama jadi satu-satunya. Server menolaknya juga;
+                                                // ini supaya orang tak menabrak penolakan itu.
                                                 <Show
-                                                    when=move || { is_admin() && rewards_pending > 0 }
+                                                    when=move || {
+                                                        is_admin() && rewards_pending > 0 && offset.get() >= 1
+                                                    }
                                                     fallback=|| ().into_any()
                                                 >
                                                     <button

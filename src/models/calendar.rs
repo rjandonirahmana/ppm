@@ -20,6 +20,14 @@ pub struct CalendarItem {
     /// "scheduled" | "ongoing" | "finished" | "cancelled".
     pub status_kind: String,
     pub status_label: String,
+    /// Kegiatan ini DIPROYEKSIKAN dari jadwal berulang; sesinya belum dibuat.
+    ///
+    /// Sesi hanya dimaterialisasi 7 hari ke depan, sedangkan kalender akademik
+    /// justru dipakai melihat jauh ke depan. Baris proyeksi mengisi kekosongan
+    /// itu, tapi dibedakan di layar dan `session_id`-nya 0 — belum ada yang bisa
+    /// dibuka, dan menampilkannya seolah sesi nyata berarti menjanjikan detail
+    /// yang tak ada.
+    pub projected: bool,
 }
 
 /// Payload kalender satu bulan.

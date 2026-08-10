@@ -35,15 +35,29 @@ fn row_to_photo(r: Row) -> ActivityPhoto {
 /// hanya puluhan baris, jadi satu bacaan lalu dipilah per kategori di memori
 /// lebih murah — dan membuat halaman depan konsisten — dibanding tiga query
 /// terpisah yang bisa saling mendahului.
+///
+/// Batasnya ada supaya "hanya puluhan baris" tetap berupa pengamatan, bukan
+/// asumsi yang menua diam-diam: galeri hanya bertambah, tak pernah menyusut.
+/// Angkanya jauh di atas isi sebenarnya, jadi bila sampai tercapai itu berarti
+/// galerinya sudah butuh paginasi — dan barisnya dicatat ke log, bukan
+/// dipotong tanpa suara.
+const BATAS_GALERI: i64 = 500;
+
 pub async fn list_activity_photos(pool: &Pool) -> Result<Vec<ActivityPhoto>> {
     let c = pool.get().await?;
     let rows = c
         .query(
-            &format!("SELECT {COLS} FROM activity_photos ORDER BY sort_order, id"),
-            &[],
+            &format!("SELECT {COLS} FROM activity_photos ORDER BY sort_order, id LIMIT $1"),
+            &[&BATAS_GALERI],
         )
         .await
         .context("list_activity_photos")?;
+    if rows.len() as i64 == BATAS_GALERI {
+        tracing::warn!(
+            batas = BATAS_GALERI,
+            "galeri mencapai batas bacaan — media terbaru tak ikut tampil; saatnya paginasi"
+        );
+    }
     Ok(rows.into_iter().map(row_to_photo).collect())
 }
 

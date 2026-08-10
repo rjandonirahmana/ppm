@@ -127,7 +127,20 @@ impl AppConfig {
 pub async fn create_pool(database_url: &str, max_size: usize) -> Result<Pool> {
     let mut cfg = PgConfig::new();
     cfg.url = Some(database_url.to_string());
-    cfg.pool = Some(PoolConfig::new(max_size));
+    // Batas ANTRE, bukan hanya batas jumlah koneksi. Tanpa `wait`, deadpool
+    // membiarkan request menunggu koneksi SELAMANYA begitu 16 koneksi terpakai
+    // — dan tiap request yang mengantre tetap memegang memorinya (body, state,
+    // buffer SSR). Di VPS kecil, antrean yang tak berujung itu berakhir sebagai
+    // kehabisan memori, bukan sebagai halaman lambat: tak ada galat yang muncul
+    // di log, prosesnya sekadar dibunuh.
+    //
+    // 5 detik: lebih lama dari query paling berat di aplikasi ini (rekap
+    // semester), tapi masih di bawah batas sabar orang yang menunggu halaman.
+    // Lewat dari itu, gagal cepat dengan galat yang terbaca jauh lebih berguna
+    // daripada tab yang menggantung.
+    let mut pool_cfg = PoolConfig::new(max_size);
+    pool_cfg.timeouts.wait = Some(std::time::Duration::from_secs(5));
+    cfg.pool = Some(pool_cfg);
     // Verifikasi koneksi SEBELUM dipakai ulang. DB VPS / firewall memutus koneksi
     // yang menganggur → tanpa ini deadpool (default `Fast`) bisa menyerahkan
     // koneksi MATI (client `is_closed()` masih false karena SERVER yang memutus)

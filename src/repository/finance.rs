@@ -210,12 +210,23 @@ pub async fn mark_paid(
     Ok(n > 0)
 }
 
-/// Santri unggah bukti bayar (guard: hanya tagihannya sendiri).
+/// Santri unggah bukti bayar (guard: tagihannya sendiri, DAN masih `belum`).
+///
+/// Guard statusnya melengkapi `mark_paid` dan `delete_bill` — ketiganya menulis
+/// ke tabel yang sama dan hanya masuk akal atas baris yang belum selesai:
+///   • `lunas` → bukti yang SUDAH dicocokkan verifikator dengan mutasi rekening
+///     bisa ditimpa gambar lain sesudahnya, dan tak ada jejak gambar mana yang
+///     sebenarnya diperiksa saat pembayaran itu disahkan;
+///   • `menunggu` → barisnya sudah membawa bukti dari pengajuan; menimpanya
+///     mengubah barang bukti yang sedang diperiksa orang lain saat itu juga;
+///   • `ditolak` → penolakan yang sudah dijelaskan alasannya jadi seolah punya
+///     bukti baru tanpa pernah diperiksa ulang. Kirim pengajuan baru, bukan
+///     menempel gambar di atas keputusan lama.
 pub async fn set_proof(pool: &Pool, bill_id: i64, user_id: i64, proof_url: &str) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
         .execute(
-            "UPDATE bills SET proof_url=$3 WHERE id=$1 AND user_id=$2",
+            "UPDATE bills SET proof_url=$3 WHERE id=$1 AND user_id=$2 AND status='belum'",
             &[&bill_id, &user_id, &proof_url],
         )
         .await
@@ -319,6 +330,27 @@ pub async fn ajukan_pembayaran_batch(
     }
     tx.commit().await.context("ajukan_batch: commit")?;
     Ok(ids)
+}
+
+/// Apakah galat ini benturan dengan `uq_bills_pengajuan_menunggu` (migrasi 76)?
+///
+/// Terjadi saat dua kiriman untuk santri yang sama berangkat BERSAMAAN: keduanya
+/// lolos pemeriksaan `periksa_kiriman` (saat masing-masing bertanya, belum ada
+/// baris 'menunggu'), lalu yang kedua ditolak index unik saat menyimpan. Itu
+/// bukan kegagalan sistem — itu aturan yang bekerja — jadi jawabannya untuk
+/// pengirim harus sama dengan yang diberikan pemeriksaan di depan, bukan
+/// "Gagal menyimpan, coba lagi" yang mengundangnya mengirim ulang.
+///
+/// Nama constraint-nya dicocokkan, bukan sekadar kode 23505: benturan unik lain
+/// pada tabel yang sama tetap harus terbaca sebagai galat yang perlu dilihat
+/// pengembang.
+pub fn pengajuan_ganda(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<tokio_postgres::Error>()
+        .and_then(|e| e.as_db_error())
+        .is_some_and(|db| {
+            *db.code() == tokio_postgres::error::SqlState::UNIQUE_VIOLATION
+                && db.constraint() == Some("uq_bills_pengajuan_menunggu")
+        })
 }
 
 /// Santri (dari daftar `ids`) yang pengajuannya MASIH diperiksa.

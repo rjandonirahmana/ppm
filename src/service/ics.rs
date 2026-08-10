@@ -45,7 +45,12 @@ const DURASI_DEFAULT_JAM: i64 = 1;
 /// proyek ini dan yang dibutuhkan hanya satu fungsi; kebenarannya dijaga uji
 /// vektor resmi RFC 4231 di bawah — kriptografi tulis-tangan tanpa uji vektor
 /// tak boleh dipercaya.
-fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
+///
+/// `pub(crate)` dan tetap TINGGAL DI SINI meski dipakai modul lain
+/// (`service::recording`): satu-satunya salinan implementasinya harus berada
+/// serumah dengan uji vektornya. Menyalinnya ke modul lain berarti membuat
+/// salinan kedua yang tak diuji apa pun.
+pub(crate) fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
     const BLOK: usize = 64;
     let mut k = [0u8; BLOK];
     if key.len() > BLOK {

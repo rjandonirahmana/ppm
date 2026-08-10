@@ -1096,13 +1096,19 @@ fn AbsensiVerifikasiPanel(
                         let jam_awal = r.time_label.split_whitespace().next().unwrap_or("").to_string();
                         let inisial = r.name.chars().next().unwrap_or('S').to_string().to_uppercase();
                         let nis = if r.nis.is_empty() { "-".to_string() } else { r.nis.clone() };
+                        // `.with`/`.with_value` MEMINJAM petanya; `.get()`/
+                        // `.get_value()` menyalin SELURUH isinya. Closure ini
+                        // dipasang di tiap <option>, jadi lima salinan peta
+                        // seluruh santri per baris — pada sesi 200 santri itu
+                        // seribu salinan tiap kali satu status diubah, dan di HP
+                        // kelas bawah terasa sebagai tersendat saat memilih.
                         let status_now = move || {
                             edits
-                                .get()
-                                .get(&uid)
-                                .map(|(s, _)| s.clone())
+                                .with(|m| m.get(&uid).map(|(s, _)| s.clone()))
                                 .unwrap_or_else(|| {
-                                    awal.get_value().get(&uid).map(|(s, _)| s.clone()).unwrap_or_default()
+                                    awal.with_value(|m| {
+                                        m.get(&uid).map(|(s, _)| s.clone()).unwrap_or_default()
+                                    })
                                 })
                         };
                         view! {
@@ -1219,7 +1225,7 @@ fn AbsensiVerifikasiPanel(
                                                     <input
                                                         type="checkbox"
                                                         class="w-4 h-4"
-                                                        prop:checked=move || !reject.get().contains(&aid)
+                                                        prop:checked=move || reject.with(|v| !v.contains(&aid))
                                                         on:change=move |ev| {
                                                             let setuju = event_target_checked(&ev);
                                                             reject

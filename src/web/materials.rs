@@ -56,7 +56,10 @@ pub async fn upload(
 
     let mut title = String::new();
     let mut class_id: Option<i64> = None;
-    let mut file_bytes: Option<Vec<u8>> = None;
+    // Berkasnya ada di DISK, bukan di RAM: materi bisa 100 MB (rekaman kajian,
+    // pdf kitab), dan menahannya di memori sampai PUT ke RustFS selesai adalah
+    // cara paling cepat menghabiskan RAM VPS. Lihat `web::multipart`.
+    let mut berkas: Option<crate::web::multipart::BerkasSementara> = None;
     let mut filename = String::new();
 
     loop {
@@ -73,9 +76,15 @@ pub async fn upload(
             }
             "file" => {
                 filename = field.file_name().unwrap_or_default().to_string();
-                match field.bytes().await {
-                    Ok(b) => file_bytes = Some(b.to_vec()),
-                    Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+                match crate::web::multipart::terima_berkas(
+                    field,
+                    crate::web::limits::MATERIAL_MAX,
+                    "maks 100MB",
+                )
+                .await
+                {
+                    Ok(b) => berkas = Some(b),
+                    Err(resp) => return resp,
                 }
             }
             _ => {}
@@ -86,10 +95,12 @@ pub async fn upload(
     if title.is_empty() {
         return (StatusCode::BAD_REQUEST, "Judul materi wajib diisi.").into_response();
     }
-    let Some(bytes) = file_bytes else {
+    let Some(berkas) = berkas else {
         return (StatusCode::BAD_REQUEST, "File wajib diunggah.").into_response();
     };
-    if bytes.is_empty() || bytes.len() > crate::web::limits::MATERIAL_MAX {
+    // Batas ATAS sudah dijaga saat menulis (request diputus di tengah aliran);
+    // yang tersisa diperiksa di sini hanya berkas kosong.
+    if berkas.ukuran == 0 {
         return (StatusCode::BAD_REQUEST, "Ukuran file tidak valid (maks 100MB).").into_response();
     }
     let Some((kind, content_type)) = classify(&filename) else {
@@ -101,8 +112,9 @@ pub async fn upload(
     };
     // Ekstensi hanya nama pilihan pengunggah — isinya yang menentukan. Tanpa cek
     // ini, berkas apa pun bisa dinamai `.pdf` lalu tersimpan berlabel
-    // `application/pdf` dan disajikan kembali dengan label itu.
-    if !crate::web::filetype::matches(&bytes, content_type) {
+    // `application/pdf` dan disajikan kembali dengan label itu. Yang dibaca
+    // cukup byte pertamanya, yang memang ditahan `terima_berkas` di memori.
+    if !berkas.cocok(content_type) {
         return (
             StatusCode::BAD_REQUEST,
             "Isi file tidak cocok dengan ekstensinya.",
@@ -119,8 +131,10 @@ pub async fn upload(
     // Prefix `ppm/` dibuang: bucket sudah "ppm" (dulu jadi `/ppm/ppm/materials/...`).
     let key = format!("materials/{}-{}.{}", slug, chrono::Utc::now().timestamp(), ext);
 
-    let size = bytes.len() as i64;
-    let url = match storage.upload_bytes(bytes, &key, content_type).await {
+    let size = berkas.ukuran as i64;
+    // Streaming dari disk — berkasnya tak pernah dimuat utuh ke RAM, baik saat
+    // diterima maupun saat diteruskan.
+    let url = match storage.upload_file(berkas.path(), &key, content_type).await {
         Ok(u) => u,
         Err(e) => {
             crate::service::telegram::report_error(502, "Materials upload", e.to_string());
