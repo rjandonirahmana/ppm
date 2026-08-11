@@ -237,6 +237,30 @@ pub struct ClassRankRow {
 }
 
 /// Ranking kelas berdasar persentase kehadiran 30 hari terakhir.
+///
+/// ── KENAPA DUA CTE, BUKAN SATU RANTAI JOIN ───────────────────────────────────
+/// Versi lama menggabungkan `class_participants` DAN `class_schedules →
+/// attendances` ke `classes` yang sama dalam satu `FROM`. Keduanya bercabang
+/// dari kelas tapi tak berhubungan satu sama lain, jadi Postgres menghasilkan
+/// PERKALIAN SILANG keduanya sebelum sempat mengelompokkan: satu kelas berisi
+/// 50 santri dengan 3.000 baris absensi menghasilkan 150.000 baris antara —
+/// untuk satu kelas. Itulah yang membuat halaman laporan menunggu lama.
+///
+/// Dan bukan cuma lambat, ANGKANYA JUGA SALAH. `COUNT(DISTINCT cp.user_id)`
+/// selamat karena ada `DISTINCT`, tapi `AVG(u.points)` tidak: tiap santri ikut
+/// terduplikasi sebanyak baris absensinya, jadi rata-rata poin kelas
+/// tertimbang oleh siapa yang paling sering di-scan. Santri rajin yang poinnya
+/// tinggi menarik rata-rata naik bukan karena poinnya, melainkan karena
+/// kehadirannya terhitung berkali-kali.
+///
+/// Di bawah, tiap sisi dihitung SENDIRI-SENDIRI sampai selesai, baru ditempel
+/// ke kelasnya. Tak ada baris yang terduplikasi, dan hasilnya sekaligus benar.
+///
+/// Satu perubahan perilaku yang disengaja: `santri_count` kini hanya menghitung
+/// peserta ber-peran santri. Sebelumnya `LEFT JOIN users … AND role IN (…)`
+/// membuat peserta non-santri (mis. guru yang ikut terdaftar) tetap terhitung,
+/// padahal kolomnya bernama santri_count dan rata-rata poinnya pun sudah
+/// dibatasi ke santri saja.
 pub async fn class_ranking(
     pool: &Pool,
     teacher_id: Option<i64>,
@@ -246,35 +270,62 @@ pub async fn class_ranking(
     let rows = match teacher_id {
         None => {
             c.query(
-                "SELECT c.name, \
-                    COALESCE(ROUND(100.0 * COUNT(a.*) FILTER (WHERE a.status IN ('present','late')) \
-                        / NULLIF(COUNT(a.*), 0)), 0)::INT, \
-                    COALESCE(ROUND(AVG(u.points)), 0)::INT, \
-                    COUNT(DISTINCT cp.user_id) \
+                "WITH anggota AS ( \
+                    SELECT cp.class_id, COUNT(DISTINCT cp.user_id) AS santri, \
+                           ROUND(AVG(u.points)) AS rata_poin \
+                      FROM class_participants cp \
+                      JOIN users u ON u.id = cp.user_id \
+                       AND u.role IN ('santri', 'santri_finance') \
+                     GROUP BY cp.class_id \
+                 ), hadir AS ( \
+                    SELECT cs.class_id, COUNT(*) AS total, \
+                           COUNT(*) FILTER (WHERE a.status IN ('present','late')) AS hadir \
+                      FROM attendances a \
+                      JOIN class_schedules cs ON cs.id = a.class_schedule_id \
+                     WHERE a.scanned_at >= NOW() - INTERVAL '30 days' \
+                     GROUP BY cs.class_id \
+                 ) \
+                 SELECT c.name, \
+                    COALESCE(ROUND(100.0 * h.hadir / NULLIF(h.total, 0)), 0)::INT, \
+                    COALESCE(ag.rata_poin, 0)::INT, \
+                    COALESCE(ag.santri, 0) \
                  FROM classes c \
-                 LEFT JOIN class_participants cp ON cp.class_id = c.id \
-                 LEFT JOIN users u ON u.id = cp.user_id AND u.role IN ('santri', 'santri_finance') \
-                 LEFT JOIN class_schedules cs ON cs.class_id = c.id \
-                 LEFT JOIN attendances a ON a.class_schedule_id = cs.id \
-                    AND a.scanned_at >= NOW() - INTERVAL '30 days' \
-                 GROUP BY c.id, c.name ORDER BY 2 DESC LIMIT $1",
+                 LEFT JOIN anggota ag ON ag.class_id = c.id \
+                 LEFT JOIN hadir h ON h.class_id = c.id \
+                 ORDER BY 2 DESC LIMIT $1",
                 &[&limit],
             )
             .await
         }
         Some(tid) => {
             c.query(
-                "SELECT c.name, \
-                    COALESCE(ROUND(100.0 * COUNT(a.*) FILTER (WHERE a.status IN ('present','late')) \
-                        / NULLIF(COUNT(a.*), 0)), 0)::INT, \
-                    COALESCE(ROUND(AVG(u.points)), 0)::INT, \
-                    COUNT(DISTINCT cp.user_id) \
+                "WITH kelas_guru AS ( \
+                    SELECT DISTINCT s.class_id FROM class_sessions s WHERE s.teacher_id = $1 \
+                 ), anggota AS ( \
+                    SELECT cp.class_id, COUNT(DISTINCT cp.user_id) AS santri, \
+                           ROUND(AVG(u.points)) AS rata_poin \
+                      FROM class_participants cp \
+                      JOIN users u ON u.id = cp.user_id \
+                       AND u.role IN ('santri', 'santri_finance') \
+                     WHERE cp.class_id IN (SELECT class_id FROM kelas_guru) \
+                     GROUP BY cp.class_id \
+                 ), hadir AS ( \
+                    SELECT s.class_id, COUNT(*) AS total, \
+                           COUNT(*) FILTER (WHERE a.status IN ('present','late')) AS hadir \
+                      FROM attendances a \
+                      JOIN class_sessions s ON s.id = a.class_session_id \
+                     WHERE s.teacher_id = $1 \
+                     GROUP BY s.class_id \
+                 ) \
+                 SELECT c.name, \
+                    COALESCE(ROUND(100.0 * h.hadir / NULLIF(h.total, 0)), 0)::INT, \
+                    COALESCE(ag.rata_poin, 0)::INT, \
+                    COALESCE(ag.santri, 0) \
                  FROM classes c \
-                 JOIN class_sessions s ON s.class_id = c.id AND s.teacher_id = $1 \
-                 LEFT JOIN class_participants cp ON cp.class_id = c.id \
-                 LEFT JOIN users u ON u.id = cp.user_id AND u.role IN ('santri', 'santri_finance') \
-                 LEFT JOIN attendances a ON a.class_session_id = s.id \
-                 GROUP BY c.id, c.name ORDER BY 2 DESC LIMIT $2",
+                 JOIN kelas_guru kg ON kg.class_id = c.id \
+                 LEFT JOIN anggota ag ON ag.class_id = c.id \
+                 LEFT JOIN hadir h ON h.class_id = c.id \
+                 ORDER BY 2 DESC LIMIT $2",
                 &[&tid, &limit],
             )
             .await

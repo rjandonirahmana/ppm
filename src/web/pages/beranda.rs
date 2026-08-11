@@ -15,7 +15,7 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 
 use crate::models::{role_home, ActivityPhoto, Article, MediaCategory, SessionUser};
-use crate::web::components::PhotoFrame;
+use crate::web::components::{MediaFrame, PhotoFrame};
 
 /// Berapa artikel terbaru yang muncul di halaman depan. Sisanya di /artikel.
 const ARTIKEL_DI_BERANDA: i64 = 3;
@@ -111,10 +111,23 @@ pub fn BerandaPage() -> impl IntoView {
                                 view! { <FotoPlaceholder /> }.into_any()
                             } else {
                                 view! {
-                                    <div class="grid grid-cols-2 gap-4">
+                                    // Dek yang DIGESER, bukan petak 2 kolom yang
+                                    // memotong sisanya. Dulu `.take(6)`: foto
+                                    // ketujuh dan seterusnya hilang tanpa jejak,
+                                    // padahal galerinya terus bertambah — dan
+                                    // tak ada apa pun di layar yang memberi tahu
+                                    // masih ada yang lain.
+                                    //
+                                    // `ppm-swipe` sudah menangani semuanya
+                                    // secara native: geser jari di ponsel, dua
+                                    // jari di trackpad, Shift+roda di desktop,
+                                    // berhenti pas di tiap kartu. `-fade`
+                                    // memudarkan tepi kanan sebagai penanda
+                                    // kedua bahwa deknya masih berlanjut.
+                                    <div class="ppm-swipe ppm-swipe-besar ppm-swipe-fade">
                                         {photos
                                             .into_iter()
-                                            .take(6)
+                                            .take(12)
                                             .map(|p| view! { <KartuFoto p=p /> })
                                             .collect_view()}
                                     </div>
@@ -835,13 +848,26 @@ fn KartuFoto(p: ActivityPhoto) -> impl IntoView {
     // Bidikan dari editor galeri (migrasi 54 & 55) — gaya yang sama dipakai
     // grid pengelola meski rasionya beda. Foto tanpa pengaturan tampil seperti
     // dulu.
+    //
+    // RASIO 4:3 MENDATAR, bukan 3:4 tegak seperti dulu. Foto kegiatan pondok
+    // hampir seluruhnya diambil mendatar — foto rombongan, apel, kegiatan
+    // bersama — dan bingkai tegak memotongnya justru di bagian yang penting:
+    // orang-orangnya. Yang tampil malah langit-langit dan tembok, sementara
+    // barisan santri terpangkas di kedua sisi.
+    //
+    // `MediaFrame`, bukan `PhotoFrame`: kategori "Kegiatan" menerima VIDEO juga
+    // (migrasi 69), dan `PhotoFrame` merender apa pun sebagai `<img>`. Video
+    // yang diunggah ke kategori ini karena itu tampil sebagai kotak kosong —
+    // bingkainya ada, isinya tidak — tanpa galat apa pun yang bisa dilihat
+    // pengelola maupun pengunjung.
     view! {
-        <PhotoFrame
+        <MediaFrame
             src=p.url.clone()
             style=p.frame_style()
+            video=p.is_video()
             backdrop=p.fit().needs_backdrop()
             alt=p.caption.clone()
-            class="rounded-2xl aspect-[3/4] bg-surface-container"
+            class="rounded-2xl aspect-[4/3] bg-surface-container"
             lazy=true
         />
     }

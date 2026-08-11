@@ -459,6 +459,21 @@ button:active{transform:scale(.96)}
   /* Layar lebar: ±2 kartu terlihat sekaligus. */
   body:not([data-preview="mobile"]) .ppm-swipe>*{flex-basis:46%}
 }
+
+/* Varian KARTU BESAR — satu kartu dominan per layar, bukan dua kartu kecil.
+   Dipakai dek foto kegiatan di halaman depan: isinya foto rombongan berisi
+   puluhan wajah, dan pada lebar 46% wajah-wajah itu tinggal beberapa piksel —
+   fotonya ada, tapi tak ada yang bisa dilihat darinya. Dek jadwal tetap memakai
+   ukuran bawaan: isinya teks pendek yang justru enak dibandingkan berdampingan.
+
+   Tetap MENGINTIP (88–92%, bukan 100%): tepi yang terpotong adalah satu-satunya
+   hal yang memberi tahu bahwa deknya masih berlanjut — alasan yang sama dengan
+   catatan PEEK di atas. Harus berada SESUDAH aturan bawaan: kekhususannya sama
+   persis, jadi urutan penulisan yang menentukan. */
+.ppm-swipe-besar>*{flex-basis:92%}
+@media (min-width:768px){
+  body:not([data-preview="mobile"]) .ppm-swipe-besar>*{flex-basis:88%}
+}
 @media (prefers-reduced-motion:reduce){
   .ppm-swipe{scroll-behavior:auto}
 }
