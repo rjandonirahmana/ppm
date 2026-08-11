@@ -222,16 +222,37 @@ pub async fn mark_paid(
 ///   • `ditolak` → penolakan yang sudah dijelaskan alasannya jadi seolah punya
 ///     bukti baru tanpa pernah diperiksa ulang. Kirim pengajuan baru, bukan
 ///     menempel gambar di atas keputusan lama.
-pub async fn set_proof(pool: &Pool, bill_id: i64, user_id: i64, proof_url: &str) -> Result<bool> {
+/// Return: `Some(bukti_lama)` bila tersimpan — pemanggil membuang berkas lama
+/// itu dari penyimpanan objek. `None` = tak ada baris yang cocok.
+///
+/// Bukti lama dikembalikan karena tombolnya berbunyi "Ganti bukti": tiap
+/// penggantian dulu meninggalkan foto sebelumnya di RustFS tanpa satu pun baris
+/// yang menunjuknya. Santri yang mencoba tiga kali sampai fotonya jelas
+/// meninggalkan dua berkas yatim, dan tak ada yang pernah tahu.
+pub async fn set_proof(
+    pool: &Pool,
+    bill_id: i64,
+    user_id: i64,
+    proof_url: &str,
+) -> Result<Option<String>> {
     let c = pool.get().await?;
-    let n = c
-        .execute(
-            "UPDATE bills SET proof_url=$3 WHERE id=$1 AND user_id=$2 AND status='belum'",
+    // `FROM bills lama` adalah idiom baku untuk mengembalikan nilai SEBELUM
+    // diubah: sisi FROM membaca snapshot pernyataan, sedangkan `RETURNING`
+    // atas kolom `b` sudah berisi nilai baru. Ditulis begini, bukan lewat
+    // subquery di dalam RETURNING, karena yang terakhir kebetulan bekerja
+    // dengan alasan yang tak terlihat dari kodenya.
+    let row = c
+        .query_opt(
+            "UPDATE bills b SET proof_url = $3 \
+               FROM bills lama \
+              WHERE b.id = $1 AND lama.id = b.id \
+                AND b.user_id = $2 AND b.status = 'belum' \
+             RETURNING COALESCE(lama.proof_url, '')",
             &[&bill_id, &user_id, &proof_url],
         )
         .await
         .context("set_proof")?;
-    Ok(n > 0)
+    Ok(row.map(|r| r.get(0)))
 }
 
 /// Hapus tagihan (admin/ketua).

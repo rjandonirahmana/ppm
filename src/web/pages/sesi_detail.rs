@@ -727,15 +727,8 @@ fn TabBtn(
     }
 }
 
-fn att_badge(kind: &str) -> &'static str {
-    match kind {
-        "present" => "ppm-chip-sm bg-success/10 text-success",
-        "late" => "ppm-chip-sm bg-warning/10 text-warning",
-        "absent" => "ppm-chip-sm bg-error-container text-error",
-        "permit" | "sick" => "ppm-chip-sm bg-info/10 text-info",
-        _ => "ppm-chip-sm bg-surface-container-highest text-on-surface-variant",
-    }
-}
+// `att_badge` dipindah ke `web::components::chip_kehadiran_sm` — dipakai
+// bersama daftar verifikasi, riwayat, dan dashboard.
 
 /// Panel absensi sesi dgn AKSI MASSAL: centang banyak santri (yang belum
 /// tercatat) → "Tandai Hadir" atau "Alpa-kan" sekaligus. Tetap ada tombol
@@ -1165,7 +1158,11 @@ fn AbsensiVerifikasiPanel(
                                     }
                                         .into_any()
                                 } else {
-                                    view! { <span class=att_badge(&r.status_kind)>{r.status_label}</span> }
+                                    view! {
+                                        <span class=crate::web::components::chip_kehadiran_sm(
+                                            &r.status_kind,
+                                        )>{r.status_label}</span>
+                                    }
                                         .into_any()
                                 }}
                             </div>

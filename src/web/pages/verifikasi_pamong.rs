@@ -260,12 +260,11 @@ pub fn VerifikasiPamongPage() -> impl IntoView {
                                                                     .iter()
                                                                     .cloned()
                                                                     .map(|a| {
-                                                                        let badge = match a.kind.as_str() {
-                                                                            "present" => "px-2 py-0.5 rounded-full text-[10px] font-bold bg-success/10 text-success",
-                                                                            "late" => "px-2 py-0.5 rounded-full text-[10px] font-bold bg-warning/10 text-warning",
-                                                                            "absent" => "px-2 py-0.5 rounded-full text-[10px] font-bold bg-error-container text-error",
-                                                                            _ => "px-2 py-0.5 rounded-full text-[10px] font-bold bg-surface-container-highest text-on-surface-variant",
-                                                                        };
+                                                                        // Ukurannya khas daftar padat ini; WARNANYA dari sumber bersama.
+                                                                        let badge = format!(
+                                                                            "px-2 py-0.5 rounded-full text-[10px] font-bold {}",
+                                                                            crate::web::components::warna_kehadiran(&a.kind),
+                                                                        );
                                                                         view! {
                                                                             <div class="flex items-center gap-3 py-2.5 border-b border-outline-variant/40 last:border-0">
                                                                                 <div class="w-8 h-8 rounded-full bg-secondary-container text-primary flex items-center justify-center text-[11px] font-bold shrink-0">

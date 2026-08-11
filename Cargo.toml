@@ -39,6 +39,15 @@ hash-files = false
 bin-features = ["ssr"]
 lib-features = ["hydrate"]
 lib-profile-release = "wasm-release"
+# Profil WASM untuk `cargo leptos watch`. Tanpa baris ini, bundel dev memakai
+# `[profile.dev]` apa adanya — termasuk `debug = 1`, yang pada aplikasi Leptos
+# sebesar ini menghasilkan .wasm ±22 MB. Ukuran itu bukan sekadar lambat: selama
+# peramban masih mengunduh dan meng-compile-nya, halaman sudah tampil (HTML SSR)
+# tapi BELUM terhidrasi — dan router Leptos yang belum terpasang membuat klik
+# tak menghasilkan apa pun. Itulah "kadang tak bisa diklik / tak bisa pindah
+# halaman" yang muncul hilang-timbul: yang menentukan hanya seberapa cepat
+# seseorang mengklik setelah halaman terlihat.
+lib-profile-dev = "wasm-dev"
 
 [features]
 default = ["ssr"]
@@ -242,6 +251,31 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# Bundel WASM saat PENGEMBANGAN (dipakai `cargo leptos watch` lewat
+# `lib-profile-dev` di atas).
+#
+# Yang dipangkas hanya INFORMASI DEBUG, bukan optimasi. Pada target wasm32
+# seluruh DWARF ikut masuk ke dalam berkas .wasm yang benar-benar diunduh
+# peramban — berbeda dari biner native, tempat simbol debug tak pernah dikirim
+# ke mana-mana. Di aplikasi sebesar ini ia menyumbang bagian terbesar ukuran.
+#
+# `line-tables-only`, BUKAN `false`: panic tetap menyebut berkas dan nomor
+# barisnya di konsol (lewat `console_error_panic_hook`, lihat lib.rs) — yang
+# justru paling dibutuhkan saat mengembangkan. Yang hilang cuma inspeksi
+# variabel di debugger, dan itu praktis tak pernah dipakai di WASM.
+#
+# Butuh trace lengkap sesekali? Jalankan `cargo leptos watch --wasm-debug`.
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = "s"
+debug = "line-tables-only"
+# Di WASM panic SELALU abort — tak ada unwinding sama sekali di sana. Jadi
+# membawa tabel unwinding ke dalam bundel adalah biaya murni: kode yang tak
+# mungkin dijalankan, tapi tetap diunduh dan di-compile peramban tiap kali.
+# `console_error_panic_hook` (lib.rs) tetap berjalan lebih dulu, jadi pesan
+# panic-nya tetap muncul di konsol.
+panic = "abort"
 
 [profile.wasm-release]
 inherits = "release"

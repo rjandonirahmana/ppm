@@ -1615,7 +1615,14 @@ pub async fn add_material_link_action(title: String, url: String) -> Result<i64,
 pub async fn delete_material_action(id: i64) -> Result<(), ServerFnError> {
     require_roles(MATERIALS_ROLES).await?;
     let state = app_state().await?;
-    crate::service::materials::delete_material(&state.pool, id).await.map_err(err)
+    let url = crate::service::materials::delete_material(&state.pool, id).await.map_err(err)?;
+    // Berkasnya ikut dibuang dari RustFS. Tanpa ini materi berukuran s/d 100 MB
+    // yang "sudah dihapus" tetap memakan disk server selamanya, tak tertaut
+    // apa pun dan tak terlihat siapa pun.
+    if let Some(storage) = state.storage.clone() {
+        storage.delete_by_url_best_effort(&url).await;
+    }
+    Ok(())
 }
 
 // ── Galeri Foto Kegiatan (migrasi 34) ─────────────────────────────────────────
@@ -1642,7 +1649,13 @@ pub async fn activity_photos_data() -> Result<Vec<crate::models::ActivityPhoto>,
 pub async fn delete_activity_photo_action(id: i64) -> Result<(), ServerFnError> {
     require_roles(GALLERY_MANAGE_ROLES).await?;
     let state = app_state().await?;
-    crate::repository::delete_activity_photo(&state.pool, id).await.map(|_| ()).map_err(err)
+    let url = crate::repository::delete_activity_photo(&state.pool, id).await.map_err(err)?;
+    // Video galeri boleh sampai 100 MB. Membuang barisnya saja berarti disk
+    // server terus terisi berkas yang tak bisa dijangkau siapa pun lagi.
+    if let (Some(url), Some(storage)) = (url, state.storage.clone()) {
+        storage.delete_by_url_best_effort(&url).await;
+    }
+    Ok(())
 }
 
 /// Simpan urutan baru hasil drag-and-drop (admin/dewan_guru). `ids` = urutan

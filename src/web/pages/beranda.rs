@@ -73,7 +73,17 @@ pub fn BerandaPage() -> impl IntoView {
 
             // ── Tentang ─────────────────────────────────────────────────────
             <section id="tentang" class="max-w-6xl mx-auto px-5 py-16 md:py-20" data-reveal="1">
-                <div class="grid md:grid-cols-2 gap-10 items-center">
+                // Kolom foto lebih lebar daripada kolom teks (1 : 1.4), bukan
+                // 50:50. Teksnya pendek dan sudah selesai jauh sebelum lebar
+                // separuh layar habis — sisanya jadi ruang kosong. Foto
+                // rombongan sebaliknya: isinya puluhan wajah, dan tiap piksel
+                // lebar yang ditambahkan langsung terbaca.
+                //
+                // Rasio bingkainya TETAP 4:3, jadi melebarkan kolom sekaligus
+                // meninggikan fotonya — tanpa memotong lebih banyak. Meninggikan
+                // lewat rasio yang lebih tegak justru akan memangkas sisi kiri
+                // dan kanan, tempat barisan santri berada.
+                <div class="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-10 items-center">
                     <div>
                         <p class="text-label-md text-primary uppercase tracking-[0.25em]">"Tentang PPM AFM"</p>
                         <h2 class="text-display-md text-on-background mt-3">

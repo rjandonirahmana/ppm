@@ -217,18 +217,8 @@ fn RiwayatList(items: Vec<RiwayatItem>) -> impl IntoView {
                         items
                             .into_iter()
                             .map(|it| {
-                                let border = match it.kind.as_str() {
-                                    "late" => "ppm-accent-warning",
-                                    "permit" => "ppm-accent-info",
-                                    "absent" => "ppm-accent-error",
-                                    _ => "ppm-accent-success",
-                                };
-                                let badge = match it.kind.as_str() {
-                                    "late" => "ppm-chip bg-warning/10 text-warning",
-                                    "permit" => "ppm-chip bg-info/10 text-info",
-                                    "absent" => "ppm-chip bg-error-container text-error",
-                                    _ => "ppm-chip bg-success/10 text-success",
-                                };
+                                let border = crate::web::components::aksen_kehadiran(&it.kind);
+                                let badge = crate::web::components::chip_kehadiran(&it.kind);
                                 view! {
                                     <div class=format!("ppm-card p-4 card-hover anim-in {border}")>
                                         <div class="flex items-center gap-2">

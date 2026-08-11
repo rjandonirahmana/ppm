@@ -123,6 +123,10 @@ async fn finalize(state: &Arc<AppState>, session_id: i64) -> Result<()> {
     let size = tokio::fs::metadata(&path).await?.len() as i64;
     let url = storage.upload_file(&path, &key, "audio/webm").await?;
     crate::repository::update_recording(&state.pool, session_id, &url, "audio/webm", size).await?;
+    // Siarannya ditutup SESUDAH alamatnya menunjuk RustFS dan SEBELUM berkas
+    // lokalnya dihapus. Urutan ini yang membuat potongan susulan tak bisa lagi
+    // menghidupkan kembali berkas lokal — lihat `live_audio::siaran_selesai`.
+    crate::web::live_audio::siaran_selesai(session_id);
     let _ = tokio::fs::remove_file(&path).await;
     state.notify_live(session_id); // SSE → kartu "Unduh Rekaman" muncul live
     tracing::info!(session_id, %url, size, "rekaman dipindah ke RustFS");

@@ -2136,6 +2136,39 @@ pub async fn update_recording(
     Ok(())
 }
 
+/// Sama seperti [`update_recording`], tapi MENOLAK menimpa alamat yang sudah
+/// menunjuk penyimpanan objek.
+///
+/// Dipakai jalur potongan siaran (`web::live_audio::post_chunk`) yang menulis
+/// alamat LOKAL (`/api/live-audio/{id}/download`) setiap potongan masuk.
+/// Finalisasi berjalan di latar dan menaruh URL RustFS di kolom yang sama; satu
+/// potongan susulan yang datang sesudahnya dulu mengembalikan alamatnya ke
+/// berkas lokal — yang saat itu sudah dihapus atau tinggal serpihan. Rekaman
+/// yang sudah aman terunggah jadi tak terjangkau siapa pun, tanpa galat apa pun
+/// yang muncul di log.
+///
+/// Penjaganya di SQL, bukan di pemanggil: cek-lalu-tulis dari Rust menyisakan
+/// celah persis di antara dua langkah itu — dan celah itulah yang jadi masalah.
+pub async fn update_recording_lokal(
+    pool: &Pool,
+    session_id: i64,
+    path: &str,
+    mime: &str,
+    size: i64,
+) -> Result<()> {
+    let c = pool.get().await?;
+    c.execute(
+        "UPDATE class_sessions SET recording_path = $2, recording_mime_type = $3, \
+                recording_size = $4 \
+          WHERE id = $1 \
+            AND (recording_path IS NULL OR recording_path NOT LIKE 'http%')",
+        &[&session_id, &path, &mime, &size],
+    )
+    .await
+    .context("update_recording_lokal")?;
+    Ok(())
+}
+
 // ── Sisi SANTRI: kelas yang diikuti ──────────────────────────────────────────
 
 /// Satu kelas yang diikuti seorang santri, lengkap dengan petugasnya.

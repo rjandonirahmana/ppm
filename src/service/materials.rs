@@ -60,9 +60,12 @@ pub async fn add_link(pool: &Pool, uploaded_by: i64, title: &str, url: &str) -> 
     repo::insert_material(pool, None, uploaded_by, title, "link", url, None, None).await
 }
 
-pub async fn delete_material(pool: &Pool, id: i64) -> Result<()> {
-    if !repo::delete_material(pool, id).await? {
+/// Hapus materi; kembalikan URL berkasnya agar pemanggil membuangnya dari
+/// penyimpanan objek. Kosong = tak ada berkas (materi berupa tautan).
+pub async fn delete_material(pool: &Pool, id: i64) -> Result<String> {
+    let (ada, url) = repo::delete_material(pool, id).await?;
+    if !ada {
         bail_user!("Materi tidak ditemukan.");
     }
-    Ok(())
+    Ok(url)
 }

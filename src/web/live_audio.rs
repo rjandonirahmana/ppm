@@ -147,6 +147,60 @@ fn siaran_mulai(session_id: i64, pemilik: i64) {
     }
 }
 
+/// Tutup siaran sebuah sesi — dipanggil `service::recording` SESUDAH rekamannya
+/// selesai diunggah ke penyimpanan objek.
+///
+/// KENAPA PENTING. Finalisasi menunggu berkasnya berhenti tumbuh (sampai ~90
+/// detik) supaya potongan susulan dari klien yang jaringannya putus tetap
+/// tertampung — itu disengaja. Tapi begitu unggahan selesai, berkas lokalnya
+/// DIHAPUS dan `recording_path` diarahkan ke URL RustFS. Potongan yang datang
+/// SESUDAH itu dulu masih diterima: berkas lokalnya lahir kembali berisi satu
+/// serpihan yang tak bisa diputar, dan `post_chunk` menimpa `recording_path`
+/// kembali ke `/download` — rekaman yang sudah terunggah jadi tak terjangkau
+/// siapa pun, dan yang tersaji di layar adalah serpihan tadi.
+///
+/// Dengan catatannya dibuang di sini, potongan susulan jatuh ke cabang "tak ada
+/// catatan" di [`siaran_lanjut`] dan dijawab 409 — klien berhenti mengirim,
+/// tak ada berkas yang lahir kembali.
+pub(crate) fn siaran_selesai(session_id: i64) {
+    if let Ok(mut m) = siaran_map().lock() {
+        m.remove(&session_id);
+    }
+}
+
+/// Kunci tulis PER SESI untuk berkas rekaman.
+///
+/// `siaran_mulai`/`siaran_lanjut` hanya menjaga catatan di memori, lalu
+/// melepaskan kuncinya SEBELUM berkasnya disentuh. Dua request yang datang
+/// bersamaan karena itu bisa menulis ke berkas yang sama pada saat yang sama:
+///   • dua `seq = 0` (klik ganda, atau retry klien yang memang dirancang ada)
+///     saling memotong berkas dan sama-sama menulis di offset 0 — rekamannya
+///     rusak sejak byte pertama, tepat di header WebM yang menentukan bisa
+///     tidaknya berkas itu diputar sama sekali;
+///   • dua `append` bisa saling menyisip.
+///
+/// `tokio::sync::Mutex`, bukan `std::sync::Mutex`: kuncinya harus tetap
+/// dipegang melintasi `await` saat menulis ke disk.
+fn kunci_tulis(session_id: i64) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static M: OnceLock<Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+    let m = M.get_or_init(|| Mutex::new(HashMap::new()));
+    let Ok(mut m) = m.lock() else {
+        // Kunci teracuni → jangan matikan siaran; beri kunci sekali pakai.
+        return Arc::new(tokio::sync::Mutex::new(()));
+    };
+    // Sesi yang siarannya sudah tak tercatat lagi tak perlu kuncinya disimpan.
+    // Dibersihkan di sini, bukan lewat penyapu berkala: satu-satunya yang
+    // menambah isi peta ini adalah fungsi ini sendiri.
+    if m.len() > 64 {
+        if let Ok(siaran) = siaran_map().lock() {
+            m.retain(|id, _| siaran.contains_key(id));
+        }
+    }
+    m.entry(session_id).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))).clone()
+}
+
 /// Keputusan untuk potongan lanjutan (seq > 0).
 enum Lanjutan {
     /// Tulis potongan ini, lalu naikkan penghitung.
@@ -351,6 +405,12 @@ pub async fn post_chunk(
     // selama puluhan milidetik saat disk sibuk. Dengan std::fs, thread yang
     // terhenti itu adalah worker runtime Tokio — di VPS 2 CPU hanya ada segelintir
     // worker, sehingga SELURUH request lain (SSR halaman, server-fn) ikut tertahan.
+    //
+    // Seluruh operasi berkas berada DI DALAM kunci per-sesi: memotong lalu
+    // menulis adalah dua langkah, dan dua request bersamaan yang menyelinginya
+    // menghasilkan rekaman rusak sejak byte pertama (lihat `kunci_tulis`).
+    let kunci = kunci_tulis(session_id);
+    let _jaga = kunci.lock().await;
     let res = async {
         let mut f = tokio::fs::OpenOptions::new()
             .create(true)
@@ -367,9 +427,15 @@ pub async fn post_chunk(
     match res {
         Ok(meta) => {
             // Update kolom rekaman (path web + mime + ukuran) — best effort.
+            //
+            // `update_recording_lokal`, bukan `update_recording`: yang ini
+            // MENOLAK menimpa alamat yang sudah menunjuk penyimpanan objek.
+            // Tanpa itu, satu potongan susulan yang lolos setelah finalisasi
+            // mengembalikan alamat rekaman ke berkas lokal yang isinya tinggal
+            // serpihan — dan rekaman yang sudah terunggah hilang dari jangkauan.
             let size = meta.len() as i64;
             let web_path = format!("/api/live-audio/{session_id}/download");
-            let _ = crate::repository::update_recording(
+            let _ = crate::repository::update_recording_lokal(
                 &state.pool, session_id, &web_path, "audio/webm", size,
             )
             .await;

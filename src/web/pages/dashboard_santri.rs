@@ -9,36 +9,43 @@ use crate::models::{AttendanceItem, SantriHome, SessionUser};
 use crate::web::api::{connection_requests, respond_connection_action, santri_home};
 use crate::web::components::{DeviceFrame, FetchError, NotifBell, Sheet};
 
-/// Warna aksen per jenis kehadiran (border kiri kartu + ikon).
-fn kind_colors(kind: &str) -> (&'static str, &'static str, &'static str, &'static str) {
-    // (border_cls, icon, icon_wrap_cls, badge_cls) — garis aksennya kelas dari
-    // palet, bukan hex yang ditulis ulang di tiap halaman.
-    match kind {
-        "late" => (
-            "ppm-accent-warning",
-            "schedule",
-            "w-11 h-11 rounded-full flex items-center justify-center shrink-0 bg-warning/10 text-warning",
-            "px-3 py-1.5 rounded-full text-label-md whitespace-nowrap bg-warning/10 text-warning",
-        ),
-        "permit" | "sick" => (
-            "ppm-accent-info",
-            "medical_services",
-            "w-11 h-11 rounded-full flex items-center justify-center shrink-0 bg-info/10 text-info",
-            "px-3 py-1.5 rounded-full text-label-md whitespace-nowrap bg-info/10 text-info",
-        ),
-        "absent" => (
-            "ppm-accent-error",
-            "close",
-            "w-11 h-11 rounded-full flex items-center justify-center shrink-0 bg-error-container text-error",
-            "px-3 py-1.5 rounded-full text-label-md whitespace-nowrap bg-error-container text-error",
-        ),
-        _ => (
-            "ppm-accent-success",
-            "login",
-            "w-11 h-11 rounded-full flex items-center justify-center shrink-0 bg-secondary-container text-primary",
-            "px-3 py-1.5 rounded-full text-label-md whitespace-nowrap bg-success/10 text-success",
-        ),
-    }
+/// Wujud satu kartu riwayat di dashboard: (garis aksen, ikon, bungkus ikon,
+/// lencana).
+///
+/// WARNA-nya datang dari sumber bersama (`components::aksen_kehadiran` /
+/// `warna_kehadiran`) — dulu disalin di sini lengkap dengan kelas paletnya,
+/// jadi satu perubahan palet menuntut tujuh berkas diedit serentak.
+///
+/// Yang tetap MILIK halaman ini: ukuran bungkusnya, dan pilihan IKON-nya.
+/// Ikonnya sengaja tidak ikut disatukan — `medical_services`/`close`/`login` di
+/// sini menceritakan kejadiannya ("izin sakit", "tak hadir", "masuk gerbang"),
+/// berbeda dari daftar verifikasi yang bicara soal status. Menyeragamkannya
+/// berarti mengubah halaman yang sudah benar, sekaligus menambah ikon baru ke
+/// subset font tanpa alasan.
+fn kind_colors(kind: &str) -> (&'static str, &'static str, String, String) {
+    use crate::web::components::{aksen_kehadiran, warna_kehadiran};
+    const BUNGKUS: &str =
+        "w-11 h-11 rounded-full flex items-center justify-center shrink-0";
+    const LENCANA: &str = "px-3 py-1.5 rounded-full text-label-md whitespace-nowrap";
+    let ikon = match kind {
+        "late" => "schedule",
+        "permit" | "sick" => "medical_services",
+        "absent" => "close",
+        _ => "login",
+    };
+    // Bungkus ikon untuk "hadir" memakai warna kartu, bukan hijau status:
+    // di dashboard ia penanda kejadian biasa, bukan penilaian.
+    let bungkus = if matches!(kind, "late" | "permit" | "sick" | "absent") {
+        format!("{BUNGKUS} {}", warna_kehadiran(kind))
+    } else {
+        format!("{BUNGKUS} bg-secondary-container text-primary")
+    };
+    (
+        aksen_kehadiran(kind),
+        ikon,
+        bungkus,
+        format!("{LENCANA} {}", warna_kehadiran(kind)),
+    )
 }
 
 #[component]

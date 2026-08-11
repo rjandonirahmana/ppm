@@ -86,8 +86,16 @@ pub async fn upload_proof(
     // saja bagi pengunggah: tagihan itu bukan miliknya, atau sudah tak menerima
     // bukti lagi (sudah lunas, sedang diperiksa, atau ditolak).
     match crate::repository::set_proof(&state.pool, bill_id, claims.user_id, &url).await {
-        Ok(true) => (StatusCode::OK, Json(json!({ "url": url }))).into_response(),
-        Ok(false) => (
+        Ok(Some(lama)) => {
+            // Bukti LAMA dibuang dari penyimpanan — tombolnya berbunyi "Ganti
+            // bukti", dan tiap penggantian dulu meninggalkan foto sebelumnya di
+            // RustFS tanpa satu pun baris yang menunjuknya.
+            if !lama.is_empty() && lama != url {
+                storage.delete_by_url_best_effort(&lama).await;
+            }
+            (StatusCode::OK, Json(json!({ "url": url }))).into_response()
+        }
+        Ok(None) => (
             StatusCode::FORBIDDEN,
             "Tagihan ini sudah tidak menerima bukti bayar — mungkin sudah lunas, \
              sedang diperiksa, atau bukan tagihan Anda.",

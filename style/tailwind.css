@@ -472,7 +472,7 @@ button:active{transform:scale(.96)}
    persis, jadi urutan penulisan yang menentukan. */
 .ppm-swipe-besar>*{flex-basis:92%}
 @media (min-width:768px){
-  body:not([data-preview="mobile"]) .ppm-swipe-besar>*{flex-basis:88%}
+  body:not([data-preview="mobile"]) .ppm-swipe-besar>*{flex-basis:93%}
 }
 @media (prefers-reduced-motion:reduce){
   .ppm-swipe{scroll-behavior:auto}

@@ -50,6 +50,32 @@ fn warna_kategori(kategori: &str) -> &'static str {
 
 #[component]
 pub fn KalenderPage() -> impl IntoView {
+    // Detail sesi (`/sesi/:id`) hanya untuk petugas — `session_detail_data`
+    // menuntut teacher/supervisor/admin/dewan_guru. Kalender ini dibaca SEMUA
+    // peran, jadi barisnya cuma jadi tautan bagi yang memang bisa membukanya.
+    // Menautkan untuk semua orang berarti menawarkan santri sebuah tautan yang
+    // pasti berakhir "tak berwenang".
+    //
+    // KETUA ikut boleh: `role_satisfies` memetakan ketua → admin
+    // (models/auth.rs), dan fungsi itulah yang dipakai di sini DAN di
+    // `require_roles` sisi server — jadi daftarnya cukup menyebut "admin".
+    // Menuliskan "ketua" lagi di sini justru menyesatkan: ia akan terbaca
+    // seolah pemetaan itu tak berlaku, dan daftar peran berikutnya akan disalin
+    // dengan pengecualian yang tak perlu.
+    let session = use_context::<Resource<Option<SessionUser>>>();
+    let boleh_buka_sesi = move || {
+        session
+            .and_then(|s| s.get())
+            .flatten()
+            .map(|u| {
+                crate::models::role_satisfies(
+                    &u.role,
+                    &["teacher", "supervisor", "admin", "dewan_guru"],
+                )
+            })
+            .unwrap_or(false)
+    };
+
     // (0,0) = sentinel bulan berjalan (server yang tentukan).
     let ym = RwSignal::new((0i32, 0u32));
     let sel = RwSignal::new(0u32);
@@ -324,7 +350,10 @@ pub fn KalenderPage() -> impl IntoView {
                                                                     <div class="space-y-2">
                                                                         {day_items
                                                                             .into_iter()
-                                                                            .map(|it| view! { <SesiItem it=it /> })
+                                                                            .map(|it| {
+                                                                                let bisa = boleh_buka_sesi();
+                                                                                view! { <SesiItem it=it bisa_dibuka=bisa /> }
+                                                                            })
                                                                             .collect_view()}
                                                                     </div>
                                                                 }
@@ -347,7 +376,11 @@ pub fn KalenderPage() -> impl IntoView {
 }
 
 #[component]
-fn SesiItem(it: CalendarItem) -> impl IntoView {
+fn SesiItem(
+    it: CalendarItem,
+    /// Pemirsa berhak membuka `/sesi/:id` (petugas). Lihat `KalenderPage`.
+    bisa_dibuka: bool,
+) -> impl IntoView {
     // Segmen kosong TIDAK ikut tercetak. Dulu `format!("{} • {}")` apa adanya,
     // jadi pengajar yang belum diatur muncul sebagai "piket harian • -" —
     // tanda hubung menggantung yang terbaca seperti kerusakan render.
@@ -379,8 +412,22 @@ fn SesiItem(it: CalendarItem) -> impl IntoView {
     } else {
         "text-body-sm font-bold text-primary leading-none"
     };
-    view! {
-        <div class=kartu>
+
+    // Bisa dibuka HANYA bila sesinya benar-benar ada (`session_id > 0` — baris
+    // proyeksi bernilai 0) DAN pemirsanya berhak. Dua syarat, bukan satu:
+    // proyeksi memang belum punya halaman, dan santri memang tak boleh
+    // membukanya.
+    let href = (bisa_dibuka && !projected && it.session_id > 0)
+        .then(|| format!("/sesi/{}", it.session_id));
+    // Petunjuk bahwa kartunya bisa ditekan. Tanpa ini satu-satunya cara
+    // menemukannya adalah dengan mencoba — dan kartu yang tak bisa dibuka
+    // tampak persis sama.
+    let kartu = match &href {
+        Some(_) => format!("{kartu} cursor-pointer card-hover press"),
+        None => kartu.to_string(),
+    };
+
+    let isi = view! {
             <div class="w-12 shrink-0 text-center">
                 <p class=aksen_waktu>{it.time_label}</p>
                 {kategori
@@ -408,7 +455,13 @@ fn SesiItem(it: CalendarItem) -> impl IntoView {
                 view! { <span class=status_badge(&it.status_kind)>{it.status_label}</span> }
                     .into_any()
             }}
-        </div>
+    };
+
+    // `<a>`, bukan `<div on:click>`: tautan sungguhan bisa difokus papan ketik,
+    // dibuka di tab baru, dan tetap bekerja sebelum WASM selesai terhidrasi.
+    match href {
+        Some(h) => view! { <a href=h class=kartu>{isi}</a> }.into_any(),
+        None => view! { <div class=kartu>{isi}</div> }.into_any(),
     }
 }
 

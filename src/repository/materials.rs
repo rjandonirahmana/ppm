@@ -61,8 +61,20 @@ pub async fn insert_material(
     Ok(row.get(0))
 }
 
-pub async fn delete_material(pool: &Pool, id: i64) -> Result<bool> {
+/// Hapus satu materi, kembalikan `(ada, url)` supaya pemanggil bisa ikut
+/// membuang berkasnya dari penyimpanan objek.
+///
+/// `url` untuk `kind = 'link'` adalah tautan luar (YouTube dsb.) dan BUKAN
+/// objek kita — yang menyaringnya `StorageService::key_dari_url`, jadi di sini
+/// URL-nya cukup diteruskan apa adanya.
+pub async fn delete_material(pool: &Pool, id: i64) -> Result<(bool, String)> {
     let c = pool.get().await?;
-    let n = c.execute("DELETE FROM materials WHERE id = $1", &[&id]).await.context("delete_material")?;
-    Ok(n > 0)
+    let row = c
+        .query_opt("DELETE FROM materials WHERE id = $1 RETURNING COALESCE(url, '')", &[&id])
+        .await
+        .context("delete_material")?;
+    match row {
+        Some(r) => Ok((true, r.get(0))),
+        None => Ok((false, String::new())),
+    }
 }

@@ -268,57 +268,29 @@ fn ArtikelForm(
         err.set(String::new());
         #[cfg(target_arch = "wasm32")]
         {
-            use wasm_bindgen::JsCast;
-            let Some(file) = cover_input
-                .get_untracked()
-                .and_then(|i| i.files())
-                .and_then(|f| f.get(0))
-            else {
+            let Some(file) = crate::web::upload::berkas_pertama(cover_input) else {
                 return;
             };
             uploading.set(true);
             leptos::task::spawn_local(async move {
-                let form = web_sys::FormData::new().unwrap();
-                let _ = form.append_with_blob("file", &file);
-                let window = web_sys::window().unwrap();
-                let opts = web_sys::RequestInit::new();
-                opts.set_method("POST");
-                opts.set_body(form.as_ref());
-                let mut pesan = String::new();
-                if let Ok(req) =
-                    web_sys::Request::new_with_str_and_init("/api/articles/cover", &opts)
-                {
-                    if let Ok(resp) =
-                        wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&req)).await
-                    {
-                        let resp: web_sys::Response = resp.dyn_into().unwrap();
-                        if resp.ok() {
-                            if let Ok(js) =
-                                wasm_bindgen_futures::JsFuture::from(resp.json().unwrap()).await
-                            {
-                                if let Some(url) = js_sys::Reflect::get(
-                                    &js,
-                                    &wasm_bindgen::JsValue::from_str("url"),
-                                )
-                                .ok()
-                                .and_then(|v| v.as_string())
-                                {
-                                    cover.set(url);
-                                }
-                            }
-                        } else {
-                            pesan = wasm_bindgen_futures::JsFuture::from(resp.text().unwrap())
-                                .await
-                                .ok()
-                                .and_then(|t| t.as_string())
-                                .unwrap_or_else(|| "Unggah sampul gagal.".into());
+                match crate::web::upload::unggah("/api/articles/cover", &file, &[]).await {
+                    // Handler membalas `{ "url": "…" }`.
+                    Ok(badan) => {
+                        match crate::web::upload::field_teks(&badan, "url") {
+                            Some(url) => cover.set(url),
+                            // Terunggah tapi balasannya tak terbaca: JANGAN diam.
+                            // Sampulnya tak akan muncul, dan penulis yang tak
+                            // diberi tahu akan menyimpan artikel tanpa sampul
+                            // sambil mengira sudah terpasang.
+                            None => err.set(
+                                "Sampul terunggah tapi alamatnya tak terbaca. Coba unggah ulang."
+                                    .into(),
+                            ),
                         }
                     }
+                    Err(e) => err.set(e),
                 }
                 uploading.set(false);
-                if !pesan.is_empty() {
-                    err.set(pesan);
-                }
                 if let Some(inp) = cover_input.get_untracked() {
                     inp.set_value("");
                 }

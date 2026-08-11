@@ -1390,9 +1390,7 @@ pub fn FormAjukanBayar(
         );
         #[cfg(target_arch = "wasm32")]
         {
-            use wasm_bindgen::JsCast;
-            let file = file_input.get_untracked().and_then(|i| i.files()).and_then(|f| f.get(0));
-            let Some(file) = file else {
+            let Some(file) = crate::web::upload::berkas_pertama(file_input) else {
                 msg.set(Some((false, "Pilih dulu foto bukti transfernya.".into())));
                 return;
             };
@@ -1401,40 +1399,16 @@ pub fn FormAjukanBayar(
             let cat = catatan.get_untracked();
             let jumlah_anak = baris.len();
             leptos::task::spawn_local(async move {
-                let form = web_sys::FormData::new().unwrap();
-                let _ = form.append_with_str("items", &items_json);
-                let _ = form.append_with_str("note", &cat);
-                let _ = form.append_with_blob("file", &file);
-
-                let win = web_sys::window().unwrap();
-                let opts = web_sys::RequestInit::new();
-                opts.set_method("POST");
-                opts.set_body(form.as_ref());
-                let mut ok = false;
-                let mut gagal = String::new();
-                if let Ok(req) =
-                    web_sys::Request::new_with_str_and_init("/api/bills/request", &opts)
-                {
-                    match wasm_bindgen_futures::JsFuture::from(win.fetch_with_request(&req)).await {
-                        Ok(resp) => {
-                            let resp: web_sys::Response = resp.dyn_into().unwrap();
-                            if resp.ok() {
-                                ok = true;
-                            } else {
-                                gagal = wasm_bindgen_futures::JsFuture::from(resp.text().unwrap())
-                                    .await
-                                    .ok()
-                                    .and_then(|t| t.as_string())
-                                    .unwrap_or_default();
-                            }
-                        }
-                        Err(_) => {
-                            gagal = "Koneksi terputus saat mengirim. Coba lagi setelah \
-                                     sinyalnya stabil."
-                                .to_string();
-                        }
-                    }
-                }
+                let hasil = crate::web::upload::unggah(
+                    "/api/bills/request",
+                    &file,
+                    &[("items", items_json), ("note", cat)],
+                )
+                .await;
+                let (ok, gagal) = match hasil {
+                    Ok(_) => (true, String::new()),
+                    Err(e) => (false, e),
+                };
                 busy.set(false);
                 if ok {
                     msg.set(Some((
@@ -1683,48 +1657,23 @@ fn MyBillRow(b: BillItem, refetch: impl Fn() + Copy + Send + Sync + 'static) -> 
     let on_pick = move |_ev: leptos::ev::Event| {
         #[cfg(target_arch = "wasm32")]
         {
-            use wasm_bindgen::JsCast;
-            let Some(input) = file_input.get() else { return };
-            let Some(files) = input.files() else { return };
-            let Some(file) = files.get(0) else { return };
+            let Some(file) = crate::web::upload::berkas_pertama(file_input) else { return };
             uploading.set(true);
             gagal.set(String::new());
             leptos::task::spawn_local(async move {
-                let form = web_sys::FormData::new().unwrap();
-                let _ = form.append_with_str("bill_id", &id.to_string());
-                let _ = form.append_with_blob("file", &file);
-                let win = web_sys::window().unwrap();
-                let opts = web_sys::RequestInit::new();
-                opts.set_method("POST");
-                opts.set_body(form.as_ref());
-                let mut ok = false;
-                if let Ok(req) = web_sys::Request::new_with_str_and_init("/api/bills/proof", &opts) {
-                    match wasm_bindgen_futures::JsFuture::from(win.fetch_with_request(&req)).await {
-                        Ok(resp) => {
-                            let resp: web_sys::Response = resp.dyn_into().unwrap();
-                            if resp.ok() {
-                                ok = true;
-                            } else {
-                                let teks =
-                                    wasm_bindgen_futures::JsFuture::from(resp.text().unwrap())
-                                        .await
-                                        .ok()
-                                        .and_then(|t| t.as_string())
-                                        .unwrap_or_default();
-                                gagal.set(if teks.trim().is_empty() {
-                                    "Unggahan ditolak server. Coba foto lain.".to_string()
-                                } else {
-                                    teks
-                                });
-                            }
-                        }
-                        Err(_) => gagal.set(
-                            "Koneksi terputus saat mengunggah. Coba lagi setelah sinyalnya \
-                             stabil."
-                                .to_string(),
-                        ),
+                let ok = match crate::web::upload::unggah(
+                    "/api/bills/proof",
+                    &file,
+                    &[("bill_id", id.to_string())],
+                )
+                .await
+                {
+                    Ok(_) => true,
+                    Err(e) => {
+                        gagal.set(e);
+                        false
                     }
-                }
+                };
                 uploading.set(false);
                 // Hanya menyegarkan bila benar-benar tersimpan — refetch setelah
                 // gagal menghapus pesannya dari layar sebelum sempat dibaca.

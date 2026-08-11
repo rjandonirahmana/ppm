@@ -17,23 +17,8 @@ use crate::web::pages::laporan::{attendance_card, gate_status_card, hafalan_card
 
 /// Kelas garis aksen kiri, bukan `style="border-left:…#hex"`: warnanya jadi
 /// milik palet (style/tailwind.css), bukan angka yang disalin per halaman.
-fn kind_border(kind: &str) -> &'static str {
-    match kind {
-        "late" => "ppm-accent-warning",
-        "permit" => "ppm-accent-info",
-        "absent" => "ppm-accent-error",
-        _ => "ppm-accent-success",
-    }
-}
-
-fn kind_badge(kind: &str) -> &'static str {
-    match kind {
-        "late" => "ppm-chip bg-warning/10 text-warning",
-        "permit" => "ppm-chip bg-info/10 text-info",
-        "absent" => "ppm-chip bg-error-container text-error",
-        _ => "ppm-chip bg-success/10 text-success",
-    }
-}
+// Pemetaan status → warna hidup di `web::components` (aksen_kehadiran /
+// chip_kehadiran) — satu tempat untuk tujuh halaman yang dulu menyalinnya.
 
 #[component]
 pub fn RiwayatPage() -> impl IntoView {
@@ -212,8 +197,8 @@ fn RiwayatContent(d: RiwayatData, l: LaporanSantriData, month_filter: RwSignal<S
 
 #[component]
 fn RiwayatCard(it: RiwayatItem) -> impl IntoView {
-    let border = kind_border(&it.kind);
-    let badge_cls = kind_badge(&it.kind);
+    let border = crate::web::components::aksen_kehadiran(&it.kind);
+    let badge_cls = crate::web::components::chip_kehadiran(&it.kind);
     let pts_cls = if it.points > 0 {
         "text-body-md font-bold text-success"
     } else if it.points < 0 {

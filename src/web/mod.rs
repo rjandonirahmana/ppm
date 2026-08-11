@@ -41,3 +41,5 @@ pub mod materials;
 #[cfg(feature = "ssr")]
 pub mod multipart;
 pub mod pages;
+// Unggah berkas dari peramban (klien) — satu jalur untuk semua layar unggah.
+pub mod upload;

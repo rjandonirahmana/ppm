@@ -1375,6 +1375,82 @@ pub fn LencanaAdmin() -> impl IntoView {
 // ── Utilitas bersama halaman ─────────────────────────────────────────────────
 
 /// Ambil bagian pesan galat yang layak dibaca pengguna.
+// ── Warna status kehadiran ───────────────────────────────────────────────────
+//
+// Pemetaan status → warna dulu disalin di TUJUH halaman (riwayat, ortu_riwayat,
+// dashboard_santri, sesi_detail, staf, verifikasi_pamong, laporan) dengan empat
+// gaya pembungkus berbeda. Warnanya kebetulan sama di semuanya — tapi
+// "kebetulan" itulah masalahnya: tak ada yang menjamin salinan kedelapan ikut
+// sama, dan tiap kali istilah atau paletnya berubah, tujuh berkas harus diedit
+// serentak tanpa ada yang mengingatkan bila satu terlewat.
+//
+// Yang BENAR-BENAR berbeda antar halaman cuma UKURAN pembungkusnya, jadi itulah
+// yang dipisah: warnanya di sini, ukurannya tetap milik pemanggil.
+
+/// Kelas latar + teks untuk satu status kehadiran. Tanpa ukuran, tanpa bentuk.
+///
+/// `outside_schedule` sengaja NETRAL, bukan hijau. Sebelumnya ia jatuh ke cabang
+/// `_` di beberapa halaman yang bawaannya "hadir", jadi santri yang tap kartunya
+/// di luar jadwal tampil bercentang hijau seperti hadir penuh — padahal justru
+/// keadaan yang perlu diperiksa pamong.
+pub fn warna_kehadiran(kind: &str) -> &'static str {
+    match kind {
+        "present" => "bg-success/10 text-success",
+        "late" => "bg-warning/10 text-warning",
+        "permit" | "sick" => "bg-info/10 text-info",
+        "absent" => "bg-error-container text-error",
+        _ => "bg-surface-container-highest text-on-surface-variant",
+    }
+}
+
+/// Chip ukuran biasa untuk satu status kehadiran.
+///
+/// Mengembalikan `&'static str`, bukan `String` hasil `format!`: fungsi ini
+/// dipanggil sekali per baris pada daftar yang bisa berisi ratusan santri, dan
+/// satu alokasi per baris per render adalah biaya yang tak perlu ada.
+pub fn chip_kehadiran(kind: &str) -> &'static str {
+    match kind {
+        "present" => "ppm-chip bg-success/10 text-success",
+        "late" => "ppm-chip bg-warning/10 text-warning",
+        "permit" | "sick" => "ppm-chip bg-info/10 text-info",
+        "absent" => "ppm-chip bg-error-container text-error",
+        _ => "ppm-chip bg-surface-container-highest text-on-surface-variant",
+    }
+}
+
+/// Chip ukuran kecil — dipakai daftar padat (verifikasi sesi).
+pub fn chip_kehadiran_sm(kind: &str) -> &'static str {
+    match kind {
+        "present" => "ppm-chip-sm bg-success/10 text-success",
+        "late" => "ppm-chip-sm bg-warning/10 text-warning",
+        "permit" | "sick" => "ppm-chip-sm bg-info/10 text-info",
+        "absent" => "ppm-chip-sm bg-error-container text-error",
+        _ => "ppm-chip-sm bg-surface-container-highest text-on-surface-variant",
+    }
+}
+
+/// Kelas garis aksen kiri kartu riwayat.
+///
+/// Kelas palet (`style/tailwind.css`), bukan `style="border-left:…#hex"`:
+/// warnanya milik tema, bukan angka yang disalin per halaman.
+pub fn aksen_kehadiran(kind: &str) -> &'static str {
+    match kind {
+        "present" => "ppm-accent-success",
+        "late" => "ppm-accent-warning",
+        "permit" | "sick" => "ppm-accent-info",
+        "absent" => "ppm-accent-error",
+        _ => "ppm-accent-info",
+    }
+}
+
+// CATATAN untuk yang menambahkan pemetaan IKON di sini kelak: subset font hanya
+// memuat ikon yang terpungut `scripts/fetch-icons.sh`, dan skripnya harus
+// dijalankan ulang sesudahnya — kalau tidak, ikonnya tampil sebagai TEKS. Satu
+// pemetaan ikon bersama sempat ditulis di sini lalu dibuang: nilainya berbeda
+// dari ikon yang sudah dipakai dashboard santri, jadi menyatukannya berarti
+// mengubah tampilan halaman yang sudah benar sekaligus memaksa font tumbuh —
+// dua hal yang tak diminta siapa pun.
+
 ///
 /// `ServerFnError` merangkai konteksnya dengan ": " (mis.
 /// "error running server function: Poin telat wajib diisi"). Yang berguna cuma

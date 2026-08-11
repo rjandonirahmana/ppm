@@ -4,8 +4,6 @@
 
 use leptos::prelude::*;
 use leptos_meta::Title;
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::JsCast;
 
 use crate::models::MaterialItem;
 use crate::web::api::{add_material_link_action, delete_material_action, materials_list};
@@ -341,9 +339,7 @@ fn UploadForm(refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
             if busy.get_untracked() {
                 return;
             }
-            let Some(input) = file_input.get() else { return };
-            let Some(files) = input.files() else { return };
-            let Some(file) = files.get(0) else {
+            let Some(file) = crate::web::upload::berkas_pertama(file_input) else {
                 msg.set(Some((false, "Pilih file terlebih dahulu.".into())));
                 return;
             };
@@ -351,32 +347,20 @@ fn UploadForm(refetch: impl Fn() + Copy + Send + 'static) -> impl IntoView {
             msg.set(None);
             let t = title.get_untracked();
             leptos::task::spawn_local(async move {
-                let form = web_sys::FormData::new().unwrap();
-                let _ = form.append_with_str("title", &t);
-                let _ = form.append_with_blob("file", &file);
-
-                let window = web_sys::window().unwrap();
-                let opts = web_sys::RequestInit::new();
-                opts.set_method("POST");
-                opts.set_body(form.as_ref());
-                let req = web_sys::Request::new_with_str_and_init("/api/materials/upload", &opts)
-                    .unwrap();
-                match wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&req)).await {
-                    Ok(resp) => {
-                        let resp: web_sys::Response = resp.dyn_into().unwrap();
-                        if resp.ok() {
-                            title.set(String::new());
-                            refetch();
-                        } else {
-                            msg.set(Some((
-                                false,
-                                format!("Upload gagal (HTTP {}).", resp.status()),
-                            )));
-                        }
+                match crate::web::upload::unggah(
+                    "/api/materials/upload",
+                    &file,
+                    &[("title", t)],
+                )
+                .await
+                {
+                    Ok(_) => {
+                        title.set(String::new());
+                        refetch();
                     }
-                    Err(_) => {
-                        msg.set(Some((false, "Upload gagal — periksa koneksi.".into())));
-                    }
+                    // Pesan dari server dipakai apa adanya — di sanalah alasan
+                    // sesungguhnya ("Jenis file tidak didukung", "maks 100MB").
+                    Err(e) => msg.set(Some((false, e))),
                 }
                 busy.set(false);
             });

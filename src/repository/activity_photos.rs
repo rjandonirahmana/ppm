@@ -116,13 +116,21 @@ pub async fn insert_activity_photo(
     Ok(row.get(0))
 }
 
-pub async fn delete_activity_photo(pool: &Pool, id: i64) -> Result<bool> {
+/// Hapus satu media galeri, kembalikan URL berkasnya supaya pemanggil bisa
+/// ikut menghapusnya dari penyimpanan objek.
+///
+/// `RETURNING`, bukan SELECT-lalu-DELETE: dua pernyataan terpisah menyisakan
+/// celah tempat baris yang sama bisa dihapus dua kali, dan yang kalah pulang
+/// membawa URL yang berkasnya sudah dihapus orang lain.
+///
+/// `None` = tak ada baris dengan id itu.
+pub async fn delete_activity_photo(pool: &Pool, id: i64) -> Result<Option<String>> {
     let c = pool.get().await?;
-    let n = c
-        .execute("DELETE FROM activity_photos WHERE id = $1", &[&id])
+    let row = c
+        .query_opt("DELETE FROM activity_photos WHERE id = $1 RETURNING url", &[&id])
         .await
         .context("delete_activity_photo")?;
-    Ok(n > 0)
+    Ok(row.map(|r| r.get(0)))
 }
 
 /// Set ulang `sort_order` sesuai posisi id dalam `ids` (hasil drag-reorder).

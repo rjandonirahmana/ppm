@@ -30,6 +30,30 @@ use crate::web::components::{
     DeviceFrame, EmptyState, FetchError, FlashMsg, MediaFrame, MobileHeader, Sheet,
 };
 
+/// Balasan `POST /api/activity-photos/upload`.
+///
+/// Ditulis sebagai struct supaya bentuknya diperiksa compiler. Sebelumnya tiap
+/// field dipetik satu per satu lewat `js_sys::Reflect::get` dengan nilai bawaan
+/// bila tak ketemu — jadi satu nama yang salah ketik tidak menghasilkan galat
+/// apa pun, hanya foto yang diam-diam tampil dengan bidikan yang salah.
+///
+/// Semua field memang selalu dikirim server (lihat `web/activity_photos.rs`),
+/// jadi tak ada yang perlu `#[serde(default)]` — kalau salah satu hilang, itu
+/// memang perubahan yang harus ketahuan di sini.
+#[cfg(target_arch = "wasm32")]
+#[derive(serde::Deserialize)]
+struct BalasanUnggah {
+    id: i64,
+    url: String,
+    caption: String,
+    focus_x: f32,
+    focus_y: f32,
+    zoom: f32,
+    fit: String,
+    category: String,
+    media_type: String,
+}
+
 /// Semua nilai yang bisa diubah pengelola untuk satu media — dikirim sekaligus
 /// oleh editor. Digabung dalam satu struct, bukan enam parameter berderet,
 /// karena keduanya (unggah baru & sunting tersimpan) memakai daftar yang sama
@@ -218,105 +242,65 @@ pub fn GaleriPage() -> impl IntoView {
         busy.set(true);
         #[cfg(target_arch = "wasm32")]
         {
-            use wasm_bindgen::JsCast;
             let idx = pending_idx.get_untracked();
             let total = pending_total.get_untracked();
-            let file = file_input
-                .get_untracked()
-                .and_then(|i| i.files())
-                .and_then(|f| f.get(idx as u32));
-            let Some(file) = file else {
+            let Some(file) = crate::web::upload::berkas_ke(file_input, idx as u32) else {
                 busy.set(false);
                 finish_batch();
                 return;
             };
             leptos::task::spawn_local(async move {
-                let form = web_sys::FormData::new().unwrap();
-                let _ = form.append_with_blob("file", &file);
-                let _ = form.append_with_str("focus_x", &d.focus_x.to_string());
-                let _ = form.append_with_str("focus_y", &d.focus_y.to_string());
-                let _ = form.append_with_str("zoom", &d.zoom.to_string());
-                let _ = form.append_with_str("fit", &d.fit);
-                let _ = form.append_with_str("caption", &d.caption);
-                let _ = form.append_with_str("category", d.category.as_str());
-
-                let window = web_sys::window().unwrap();
-                let opts = web_sys::RequestInit::new();
-                opts.set_method("POST");
-                opts.set_body(form.as_ref());
+                let kolom = [
+                    ("focus_x", d.focus_x.to_string()),
+                    ("focus_y", d.focus_y.to_string()),
+                    ("zoom", d.zoom.to_string()),
+                    ("fit", d.fit.clone()),
+                    ("caption", d.caption.clone()),
+                    ("category", d.category.as_str().to_string()),
+                ];
                 let mut ok = false;
                 let mut gagal = String::new();
-                if let Ok(req) = web_sys::Request::new_with_str_and_init(
+                match crate::web::upload::unggah(
                     "/api/activity-photos/upload",
-                    &opts,
-                ) {
-                    let kirim =
-                        wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&req)).await;
-                    // `fetch` sendiri gagal (koneksi putus di tengah unggahan,
-                    // atau berkas ditolak lapisan transport sebelum sampai ke
-                    // handler kita) — dulu jatuh ke pesan generik yang menyuruh
-                    // "periksa berkas", padahal berkasnya tak pernah bersalah.
-                    if kirim.is_err() {
-                        gagal = "Koneksi terputus saat mengunggah. Berkas besar butuh \
-                                 jaringan stabil — coba lagi, atau pakai video yang lebih \
-                                 pendek (maks 100MB)."
-                            .to_string();
-                    }
-                    if let Ok(resp) = kirim {
-                        let resp: web_sys::Response = resp.dyn_into().unwrap();
-                        if resp.ok() {
-                            if let Ok(js) =
-                                wasm_bindgen_futures::JsFuture::from(resp.json().unwrap()).await
-                            {
-                                let get_num = |k: &str| {
-                                    js_sys::Reflect::get(&js, &wasm_bindgen::JsValue::from_str(k))
-                                        .ok()
-                                        .and_then(|v| v.as_f64())
-                                };
-                                let get_str = |k: &str| {
-                                    js_sys::Reflect::get(&js, &wasm_bindgen::JsValue::from_str(k))
-                                        .ok()
-                                        .and_then(|v| v.as_string())
-                                };
-                                let id = get_num("id").unwrap_or(0.0) as i64;
-                                let url = get_str("url").unwrap_or_default();
-                                if id > 0 && !url.is_empty() {
-                                    // Pakai nilai yang DIKEMBALIKAN server: server
-                                    // merapikan bidikan & kategori ke nilai sahnya,
-                                    // jadi memakai nilai kiriman sendiri bisa membuat
-                                    // grid berbeda dari yang tersimpan.
-                                    items.update(|v| {
-                                        let ord = v.len() as i32;
-                                        v.push(ActivityPhoto {
-                                            id,
-                                            url,
-                                            caption: get_str("caption").unwrap_or_default(),
-                                            sort_order: ord,
-                                            focus_x: get_num("focus_x").unwrap_or(0.5) as f32,
-                                            focus_y: get_num("focus_y").unwrap_or(0.5) as f32,
-                                            zoom: get_num("zoom").unwrap_or(1.0) as f32,
-                                            fit: get_str("fit")
-                                                .unwrap_or_else(|| "cover".into()),
-                                            category: get_str("category")
-                                                .unwrap_or_else(|| "kegiatan".into()),
-                                            media_type: get_str("media_type")
-                                                .unwrap_or_else(|| "image".into()),
-                                        });
-                                    });
-                                    ok = true;
-                                }
-                            }
-                        } else {
-                            // Server menjelaskan penolakannya dalam bahasa
-                            // Indonesia (jenis file, ukuran) — jauh lebih
-                            // berguna daripada "unggah gagal" yang generik.
-                            gagal = wasm_bindgen_futures::JsFuture::from(resp.text().unwrap())
-                                .await
-                                .ok()
-                                .and_then(|t| t.as_string())
-                                .unwrap_or_default();
+                    &file,
+                    &kolom,
+                )
+                .await
+                {
+                    // Balasan diurai `serde_json` ke struct, bukan dipetik satu
+                    // per satu lewat `js_sys::Reflect`: bentuknya jadi diperiksa
+                    // compiler, dan satu nama field yang salah ketik ketahuan
+                    // saat build alih-alih diam-diam jatuh ke nilai bawaan.
+                    Ok(badan) => match serde_json::from_str::<BalasanUnggah>(&badan) {
+                        Ok(b) if b.id > 0 && !b.url.is_empty() => {
+                            // Pakai nilai yang DIKEMBALIKAN server: server
+                            // merapikan bidikan & kategori ke nilai sahnya,
+                            // jadi memakai nilai kiriman sendiri bisa membuat
+                            // grid berbeda dari yang tersimpan.
+                            items.update(|v| {
+                                let ord = v.len() as i32;
+                                v.push(ActivityPhoto {
+                                    id: b.id,
+                                    url: b.url,
+                                    caption: b.caption,
+                                    sort_order: ord,
+                                    focus_x: b.focus_x,
+                                    focus_y: b.focus_y,
+                                    zoom: b.zoom,
+                                    fit: b.fit,
+                                    category: b.category,
+                                    media_type: b.media_type,
+                                });
+                            });
+                            ok = true;
                         }
-                    }
+                        _ => {
+                            gagal = "Media terunggah tapi balasan server tak terbaca. \
+                                     Muat ulang halaman untuk memeriksanya."
+                                .to_string()
+                        }
+                    },
+                    Err(e) => gagal = e,
                 }
                 busy.set(false);
                 if !ok {

@@ -12,15 +12,6 @@ use crate::web::api::staf_home_data;
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 use crate::web::pages::MaterialsWidget;
 
-fn status_badge(kind: &str) -> &'static str {
-    match kind {
-        "late" => "ppm-chip bg-warning/10 text-warning",
-        "permit" | "sick" => "ppm-chip bg-info/10 text-info",
-        "absent" => "ppm-chip bg-error-container text-error",
-        _ => "ppm-chip bg-success/10 text-success",
-    }
-}
-
 fn live_state_badge(state: &str) -> (&'static str, &'static str) {
     match state {
         "live" => ("AKTIF", "text-[10px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full"),
@@ -297,7 +288,7 @@ fn LatestRow(a: LatestAtt) -> impl IntoView {
                     <p class="text-[11px] text-on-surface-variant truncate">{format!("{} • {}", a.class_name, a.time_label)}</p>
                 </div>
             </div>
-            <span class=status_badge(&a.kind)>{a.status_label}</span>
+            <span class=crate::web::components::chip_kehadiran(&a.kind)>{a.status_label}</span>
         </div>
     }
 }
