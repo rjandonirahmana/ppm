@@ -9,7 +9,7 @@ use leptos_meta::Title;
 use crate::models::PermitReviewItem;
 use crate::web::api::{decide_permit_action, permit_queue_data};
 use crate::web::components::{
-    kartu_grid, DeviceFrame, EmptyState, FetchError, MobileHeader, SheetIzin,
+    kartu_grid, DeviceFrame, EmptyState, FetchError, FlashMsg, MobileHeader, SheetIzin,
 };
 
 #[component]
@@ -22,13 +22,27 @@ pub fn IzinStafPage() -> impl IntoView {
     // Detail izin yang sedang dibuka — wali kelas bisa membaca (dan menyunting)
     // isinya sebelum memutuskan, bukan hanya melihat ringkasan di kartu.
     let detail = RwSignal::new(Option::<i64>::None);
+    // Hasil keputusan terakhir. Dulu balasan server DIBUANG (`let _ = …`), dan
+    // itu terlihat jelas di layar: kartu beranimasi keluar, daftar disegarkan,
+    // kartunya kembali persis seperti semula — tanpa satu pun keterangan.
+    // Pemutusnya tak punya cara membedakan "gagal" dari "tak terjadi apa-apa",
+    // dan penolakan server yang sudah ditulis dengan kalimat Indonesia yang
+    // jelas tak pernah sampai ke siapa pun.
+    let msg = RwSignal::new(Option::<(bool, String)>::None);
     let decide = move |id: i64, approve: bool| {
         if busy_id.get_untracked().is_some() {
             return;
         }
         busy_id.set(Some(id));
+        msg.set(None);
         leptos::task::spawn_local(async move {
-            let _ = decide_permit_action(id, approve).await;
+            match decide_permit_action(id, approve).await {
+                Ok(_) => msg.set(Some((
+                    true,
+                    if approve { "Izin disetujui." } else { "Izin ditolak." }.to_string(),
+                ))),
+                Err(e) => msg.set(Some((false, crate::web::components::pesan_galat(e)))),
+            }
             busy_id.set(None);
             data.refetch();
         });
@@ -41,6 +55,9 @@ pub fn IzinStafPage() -> impl IntoView {
                 <MobileHeader title="Tinjau Izin" subtitle="Antrean izin menunggu keputusan" back_href="/staf" />
 
                 <div class="px-5 pt-5 space-y-5 stagger">
+                    // Hasil keputusan, DI ATAS daftar — bukan di dalam kartu
+                    // yang justru menghilang saat daftarnya disegarkan.
+                    <FlashMsg pesan=msg />
                     <Suspense fallback=|| {
                         view! {
                             <div class="animate-pulse space-y-3">
@@ -152,7 +169,16 @@ fn PermitCard(
     decide: impl Fn(i64, bool) + Copy + Send + 'static,
 ) -> impl IntoView {
     let id = p.id;
-    let meta = format!("NIS: {} • {}", p.nis, p.class_name);
+    // Segmen kosong TIDAK ikut tercetak. Santri yang NIS-nya belum terisi
+    // muncul sebagai "NIS: - • kelas lambatan" — tanda hubung menggantung yang
+    // terbaca seperti data rusak, padahal hanya belum diisi. Pola yang sama
+    // sudah dipakai kartu sesi di kalender.
+    let nis = p.nis.trim();
+    let meta = match (nis, p.class_name.trim()) {
+        ("" | "-", kelas) => kelas.to_string(),
+        (n, "") => format!("NIS: {n}"),
+        (n, kelas) => format!("NIS: {n} • {kelas}"),
+    };
     let is_busy = move || busy_id.get() == Some(id);
 
     view! {

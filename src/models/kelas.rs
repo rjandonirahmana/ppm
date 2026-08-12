@@ -22,9 +22,15 @@ pub const KATEGORI_KELAS: &[(&str, &str)] = &[
 /// Ada di `models` (bukan `service`) karena dipakai kedua sisi: server saat
 /// memvalidasi, dan WASM saat menyusun dropdown. `service` tak dikompilasi
 /// untuk WASM.
+/// URUTANNYA ADALAH ATURAN, bukan sekadar tata letak dropdown:
+/// [`jenjang_berikutnya`] menentukan kenaikan jenjang dari posisi di daftar ini.
+/// Menyisipkan di tengah berarti mengubah ke mana santri naik — `dasar` di
+/// depan dan `pra_saringan` sebelum `saringan` memang dimaksudkan begitu.
 pub const JENJANG: &[(&str, &str)] = &[
+    ("dasar", "Dasar"),
     ("lambatan", "Lambatan"),
     ("cepatan", "Cepatan"),
+    ("pra_saringan", "Pra Saringan"),
     ("saringan", "Saringan"),
     ("hadist_besar", "Hadist Besar"),
 ];
@@ -592,8 +598,12 @@ mod tests_kelas_kategori {
     /// Jenjang BERURUTAN — kenaikan santri bersandar pada urutan ini.
     #[test]
     fn jenjang_naik_berurutan() {
+        assert_eq!(jenjang_berikutnya("dasar"), Some("lambatan"));
         assert_eq!(jenjang_berikutnya("lambatan"), Some("cepatan"));
-        assert_eq!(jenjang_berikutnya("cepatan"), Some("saringan"));
+        // Migrasi 81 menyisipkan `pra_saringan` DI ANTARA cepatan dan saringan:
+        // santri cepatan kini naik ke pra saringan, bukan langsung saringan.
+        assert_eq!(jenjang_berikutnya("cepatan"), Some("pra_saringan"));
+        assert_eq!(jenjang_berikutnya("pra_saringan"), Some("saringan"));
         assert_eq!(jenjang_berikutnya("saringan"), Some("hadist_besar"));
         // Jenjang terakhir tak punya lanjutan.
         assert_eq!(jenjang_berikutnya("hadist_besar"), None);
@@ -645,7 +655,10 @@ mod tests_kelas_kategori {
     fn kategori_tepat_tiga() {
         let kode: Vec<&str> = KATEGORI_KELAS.iter().map(|(k, _)| *k).collect();
         assert_eq!(kode, vec!["kbm", "bacaan", "non_kbm"]);
-        assert_eq!(JENJANG.len(), 4);
+        // Enam jenjang sejak migrasi 81 (dasar & pra_saringan ditambahkan).
+        // Angkanya dikunci di sini supaya penambahan jenjang berikutnya SELALU
+        // melewati tinjauan urutan — posisinya menentukan kenaikan santri.
+        assert_eq!(JENJANG.len(), 6);
     }
 }
 

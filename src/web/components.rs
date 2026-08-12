@@ -1459,7 +1459,22 @@ pub fn aksen_kehadiran(kind: &str) -> &'static str {
 /// menampilkan jargon internal ke layar santri.
 pub fn pesan_galat(e: impl ToString) -> String {
     let s = e.to_string();
-    s.rsplit(": ").next().unwrap_or(&s).to_string()
+    let inti = s.rsplit(": ").next().unwrap_or(&s).trim();
+    // KODE, bukan kalimat. `require_roles` dan `require_session` menolak dengan
+    // penanda sependek "forbidden" — dimaksudkan supaya klien bisa MEMBEDAKAN
+    // jenis penolakan, bukan untuk dibaca orang. Tanpa penerjemahan ini, kata
+    // "forbidden" muncul apa adanya di tengah layar berbahasa Indonesia: tak
+    // memberi tahu apa yang salah, dan tak memberi tahu apa yang harus
+    // dilakukan.
+    match inti {
+        "forbidden" => "Peran Anda tidak berwenang melakukan tindakan ini. Bila menurut Anda \
+                        seharusnya boleh, hubungi admin — mungkin penugasan kelasnya belum \
+                        diatur."
+            .to_string(),
+        "unauth" => "Anda belum masuk. Silakan masuk lebih dulu.".to_string(),
+        "session_expired" => "Sesi Anda berakhir. Silakan masuk kembali.".to_string(),
+        lain => lain.to_string(),
+    }
 }
 
 /// Alihkan ke /login bila galat sebuah Resource menandakan sesi tak berlaku.

@@ -184,20 +184,42 @@ pub async fn permit_queue(pool: &Pool, role: &str, user_id: i64) -> Result<Permi
 /// require_pamong); teacher → keputusan final HANYA izin kelasnya; dewan
 /// guru/admin → keputusan final izin mana pun.
 pub async fn decide_permit(pool: &Pool, permit_id: i64, approve: bool, staff_id: i64) -> Result<()> {
-    // HANYA wali kelas yang bersangkutan. Bukan pamong, bukan dewan guru, bukan
-    // admin — izin adalah urusan antara santri dan wali kelas KBM-nya, dan
-    // orang yang tak mengenal santrinya tak punya dasar untuk menimbang.
+    // DUA TAHAP, mengikuti setelan kelas KBM santri — bukan satu tahap saja.
     //
-    // Tahap pamong untuk izin DIHAPUS bersamaan: sejak wali kelas hanya ada di
-    // KBM dan satu santri punya satu, tak ada lagi yang perlu disaring dua
-    // kali. `decide_guru_permit` dipanggil dengan wali_id = staf ini, jadi
+    // Sebelumnya fungsi ini langsung memanggil jalur wali kelas, dengan alasan
+    // "tahap pamong untuk izin sudah dihapus". Tapi antreannya TIDAK ikut
+    // dihapus: `pending_pamong_permits` masih memunculkan izin kepada pamong
+    // untuk kelas ber-`require_pamong`. Jadi pamong melihat izin di layarnya,
+    // menekan Setujui, dan request-nya masuk ke jalur wali — di sana ia bukan
+    // wali siapa pun, sehingga selalu ditolak "Izin ini bukan milik kelas
+    // Anda". Antreannya bekerja, tombolnya tidak.
+    //
+    // `decide_pamong_permit` sudah ada dan penjaganya cocok PERSIS dengan
+    // penyaring antrean itu; ia cuma tak pernah dipanggil dari mana pun.
+    //
+    // Urutannya: coba tahap pamong dulu. Penjaga di dalamnya hanya cocok bila
+    // SEMUA benar — pemutusnya memang pamong kelas acuan, kelasnya memang
+    // menuntut dua tahap, dan izinnya memang masih di tahap itu. Kalau tidak
+    // cocok, tak ada baris tersentuh dan keputusannya jatuh ke jalur wali.
+    // Dengan begitu satu tombol melayani kedua peran tanpa layarnya perlu tahu
+    // sedang berada di tahap mana.
+    if repo::decide_pamong_permit(pool, permit_id, approve, false, Some(staff_id), staff_id).await?
+    {
+        // Tahap pamong saja: absensinya BELUM diwujudkan. Yang mengesahkan izin
+        // tetap wali kelas di tahap berikutnya.
+        return Ok(());
+    }
+
+    // Tahap FINAL: wali kelas KBM santri. Bukan dewan guru, bukan admin — izin
+    // adalah urusan antara santri dan walinya, dan orang yang tak mengenal
+    // santrinya tak punya dasar untuk menimbang. `wali_id = staf ini`, jadi
     // izin milik wali LAIN tak akan tersentuh.
     let ok = repo::decide_guru_permit(pool, permit_id, approve, Some(staff_id), false, staff_id)
         .await?;
     if !ok {
         bail_user!(
-            "Izin ini bukan milik kelas Anda, atau sudah diproses. Hanya wali kelas KBM \
-             santri yang bersangkutan yang boleh memutuskannya."
+            "Izin ini bukan milik kelas Anda, atau sudah diproses. Yang boleh memutuskan \
+             hanya pamong kelas KBM santri (bila kelasnya dua tahap) dan wali kelasnya."
         );
     }
 
@@ -275,14 +297,20 @@ pub async fn split_permit_per_wali(
         }
     }
 
-    // Penyetujunya: wali kelas KBM santri. Sejak migrasi 65 wali kelas HANYA
-    // ada di kelas KBM dan satu santri hanya punya satu — jadi berapa pun kelas
-    // yang terlewat, penyetujunya tetap satu orang.
+    // Kelas acuan: kelas KBM santri — DICARI LANGSUNG, bukan dipungut dari
+    // kelas yang kebetulan terlewat.
     //
-    // Dulu izin dipecah per wali: satu izin sehari bisa jadi tiga baris ke tiga
-    // orang berbeda yang semuanya harus menekan tombol, dan santri melihat
-    // riwayat izinnya berlipat untuk tanggal yang sama.
-    let kbm = terdampak.iter().find(|c| c.wali_kelas_id.is_some());
+    // Bedanya menentukan. Dulu barisnya `terdampak.iter().find(|c|
+    // c.wali_kelas_id.is_some())`: izin yang hanya menyentuh sholat, apel, atau
+    // piket — yang sejak migrasi 65 memang tak punya wali — lahir tanpa kelas
+    // acuan sama sekali. Tanpa itu tak ada wali yang dituju, dan antrean pamong
+    // yang mencocokkan pamong kelas acuan tak menemukan siapa pun. Izinnya ada
+    // di basis data tapi tak muncul di layar mana pun.
+    //
+    // Sekarang acuannya selalu kelas KBM santri, jadi setelan dua-tahapnya pun
+    // ikut dari sana — persis seperti kelas KBM-nya sendiri yang ditinggalkan,
+    // walau yang terlewat cuma apel malam.
+    let kbm = repo::kelas_kbm_santri(pool, student_id).await?;
 
     let permit_id = repo::insert_permit(
         pool,
@@ -293,8 +321,8 @@ pub async fn split_permit_per_wali(
         end_date,
         jam,
         reason,
-        kbm.map(|c| c.class_id),
-        kbm.and_then(|c| c.wali_kelas_id),
+        kbm.as_ref().map(|c| c.class_id),
+        kbm.as_ref().and_then(|c| c.wali_kelas_id),
     )
     .await?;
 
@@ -307,9 +335,9 @@ pub async fn split_permit_per_wali(
 
     Ok(vec![PermitSplit {
         permit_id,
-        class_id: kbm.map(|c| c.class_id),
+        class_id: kbm.as_ref().map(|c| c.class_id),
         class_names: terdampak.iter().map(|c| c.class_name.clone()).collect(),
-        wali_name: kbm.and_then(|c| c.wali_name.clone()),
+        wali_name: kbm.and_then(|c| c.wali_name),
     }])
 }
 

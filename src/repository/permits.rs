@@ -73,6 +73,52 @@ pub async fn permit_notify_targets(
     }))
 }
 
+/// Kelas KBM seorang santri — acuan SELURUH perizinannya.
+///
+/// Sejak migrasi 65 wali kelas hanya ada di kelas KBM dan satu santri hanya
+/// punya satu (dijaga `trg_satu_kelas_kbm`), jadi pertanyaan "siapa yang
+/// menyetujui izin santri ini" selalu punya satu jawaban — terlepas dari kelas
+/// mana saja yang kebetulan terlewat izinnya.
+///
+/// KENAPA TIDAK diambil dari kelas terdampak. Dulu kelas acuan dipilih dengan
+/// mencari kelas ber-wali DI ANTARA yang terlewat. Izin yang hanya menyentuh
+/// kegiatan non-KBM — sholat, apel, piket, yang memang tak punya wali — karena
+/// itu lahir tanpa kelas acuan sama sekali: tanpa wali yang dituju, dan tanpa
+/// pamong yang bisa menemukannya di antrean. Izin seperti itu menggantung tanpa
+/// ada satu pun layar yang menampilkannya.
+///
+/// Padahal jawabannya tak pernah bergantung pada kelas yang terlewat: wali KBM
+/// santri tetap walinya, dan setelan dua-tahap kelas KBM itulah yang berlaku,
+/// walau yang ditinggalkan hanya apel malam.
+pub struct KelasKbmSantri {
+    pub class_id: i64,
+    pub class_name: String,
+    pub wali_kelas_id: Option<i64>,
+    pub wali_name: Option<String>,
+}
+
+pub async fn kelas_kbm_santri(pool: &Pool, student_id: i64) -> Result<Option<KelasKbmSantri>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(
+            "SELECT cl.id, cl.name, cl.wali_kelas_id, w.full_name \
+               FROM class_participants cp \
+               JOIN classes cl ON cl.id = cp.class_id AND cl.category = 'kbm' \
+               LEFT JOIN users w ON w.id = cl.wali_kelas_id \
+              WHERE cp.user_id = $1 \
+              ORDER BY cl.id LIMIT 1",
+            &[&student_id],
+        )
+        .await
+        .context("kelas_kbm_santri")?;
+    Ok(row.map(|r| KelasKbmSantri {
+        class_id: r.get(0),
+        class_name: r.get(1),
+        wali_kelas_id: r.get(2),
+        wali_name: r.get(3),
+    }))
+}
+
 /// Satu kelas yang dilewati selama rentang izin, beserta penanggung jawabnya.
 /// Dipakai `service::permits::auto_create_permits_per_wali` untuk memecah satu
 /// pengajuan jadi beberapa `permit_requests` (satu per wali kelas unik).

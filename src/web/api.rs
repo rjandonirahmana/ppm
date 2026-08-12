@@ -112,14 +112,38 @@ mod ssr_helpers {
         // Akun yang dinonaktifkan dijawab "session_expired", bukan "forbidden":
         // yang harus dilakukan orangnya memang masuk kembali, dan di sanalah
         // login akan memberitahunya dengan kalimat yang benar.
-        let segar = crate::repository::session_user_aktif(&state.pool, claims.user_id)
-            .await
-            .map_err(|_| ServerFnError::new(GENERIC_SERVER_ERROR))?;
-        match segar {
-            Some(u) => Ok(u),
-            None => {
+        // DUA KEGAGALAN YANG BERBEDA, dan membedakannya menentukan apakah
+        // aplikasi ini masih bisa dipakai saat basis datanya tersendat:
+        //
+        //   Ok(None) → DB menjawab, dan jawabannya "orang ini tak ada / tak
+        //              aktif". Itu pencabutan akses; sesinya diakhiri.
+        //   Err(_)   → DB TAK MENJAWAB (koneksi putus, antrean pool habis).
+        //              Itu bukan pernyataan apa pun tentang orangnya.
+        //
+        // Versi pertama menyamakan keduanya menjadi galat. Akibatnya satu
+        // hambatan sesaat di DB melumpuhkan SELURUH cangkang aplikasi: sesi
+        // adalah hal pertama yang diminta tiap halaman, dan `<Transition>` yang
+        // menunggunya tak pernah selesai — layar berhenti di skeleton, tak ada
+        // yang bisa diklik, lalu pulih sendiri saat dicoba lagi. Persis gejala
+        // "kadang bisa, kadang tidak".
+        //
+        // Sekarang kegagalan transport jatuh kembali ke klaim token. Pencabutan
+        // akses tetap bekerja — ia bersandar pada DB yang MENJAWAB — dan
+        // kelonggaran ini hanya berlaku selama detik-detik DB tak terjangkau,
+        // saat mana tindakan apa pun yang berarti toh akan gagal di query
+        // berikutnya.
+        match crate::repository::session_user_aktif(&state.pool, claims.user_id).await {
+            Ok(Some(u)) => Ok(u),
+            Ok(None) => {
                 clear_auth_cookie();
                 Err(ServerFnError::new("session_expired"))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    user_id = claims.user_id,
+                    "gagal membaca sesi dari DB, memakai klaim token: {e:#}"
+                );
+                Ok(claims.into())
             }
         }
     }
@@ -260,12 +284,27 @@ pub async fn get_session() -> Result<Option<SessionUser>, ServerFnError> {
     };
     // Akun hilang atau dinonaktifkan → sesinya berakhir SEKARANG, bukan saat
     // tokennya kebetulan habis 30 hari lagi.
-    let segar = crate::repository::session_user_aktif(&state.pool, claims.user_id)
-        .await
-        .map_err(|_| ServerFnError::new(GENERIC_SERVER_ERROR))?;
-    let Some(user) = segar else {
-        clear_auth_cookie();
-        return Ok(None);
+    //
+    // DB tak terjangkau ≠ akun dicabut — lihat catatan panjang di
+    // `require_session`. Ini fungsi yang dipanggil PALING AWAL oleh setiap
+    // halaman; menggagalkannya karena hambatan sesaat di DB membuat seluruh
+    // aplikasi berhenti di skeleton, dan itulah "kadang bisa, kadang tidak".
+    let user = match crate::repository::session_user_aktif(&state.pool, claims.user_id).await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            clear_auth_cookie();
+            return Ok(None);
+        }
+        Err(e) => {
+            tracing::warn!(
+                user_id = claims.user_id,
+                "gagal membaca sesi dari DB, memakai klaim token: {e:#}"
+            );
+            // Cookie TIDAK diperpanjang di jalur ini: token lama tetap berlaku
+            // sampai umurnya sendiri habis, jadi kegagalan DB tak bisa dipakai
+            // memperpanjang sesi tanpa batas.
+            return Ok(Some(claims.into()));
+        }
     };
     // Perpanjang sesi (best-effort; gagal sign bukan alasan menolak sesi).
     // Nama & peran dari DB, bukan dari klaim: kalau tidak, token baru
@@ -519,12 +558,23 @@ pub async fn permit_queue_data() -> Result<PermitQueueData, ServerFnError> {
         .map_err(err)
 }
 
-/// Setujui/tolak izin (tahap sesuai peran). Dewan guru tak terlibat izin santri.
+/// Setujui/tolak izin — tahapnya ditentukan hubungan pemutus dengan kelas
+/// acuan izin itu, bukan oleh layar yang memanggilnya.
 #[server(DecidePermitAction, "/api-fn")]
 pub async fn decide_permit_action(permit_id: i64, approve: bool) -> Result<(), ServerFnError> {
-    // Hanya wali kelas — peran pamong/dewan guru/admin sengaja TIDAK ada di
-    // sini; batas sebenarnya "wali kelas izin ini" diuji di service.
-    let sess = require_roles(&["dewan_guru", "teacher"]).await?;
+    // `supervisor` (pamong) IKUT. Sebelumnya daftarnya hanya wali kelas, sisa
+    // dari masa tahap pamong untuk izin dihapus — tapi antrean pamong tak ikut
+    // dihapus. Akibatnya pamong melihat izin di layarnya, menekan Setujui, dan
+    // ditolak "forbidden" DI SINI, sebelum service sempat menimbang apakah ia
+    // memang pamong kelas acuan izin itu.
+    //
+    // Daftar ini sengaja longgar: ia hanya menyaring peran yang mustahil
+    // terlibat (santri, orang tua). Batas yang sesungguhnya — "apakah orang INI
+    // pamong atau wali kelas acuan izin INI" — diuji di
+    // `service::permits::decide_permit`, tempat identitas izinnya diketahui.
+    // Menaruh batas itu di sini mustahil: daftar peran tak tahu izin mana yang
+    // sedang diputus.
+    let sess = require_roles(&["dewan_guru", "teacher", "supervisor"]).await?;
     let state = app_state().await?;
     crate::service::permits::decide_permit(&state.pool, permit_id, approve, sess.id)
         .await
