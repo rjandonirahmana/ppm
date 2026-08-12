@@ -253,6 +253,10 @@ pub fn ProfilPage() -> impl IntoView {
                                     <h2 class="text-body-lg font-bold text-on-background">"Riwayat IPK"</h2>
                                 </div>
                                 <div class="space-y-2">
+                                    // WAJIB di dalam <Suspense>: membaca Resource di luarnya membuat
+                                    // server & klien merender hal berbeda, dan selisih itu membatalkan
+                                    // hidrasi SELURUH halaman — bukan cuma blok ini.
+                                    <Suspense fallback=|| ()>
                                     {move || {
                                         data.get()
                                             .and_then(|r| r.ok())
@@ -287,6 +291,7 @@ pub fn ProfilPage() -> impl IntoView {
                                                 }
                                             })
                                     }}
+                                    </Suspense>
                                 </div>
 
                                 // Form tambah entri IPK

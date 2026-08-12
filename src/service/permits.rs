@@ -21,13 +21,10 @@ use crate::repository as repo;
 /// Kunci setelan mode persetujuan izin.
 pub const PERMIT_MODE_KEY: &str = "permit_approval_mode";
 
-/// Normalisasi HP untuk chat-ID WAHA (08.. → 62..).
+/// Normalisasi HP untuk chat-ID WAHA — satu aturan bersama
+/// ([`crate::models::normalisasi_hp`]).
 fn wa_phone(p: &str) -> String {
-    let d: String = p.chars().filter(|c| c.is_ascii_digit()).collect();
-    match d.strip_prefix('0') {
-        Some(rest) => format!("62{rest}"),
-        None => d,
-    }
+    crate::models::normalisasi_hp(p).unwrap_or_default()
 }
 
 /// Kirim WA notifikasi izin baru ke penyetuju TIAP baris hasil pemecahan izin

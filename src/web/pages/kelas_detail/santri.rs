@@ -22,7 +22,7 @@ pub(super) fn SantriTab(
 ) -> impl IntoView {
     // Jadwal & anggota kelas kini juga wewenang PAMONG kelas ini, bukan admin
     // saja (wali kelas tetap tidak). Flag-nya dihitung server — lihat
-    // KelasDetail::can_manage_jadwal.
+    // KelasDetail::can_manage_jadwal (wali kelas & pamong kelas ini + admin).
     let can_manage = d.can_manage_jadwal;
     // Kelas KBM punya aturan yang tak berlaku di kelas lain: satu santri hanya
     // boleh satu (trigger migrasi 65). Pemilih santri perlu tahu ini supaya
@@ -79,7 +79,7 @@ pub(super) fn SantriTab(
             <div class="space-y-3 md:col-span-5 md:sticky md:top-4">
             // Santri masuk KELAS (migrasi 61), bukan jadwal — jadi tak perlu
             // lagi menunggu ada jadwal sebelum anggota bisa ditambahkan.
-            <AdminOnly can_manage=can_manage apa="menambah atau mengeluarkan santri dari kelas" siapa="admin, ketua, atau pamong kelas ini">
+            <AdminOnly can_manage=can_manage apa="menambah atau mengeluarkan santri dari kelas" siapa="admin, ketua, wali kelas, atau pamong kelas ini">
                 <AddMemberForm class_id=class_id kelas_kbm=kelas_kbm nama_kelas=nama_kelas.clone() refetch=refetch />
             </AdminOnly>
 

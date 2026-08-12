@@ -134,25 +134,32 @@ pub fn OrtuPembayaranPage() -> impl IntoView {
                     // Form menerima SELURUH daftar anak, bukan yang sedang
                     // dilihat riwayatnya: satu transfer boleh menutup beberapa
                     // anak, dan form-lah yang menawarkan pilihannya.
-                    <Show
-                        when=move || {
-                            home.get()
-                                .and_then(|r| r.ok())
-                                .map(|h| !h.children.is_empty())
-                                .unwrap_or(false)
-                        }
-                        fallback=|| ()
-                    >
-                        <FormAjukanBayar
-                            anak=Signal::derive(move || {
+                    // `<Show when=…>` menilai closure-nya SAAT RENDER, jadi
+                    // membaca Resource di sana sama saja dengan membacanya di
+                    // luar <Suspense>: server sudah punya datanya, klien belum,
+                    // dan selisih itu membatalkan hidrasi SELURUH halaman —
+                    // gejalanya halaman tampil normal tapi tak bisa diklik.
+                    <Suspense fallback=|| ()>
+                        <Show
+                            when=move || {
                                 home.get()
                                     .and_then(|r| r.ok())
-                                    .map(|h| h.children)
-                                    .unwrap_or_default()
-                            })
-                            refetch=refetch
-                        />
-                    </Show>
+                                    .map(|h| !h.children.is_empty())
+                                    .unwrap_or(false)
+                            }
+                            fallback=|| ()
+                        >
+                            <FormAjukanBayar
+                                anak=Signal::derive(move || {
+                                    home.get()
+                                        .and_then(|r| r.ok())
+                                        .map(|h| h.children)
+                                        .unwrap_or_default()
+                                })
+                                refetch=refetch
+                            />
+                        </Show>
+                    </Suspense>
 
                     <Suspense fallback=|| {
                         view! { <div class="h-20 bg-surface-container rounded-2xl animate-pulse"></div> }

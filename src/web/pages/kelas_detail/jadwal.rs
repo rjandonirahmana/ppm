@@ -31,8 +31,10 @@ pub(super) fn JadwalTab(
     // kitab di luar itu membuat progres kurikulum tak pernah tersentuh.
     let dalam_kurikulum: std::collections::HashSet<i64> =
         d.curriculum.iter().map(|c| c.book_id).filter(|b| *b > 0).collect();
-    // Jadwal & anggota kelas kini juga wewenang PAMONG kelas ini, bukan admin
-    // saja (wali kelas tetap tidak). Flag-nya dihitung server — lihat
+    // Jadwal & anggota kelas adalah wewenang WALI KELAS dan pamong kelas ini,
+    // bukan admin saja. Menunjuk seseorang jadi wali kelas berarti menyerahkan
+    // kelas itu kepadanya; sebelumnya wali kelas justru mendapati kelasnya
+    // sendiri terkunci. Flag-nya dihitung server — lihat
     // KelasDetail::can_manage_jadwal.
     let can_manage = d.can_manage_jadwal;
     let book_opts = StoredValue::new(
@@ -66,7 +68,7 @@ pub(super) fn JadwalTab(
             // Membagi kolom hanya berguna bila KEDUA sisi memang berisi.
             <div class="md:flex md:items-start md:gap-4">
             <div class="md:w-80 md:shrink-0">
-                <AdminOnly can_manage=can_manage apa="membuat atau mengubah jadwal kelas" siapa="admin, ketua, atau pamong kelas ini">
+                <AdminOnly can_manage=can_manage apa="membuat atau mengubah jadwal kelas" siapa="admin, ketua, wali kelas, atau pamong kelas ini">
                     <BuatJadwalForm class_id=class_id room_options=room_opts refetch=refetch />
                 </AdminOnly>
             </div>

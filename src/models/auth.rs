@@ -55,6 +55,8 @@ pub fn role_home(role: &str) -> &'static str {
         // santri_finance = santri pemegang kunci finance → dashboard santri.
         "santri" | "santri_finance" => "/santri",
         "parent" => "/orang-tua",
+        // Penjaga hanya punya satu pekerjaan; layar itu sekaligus berandanya.
+        "penjaga" => "/tamu-masuk",
         _ => "/menu",
     }
 }
@@ -77,6 +79,7 @@ pub fn role_label(role: &str) -> &'static str {
         "santri" => "Santri",
         "santri_finance" => "Santri (Finance)",
         "parent" => "Orang Tua",
+        "penjaga" => "Penjaga",
         _ => "Pengguna",
     }
 }
@@ -105,7 +108,12 @@ pub struct InviteInfo {
 /// setara atau lebih tinggi dari pengundang. Tanpa batas ini, pamong bisa
 /// mencetak link yang menjadikan siapa pun dewan guru tanpa sepengetahuan
 /// admin. Mengundang santri/orang tua tetap boleh — itu tugas harian mereka.
-pub const STAFF_INVITABLE_ROLES: &[&str] = &["dewan_guru", "supervisor"];
+/// `penjaga` ikut di sini meski wewenangnya paling sempit: ia tetap AKUN
+/// PETUGAS yang bisa membaca nama, nomor HP, dan foto wajah tamu. Yang menahan
+/// pamong/dewan guru mencetaknya bukan besarnya wewenang, melainkan bahwa
+/// menambah petugas adalah keputusan pengurus — bukan efek samping dari
+/// seseorang yang kebetulan punya tombol undangan.
+pub const STAFF_INVITABLE_ROLES: &[&str] = &["dewan_guru", "supervisor", "penjaga"];
 
 /// true bila `target_role` termasuk peran staf (khusus admin yang mengundang).
 pub fn is_staff_invite(target_role: &str) -> bool {

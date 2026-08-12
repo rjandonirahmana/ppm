@@ -77,18 +77,28 @@ pub fn KontrolPenggunaPage() -> impl IntoView {
                     // Panel-panel kelola HANYA dirender untuk admin. Bukan
                     // sekadar di-disable: isinya (daftar perangkat, pencarian
                     // pengguna) pun bukan wewenang mereka.
-                    {move || {
-                        data.get()
-                            .and_then(|r| r.ok())
-                            .filter(|d| d.can_manage)
-                            .map(|_| {
-                                view! {
-                                    <InvitePanel />
-                                    <RfidPanel />
-                                    <KartuPanel />
-                                }
-                            })
-                    }}
+                    //
+                    // WAJIB di dalam <Suspense>. Membaca Resource di luarnya
+                    // membuat server dan klien merender hal berbeda: di server
+                    // datanya sudah ada, di klien belum — dan selisih itu
+                    // membatalkan hidrasi SELURUH halaman, bukan cuma blok ini.
+                    // Gejalanya halaman yang tampil normal tapi tak bisa diklik,
+                    // hilang-timbul tergantung mana yang lebih dulu sampai.
+                    // Leptos menyebutkan ini apa adanya di konsol.
+                    <Suspense fallback=|| ()>
+                        {move || {
+                            data.get()
+                                .and_then(|r| r.ok())
+                                .filter(|d| d.can_manage)
+                                .map(|_| {
+                                    view! {
+                                        <InvitePanel />
+                                        <RfidPanel />
+                                        <KartuPanel />
+                                    }
+                                })
+                        }}
+                    </Suspense>
 
                     // ── Jejak Aktivitas ──────────────────────────────────────
                     <RentangLog hari=hari />
@@ -209,6 +219,7 @@ fn InvitePanel() -> impl IntoView {
         ("parent", "Orang Tua"),
         ("dewan_guru", "Dewan Guru"),
         ("supervisor", "Pamong"),
+        ("penjaga", "Penjaga"),
     ];
     let session = use_context::<Resource<Option<SessionUser>>>();
     let is_admin = move || {

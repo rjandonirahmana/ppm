@@ -46,13 +46,23 @@ pub async fn register_guest(
     purpose: &str,
 ) -> Result<String> {
     let name = name.trim();
-    let phone = phone.trim();
-    if name.is_empty() || phone.len() < 6 {
-        bail_user!("Nama dan nomor HP wajib diisi dengan benar.");
+    if name.is_empty() {
+        bail_user!("Nama wajib diisi.");
     }
+    // Nomor tamu DINORMALKAN seperti nomor lain di aplikasi ini. Sebelumnya ia
+    // disimpan mentah — hanya `trim()` — sehingga tamu yang menulis "0812…"
+    // tersimpan apa adanya. Bentuk itu bukan chat-id WAHA yang sah, jadi pesan
+    // apa pun ke tamu mustahil terkirim, dan nomor yang sama tak akan cocok
+    // dengan catatan mana pun yang tersimpan dalam bentuk `628…`.
+    //
+    // Panjangnya pun tak lagi ditebak dari `len() < 6`: pemeriksaan itu
+    // meloloskan "123456" sebagai nomor HP yang sah.
+    let Some(phone) = crate::models::normalisasi_hp(phone) else {
+        bail_user!("{}", crate::models::pesan_hp_tidak_sah());
+    };
     let g = PendingGuest {
         name: name.to_string(),
-        phone: phone.to_string(),
+        phone,
         purpose: purpose.trim().to_string(),
     };
     let json = serde_json::to_string(&g)?;
@@ -109,4 +119,52 @@ pub async fn check_status(
         Some(j) => Ok(Some(serde_json::from_str(&j)?)),
         None => Ok(None),
     }
+}
+
+// ── Layar penjaga: tinjau kunjungan tamu (migrasi 83) ────────────────────────
+
+/// Daftar kunjungan tamu untuk penjaga.
+///
+/// `hanya_belum` menyisakan yang belum diperiksa — itu pekerjaan penjaga.
+/// Riwayat lengkap tetap bisa dibuka untuk menelusuri kunjungan lama.
+pub async fn tamu_masuk(
+    pool: &deadpool_postgres::Pool,
+    hanya_belum: bool,
+) -> Result<crate::models::TamuMasukData> {
+    let rows = crate::repository::list_kunjungan_tamu(pool, hanya_belum, 100).await?;
+    // Dihitung terpisah dari daftar: saat penjaga membuka riwayat lengkap,
+    // angka "menunggu diperiksa" harus tetap menyebut yang menunggu — bukan
+    // jumlah baris yang kebetulan sedang tampil.
+    let belum = crate::repository::list_kunjungan_tamu(pool, true, 500).await?.len() as i64;
+    let items = rows
+        .into_iter()
+        .map(|g| crate::models::TamuMasukItem {
+            id: g.id,
+            name: g.name,
+            phone: g.phone,
+            purpose: g.purpose,
+            face_url: g.face_url.unwrap_or_default(),
+            waktu_label: super::fmt::fmt_when(g.checked_in_at),
+            diperiksa: g.verified_at.is_some(),
+            diperiksa_oleh: g.verified_by_name.unwrap_or_default(),
+            catatan: g.verify_note,
+        })
+        .collect();
+    Ok(crate::models::TamuMasukData { belum_diperiksa: belum, items })
+}
+
+/// Tandai satu kunjungan sudah diperiksa. Catatan kosong = data cocok.
+pub async fn periksa_tamu(
+    pool: &deadpool_postgres::Pool,
+    visit_id: i64,
+    penjaga_id: i64,
+    catatan: &str,
+) -> Result<()> {
+    // Batas panjang catatan: kolomnya TEXT, dan kotak catatan yang tak berbatas
+    // adalah tempat orang menempelkan apa saja.
+    let catatan: String = catatan.chars().take(300).collect();
+    if !crate::repository::periksa_kunjungan_tamu(pool, visit_id, penjaga_id, &catatan).await? {
+        bail_user!("Kunjungan ini sudah diperiksa orang lain, atau tidak ditemukan.");
+    }
+    Ok(())
 }

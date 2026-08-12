@@ -249,6 +249,9 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/orang-tua/riwayat") view=OrtuRiwayatPage />
                 <Route path=path!("/orang-tua/pembayaran") view=OrtuPembayaranPage />
                 <Route path=path!("/koneksi-ortu") view=KoneksiOrtuPage />
+
+                // Penjaga gerbang (migrasi 83): memeriksa kecocokan data tamu.
+                <Route path=path!("/tamu-masuk") view=TamuMasukPage />
             </FlatRoutes>
             // Navbar bawah PERSISTEN — di luar <FlatRoutes> agar tak ikut
             // ter-swap/shimmer saat pindah halaman (hanya konten yang shimmer).

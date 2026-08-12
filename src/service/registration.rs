@@ -30,7 +30,8 @@ use crate::repository as repo;
 // 'teacher' dihapus (digabung ke dewan_guru, migrasi 36). Peran finance baru
 // (ketua, santri_finance) TIDAK di sini — dibuat admin lewat kontrol pengguna,
 // bukan via link undangan publik.
-pub const INVITABLE_ROLES: &[&str] = &["dewan_guru", "supervisor", "santri", "parent"];
+pub const INVITABLE_ROLES: &[&str] =
+    &["dewan_guru", "supervisor", "santri", "parent", "penjaga"];
 
 // Kebijakan siapa-boleh-mengundang-siapa ada di models::can_invite —
 // SENGAJA di models, bukan di sini, karena dropdown peran di frontend (WASM)
@@ -446,13 +447,9 @@ pub async fn send_wa_text(
 /// basis chat-ID WAHA, konsisten — beda dari e-ticketing yg normalisasi
 /// terpisah utk simpan vs kirim WA).
 fn normalize_local(phone: &str) -> Result<String> {
-    let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
-    if digits.starts_with("08") {
-        Ok(format!("62{}", &digits[1..]))
-    } else if digits.starts_with("62") {
-        Ok(digits)
-    } else {
-        bail_user!("Nomor HP harus diawali '08' atau '+62'.");
+    match crate::models::normalisasi_hp(phone) {
+        Some(hp) => Ok(hp),
+        None => bail_user!("{}", crate::models::pesan_hp_tidak_sah()),
     }
 }
 

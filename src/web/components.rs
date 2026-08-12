@@ -483,6 +483,16 @@ macro_rules! nav_staf {
 /// Nav peran: pamong (supervisor). Beranda → /verifikasi-pamong.
 pub const NAV_PAMONG: &[NavDef] = nav_staf!("/verifikasi-pamong");
 
+/// Navbar PENJAGA — hanya dua tujuan.
+///
+/// Penjaga gerbang tak berkepentingan dengan santri, kelas, atau laporan; menu
+/// yang menawarkannya cuma memperbesar permukaan salah tekan di pos jaga. Yang
+/// ia butuhkan: daftar tamu yang perlu diperiksa, dan pintu keluar akunnya.
+pub const NAV_PENJAGA: &[NavDef] = &[
+    NavDef { icon: "how_to_reg", label: "Tinjau Tamu", href: "/tamu-masuk" },
+    NavDef { icon: "person", label: "Profil", href: "/profil" },
+];
+
 /// Apakah pesan galat ini berarti "pengguna harus masuk lagi"?
 ///
 /// SATU tempat, dipakai ~26 halaman yang dulu masing-masing mencocokkan string
@@ -616,6 +626,7 @@ pub fn nav_for(role: &str) -> &'static [NavDef] {
         "teacher" => NAV_DEWAN, // 'teacher' digabung ke dewan_guru (migrasi 36)
         "dewan_guru" => NAV_DEWAN,
         "admin" | "ketua" => NAV_STAF, // ketua = admin + finance
+        "penjaga" => NAV_PENJAGA,
         // santri_finance = navbar SAMA PERSIS dengan santri. Akses kelola
         // pembayaran lewat tombol di beranda, bukan navbar.
         _ => NAV_SANTRI, // santri + santri_finance + fallback aman

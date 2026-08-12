@@ -42,6 +42,20 @@ const PERAN: &[(&str, &str)] = &[
     ("admin", "Admin"),
 ];
 
+/// Status keanggotaan di PPM (migrasi 82).
+///
+/// Kosong = biarkan seperti adanya. Bukan "tidak diketahui": sebagian besar
+/// santri memang tak pernah berubah statusnya, dan memaksa pengelola memilih
+/// "Aktif" untuk ratusan orang hanya menambah pekerjaan tanpa menambah
+/// keterangan apa pun.
+const STATUS_PPM: &[(&str, &str)] = &[
+    ("", "— (masih aktif)"),
+    ("aktif", "Santri aktif"),
+    ("lulus", "Lulus PPM"),
+    ("mengundurkan_diri", "Mengundurkan diri"),
+    ("pindah", "Pindah"),
+];
+
 const MUBALEGH: &[(&str, &str)] =
     &[("", "—"), ("belum", "Belum"), ("iya", "Mubaligh"), ("tugasan", "Mubaligh Tugasan")];
 const PENDIDIKAN: &[(&str, &str)] = &[
@@ -564,6 +578,7 @@ fn FormProfil(
     let jurusan = RwSignal::new(u.major.clone().unwrap_or_default());
     let mub = RwSignal::new(u.mubalegh_status.clone().unwrap_or_default());
     let pen = RwSignal::new(u.pendidikan_status.clone().unwrap_or_default());
+    let sppm = RwSignal::new(u.status_ppm.clone().unwrap_or_default());
 
     let busy = RwSignal::new(false);
     let err = RwSignal::new(String::new());
@@ -620,6 +635,7 @@ fn FormProfil(
             major: jurusan.get_untracked(),
             mubalegh_status: mub.get_untracked(),
             pendidikan_status: pen.get_untracked(),
+            status_ppm: sppm.get_untracked(),
         };
         leptos::task::spawn_local(async move {
             let hasil = update_managed_user_action(id, p).await;
@@ -691,6 +707,10 @@ fn FormProfil(
                     <Isian label="Jurusan" nilai=jurusan tipe="text" />
                     <Pilihan label="Status Mubaligh" nilai=mub opsi=MUBALEGH />
                     <Pilihan label="Status Pendidikan" nilai=pen opsi=PENDIDIKAN />
+                    <Pilihan label="Status PPM" nilai=sppm opsi=STATUS_PPM />
+                    <p class="text-[11px] text-on-surface-variant -mt-1">
+                        "Riwayat keanggotaan, TERPISAH dari aktif/nonaktif akun.                          Alumni tetap boleh punya akses; santri yang aksesnya                          dicabut sementara statusnya tak ikut berubah."
+                    </p>
                 }
             })}
 

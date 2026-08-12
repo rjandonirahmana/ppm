@@ -31,11 +31,29 @@ fn normalize_sudah_62_atau_plus62_tetap() {
 
 #[test]
 fn normalize_kosong_dan_pendek() {
+    // `normalize_phone` dipakai untuk MENCARI (login, lupa sandi), jadi masukan
+    // yang tak bisa ditafsirkan dikembalikan sebagai digitnya saja — pencarian
+    // berakhir "tak ada yang cocok", bukan galat.
+    //
+    // Berbeda dari sebelumnya: "08" dulu jadi "628" karena awalan nol dipangkas
+    // tanpa memeriksa apa pun. Menyulap potongan angka jadi sesuatu yang
+    // BERBENTUK nomor sah justru berbahaya — bentuk itu bisa tersimpan dan
+    // mengunci nomor yang bukan milik siapa pun. Lihat `models::normalisasi_hp`.
     assert_eq!(normalize_phone(""), "");
-    // Satu nol depan → "62" + sisa (strip_prefix '0' sekali).
-    assert_eq!(normalize_phone("08"), "628");
-    // Tanpa nol depan & bukan 62 → apa adanya (mis. nomor internasional lain).
+    assert_eq!(normalize_phone("08"), "08");
+    // Bukan nomor seluler Indonesia → apa adanya (digitnya saja).
     assert_eq!(normalize_phone("1555"), "1555");
+    // Nomor rumah ikut ditolak: bukan diawali 8 setelah kode negara.
+    assert_eq!(normalize_phone("0217654321"), "0217654321");
+}
+
+/// Cacat yang membuat OTP & pengingat gagal terkirim selamanya — nomor yang
+/// ditulis dengan kode negara DAN angka nol daerah sekaligus.
+#[test]
+fn normalize_kode_negara_plus_nol_daerah() {
+    assert_eq!(normalize_phone("+62 0812-3456-7890"), "6281234567890");
+    // Yang penting: hasilnya tak pernah berawalan "620".
+    assert!(!normalize_phone("+62 0812 3456 7890").starts_with("620"));
 }
 
 // ── role_home (redirect landing per peran) ───────────────────────────────────

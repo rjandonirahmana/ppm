@@ -128,6 +128,10 @@ pub struct ManagedUser {
     pub major: Option<String>,
     pub mubalegh_status: Option<String>,
     pub pendidikan_status: Option<String>,
+    /// Status keanggotaan di PPM (migrasi 82). None/`aktif` = masih santri.
+    /// Terpisah dari `is_active`, yang mengatur AKSES bukan riwayat.
+    #[serde(default)]
+    pub status_ppm: Option<String>,
     pub points: i32,
     /// Sudah punya catatan poin? Menentukan apakah pengaktifan perlu memberi
     /// saldo awal — lihat `repository::activate_user`.
@@ -151,6 +155,9 @@ pub struct ProfilEdit {
     pub major: String,
     pub mubalegh_status: String,
     pub pendidikan_status: String,
+    /// Kosong = biarkan seperti apa adanya (masih santri aktif).
+    #[serde(default)]
+    pub status_ppm: String,
 }
 
 /// Satu anak yang tertaut ke akun orang tua — dipakai panel "Anak" di sheet
@@ -185,6 +192,19 @@ pub fn mubalegh_label(kode: &str) -> &'static str {
     }
 }
 
+/// Label status keanggotaan PPM (migrasi 82) untuk layar.
+pub fn status_ppm_label(kode: &str) -> &'static str {
+    match kode {
+        "aktif" => "Santri aktif",
+        "lulus" => "Lulus PPM",
+        "mengundurkan_diri" => "Mengundurkan diri",
+        "pindah" => "Pindah",
+        // Kosong/NULL berarti belum pernah diubah — dan itu sama artinya
+        // dengan masih aktif, bukan "tidak diketahui".
+        _ => "Santri aktif",
+    }
+}
+
 /// Label status pendidikan (migrasi 73) untuk layar.
 pub fn pendidikan_label(kode: &str) -> &'static str {
     match kode {
@@ -193,4 +213,36 @@ pub fn pendidikan_label(kode: &str) -> &'static str {
         "sarjana" => "Sarjana",
         _ => "—",
     }
+}
+
+// ── Buku tamu: layar penjaga (migrasi 83) ────────────────────────────────────
+
+/// Satu kunjungan tamu di layar penjaga.
+///
+/// Waktu sudah berupa label WIB, bukan timestamp: penjaga membaca "07.42",
+/// bukan menghitung selisih zona waktu sendiri. Pola yang sama dipakai seluruh
+/// payload layar di aplikasi ini.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TamuMasukItem {
+    pub id: i64,
+    pub name: String,
+    pub phone: String,
+    pub purpose: String,
+    /// Foto wajah dari mesin gerbang. Kosong = mesin tak sempat memotret —
+    /// justru baris yang paling perlu diperiksa penjaga.
+    pub face_url: String,
+    pub waktu_label: String,
+    /// Sudah diperiksa penjaga?
+    pub diperiksa: bool,
+    /// Nama penjaga pemeriksa; kosong bila belum.
+    pub diperiksa_oleh: String,
+    /// Catatan kejanggalan. Kosong = dinyatakan cocok.
+    pub catatan: String,
+}
+
+/// Payload layar /tamu-masuk.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TamuMasukData {
+    pub belum_diperiksa: i64,
+    pub items: Vec<TamuMasukItem>,
 }

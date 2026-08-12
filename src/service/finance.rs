@@ -323,14 +323,11 @@ fn ringkas_nama(nama: &[String]) -> String {
     format!("{}, +{} lainnya", nama[..3].join(", "), nama.len() - 3)
 }
 
-/// "08xxx"/"+62xxx" → "62xxx". Sama persis dengan normalisasi di
-/// `service::permits` — WAHA menolak nomor berawalan 0.
+/// Normalisasi HP untuk chat-ID WAHA — satu aturan bersama
+/// ([`crate::models::normalisasi_hp`]). Kosong = nomor tak bisa ditafsirkan;
+/// pemanggil melewatinya alih-alih mengirim ke alamat yang tak sah.
 fn wa_phone(p: &str) -> String {
-    let d: String = p.chars().filter(|c| c.is_ascii_digit()).collect();
-    match d.strip_prefix('0') {
-        Some(rest) => format!("62{rest}"),
-        None => d,
-    }
+    crate::models::normalisasi_hp(p).unwrap_or_default()
 }
 
 #[cfg(test)]

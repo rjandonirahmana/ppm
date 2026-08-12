@@ -15,14 +15,20 @@ pub struct LoginOk {
     pub redirect: String,
 }
 
-/// Normalisasi input jadi bentuk HP tersimpan (08.. → 62..). Non-digit dibuang.
-/// Dipakai login (cocokkan phone_number) & forgot-password.
+/// Normalisasi input jadi bentuk HP tersimpan. Dipakai login (mencocokkan
+/// `phone_number`) & lupa-sandi.
+///
+/// Meneruskan ke [`crate::models::normalisasi_hp`] — SATU aturan untuk seluruh
+/// aplikasi. Empat salinan yang dulu berdiri sendiri membuat nomor yang sama
+/// tersimpan berbeda tergantung pintu masuknya, dan pencarian yang
+/// membandingkan teks tak menemukannya.
+///
+/// Masukan yang tak bisa ditafsirkan dikembalikan sebagai digitnya saja, BUKAN
+/// ditolak: fungsi ini juga dipakai MENCARI, dan pencarian yang gagal harus
+/// berakhir "tak ada yang cocok", bukan galat.
 pub fn normalize_phone(s: &str) -> String {
-    let d: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
-    match d.strip_prefix('0') {
-        Some(rest) => format!("62{rest}"),
-        None => d,
-    }
+    crate::models::normalisasi_hp(s)
+        .unwrap_or_else(|| s.chars().filter(|c| c.is_ascii_digit()).collect())
 }
 
 /// Hash bcrypt boneka (cost 10, sama dgn hash asli) untuk menyamakan waktu

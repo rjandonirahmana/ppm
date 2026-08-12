@@ -2945,3 +2945,38 @@ pub async fn server_status_data() -> Result<crate::models::ServerStatus, ServerF
     let state = app_state().await?;
     Ok(crate::service::server::status(&state.pool).await)
 }
+
+// ── Buku tamu: layar PENJAGA (migrasi 83) ────────────────────────────────────
+//
+// Penjaga gerbang punya satu pekerjaan: mencocokkan wajah yang terpotret mesin
+// dengan nama & keperluan yang diketik tamu. Admin/ketua ikut boleh membuka —
+// merekalah yang membaca catatan kejanggalannya — tapi peran lain tidak: isi
+// buku tamu memuat nama, nomor HP, dan foto wajah orang luar.
+//
+// Server-only: dibaca badan server fn saja (di build WASM badan itu diganti
+// pemanggil jaringan, dan constnya jadi tak terpakai).
+#[cfg(feature = "ssr")]
+const TAMU_REVIEW_ROLES: &[&str] = &["penjaga", "admin", "ketua"];
+
+/// Daftar kunjungan tamu untuk diperiksa penjaga.
+#[server(GetTamuMasuk, "/api-fn")]
+pub async fn tamu_masuk_data(
+    hanya_belum: bool,
+) -> Result<crate::models::TamuMasukData, ServerFnError> {
+    require_roles(TAMU_REVIEW_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::guest::tamu_masuk(&state.pool, hanya_belum).await.map_err(err)
+}
+
+/// Tandai satu kunjungan sudah diperiksa. `catatan` kosong = data cocok.
+#[server(PeriksaTamu, "/api-fn")]
+pub async fn periksa_tamu_action(
+    visit_id: i64,
+    catatan: String,
+) -> Result<(), ServerFnError> {
+    let sess = require_roles(TAMU_REVIEW_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::guest::periksa_tamu(&state.pool, visit_id, sess.id, &catatan)
+        .await
+        .map_err(err)
+}

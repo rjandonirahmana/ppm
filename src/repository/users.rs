@@ -430,8 +430,18 @@ pub async fn role_of_user(pool: &Pool, user_id: i64) -> Result<Option<String>> {
 }
 
 // Roles yang valid di sistem. SYNC dengan migration 44 database constraint.
-const VALID_ROLES: &[&str] =
-    &["admin", "ketua", "dewan_guru", "supervisor", "santri", "santri_finance", "parent"];
+const VALID_ROLES: &[&str] = &[
+    "admin",
+    "ketua",
+    "dewan_guru",
+    "supervisor",
+    "santri",
+    "santri_finance",
+    "parent",
+    // Penjaga gerbang — memeriksa kecocokan data tamu (migrasi 83). WAJIB
+    // sepadan dengan CHECK `users_role_check` di basis data.
+    "penjaga",
+];
 
 // ── Registrasi via link undangan (migrasi 19) ───────────────────────────────
 
@@ -643,7 +653,7 @@ pub async fn list_users_managed(
         .query(
             "SELECT u.id, u.full_name, u.role, u.is_active, u.nis, u.phone_number, \
                     u.entry_year, u.gender, u.campus, u.major, \
-                    u.mubalegh_status, u.pendidikan_status, u.points, \
+                    u.mubalegh_status, u.pendidikan_status, u.status_ppm, u.points, \
                     EXISTS (SELECT 1 FROM point_logs pl WHERE pl.user_id = u.id) \
                FROM users u \
               WHERE ($1::bool IS NULL OR u.is_active = $1) \
@@ -676,8 +686,9 @@ pub async fn list_users_managed(
                 major: r.get(9),
                 mubalegh_status: r.get(10),
                 pendidikan_status: r.get(11),
-                points: r.get(12),
-                has_point_logs: r.get(13),
+                status_ppm: r.get(12),
+                points: r.get(13),
+                has_point_logs: r.get(14),
             }
         })
         .collect())
@@ -838,22 +849,40 @@ pub async fn update_user_profile(
         anyhow::bail!("Nama tidak boleh kosong.");
     }
     let nis = kosong_jadi_null(&p.nis);
-    let hp = kosong_jadi_null(&p.phone_number);
+    // HP DINORMALKAN ke bentuk simpan `628…` sebelum disentuh basis data —
+    // sama seperti pendaftaran, login, dan buku tamu. Tanpa ini pengelola yang
+    // mengetik "0812…" menyimpan bentuk ketiga untuk nomor yang sama: login
+    // dengan nomor itu tak menemukannya, dan chat-id WAHA-nya tak sah sehingga
+    // OTP maupun pengingat tak pernah sampai.
+    //
+    // Nomor yang tak bisa ditafsirkan DITOLAK, bukan disimpan apa adanya:
+    // kolomnya UNIK, dan menyimpan bentuk cacat berarti mengunci nomor itu
+    // untuk selamanya bagi orang lain yang menulisnya dengan benar.
+    let hp = match kosong_jadi_null(&p.phone_number) {
+        None => None,
+        Some(raw) => match crate::models::normalisasi_hp(&raw) {
+            Some(ok) => Some(ok),
+            None => anyhow::bail!("{}", crate::models::pesan_hp_tidak_sah()),
+        },
+    };
     let gender = kosong_jadi_null(&p.gender);
     let campus = kosong_jadi_null(&p.campus);
     let major = kosong_jadi_null(&p.major);
     let mub = kosong_jadi_null(&p.mubalegh_status);
     let pen = kosong_jadi_null(&p.pendidikan_status);
+    let sppm = kosong_jadi_null(&p.status_ppm);
 
     let c = pool.get().await?;
     let n = c
         .execute(
             "UPDATE users SET full_name = $2, nis = $3, phone_number = $4, \
                     entry_year = $5, gender = $6, campus = $7, major = $8, \
-                    mubalegh_status = $9, pendidikan_status = $10, updated_at = NOW() \
+                    mubalegh_status = $9, pendidikan_status = $10, status_ppm = $11, \
+                    updated_at = NOW() \
              WHERE id = $1",
             &[
                 &user_id, &nama, &nis, &hp, &p.entry_year, &gender, &campus, &major, &mub, &pen,
+                &sppm,
             ],
         )
         .await

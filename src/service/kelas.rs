@@ -854,7 +854,18 @@ pub async fn kelas_detail(
         require_pamong: ci.require_pamong,
         verify_mode: ci.verify_mode.clone(),
         can_manage: crate::models::role_satisfies(role, &["admin"]),
+        // WALI KELAS ikut. Sebelumnya hanya admin dan pamong — jadi guru yang
+        // baru saja ditunjuk jadi wali kelas mendapati kelasnya sendiri
+        // terkunci: tak bisa membuat jadwal, tak bisa membuat sesi, tak bisa
+        // menambahkan santri. Padahal menunjuk seseorang jadi wali kelas justru
+        // berarti menyerahkan kelas itu kepadanya.
+        //
+        // Pamong TETAP di sini selama perannya masih ada. Saat `supervisor`
+        // dilebur ke `dewan_guru` nanti, syarat itu tinggal dibuang — dan
+        // sampai saat itu membuangnya lebih dulu akan mengunci pamong yang
+        // hari ini masih mengurus kelas non-KBM.
         can_manage_jadwal: crate::models::role_satisfies(role, &["admin"])
+            || ci.wali_kelas_id == Some(user_id)
             || ci.pamong_id == Some(user_id),
         pamong_id: ci.pamong_id.unwrap_or(0),
         pamong_name: ci.pamong_name.unwrap_or_default(),
