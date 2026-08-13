@@ -543,6 +543,18 @@ pub async fn submit_permit_action(
     Ok(())
 }
 
+/// Santri yang SEDANG izin/sakit hari ini — pantauan /izin-aktif.
+///
+/// Berbeda dari antrean /izin-staf: ini bacaan, bukan keputusan. Karena itu
+/// ketua & admin BOLEH — merekalah yang perlu tahu siapa saja yang hari ini tak
+/// masuk — sementara antrean keputusan tetap tertutup untuk mereka.
+#[server(GetSedangIzin, "/api-fn")]
+pub async fn sedang_izin_data() -> Result<Vec<crate::models::SedangIzinItem>, ServerFnError> {
+    require_roles(&["admin", "ketua", "dewan_guru", "teacher", "supervisor"]).await?;
+    let state = app_state().await?;
+    crate::service::permits::sedang_izin(&state.pool).await.map_err(err)
+}
+
 /// Antrean izin sisi staf — /izin-staf. Antrean menyesuaikan peran (pamong →
 /// tahap 1; wali kelas → keputusan final). Dewan guru TIDAK terlibat izin santri
 /// (cukup pamong bila 2 tahap + wali kelas); admin tetap sbg superuser.
@@ -3116,14 +3128,29 @@ pub async fn server_status_data() -> Result<crate::models::ServerStatus, ServerF
 #[cfg(feature = "ssr")]
 const TAMU_REVIEW_ROLES: &[&str] = &["penjaga", "admin", "ketua"];
 
-/// Daftar kunjungan tamu untuk diperiksa penjaga.
+/// Daftar kunjungan tamu untuk diperiksa penjaga (+ dibaca admin/ketua).
 #[server(GetTamuMasuk, "/api-fn")]
 pub async fn tamu_masuk_data(
     hanya_belum: bool,
+    rentang: String,
 ) -> Result<crate::models::TamuMasukData, ServerFnError> {
     require_roles(TAMU_REVIEW_ROLES).await?;
     let state = app_state().await?;
-    crate::service::guest::tamu_masuk(&state.pool, hanya_belum).await.map_err(err)
+    crate::service::guest::tamu_masuk(&state.pool, hanya_belum, &rentang).await.map_err(err)
+}
+
+/// Halaman kunjungan berikutnya (gulir-tak-berujung).
+#[server(GetTamuMasukPage, "/api-fn")]
+pub async fn tamu_masuk_page(
+    hanya_belum: bool,
+    rentang: String,
+    offset: i64,
+) -> Result<Vec<crate::models::TamuMasukItem>, ServerFnError> {
+    require_roles(TAMU_REVIEW_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::guest::tamu_masuk_page(&state.pool, hanya_belum, &rentang, offset)
+        .await
+        .map_err(err)
 }
 
 /// Tandai satu kunjungan sudah diperiksa. `catatan` kosong = data cocok.

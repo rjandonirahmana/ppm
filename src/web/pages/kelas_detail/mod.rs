@@ -17,8 +17,9 @@ mod kurikulum;
 mod santri;
 mod sesi;
 
+pub use jadwal::PosisiBerjalan;
 use jadwal::JadwalTab;
-use kurikulum::KurikulumTab;
+pub use kurikulum::KurikulumTab;
 use santri::SantriTab;
 use sesi::SesiTab;
 

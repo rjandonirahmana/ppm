@@ -179,7 +179,38 @@ pub fn MobileHeader(
         }
         let ada_riwayat = riwayat.map(|r| r.bisa_mundur()).unwrap_or(false);
         if !ada_riwayat {
-            return; // biarkan <a href> berjalan normal
+            // Tak ada riwayat aplikasi (halaman dibuka langsung / hasil
+            // refresh) → `back_href` yang dipakai. Tapi delapan halaman staf
+            // menulis "/staf" sebagai tujuan kembalinya, dan /staf adalah
+            // BERANDA ADMIN. Dewan guru boleh membukanya (lihat
+            // `staf_home_data`), jadi ia tak ditolak — ia cuma mendarat di
+            // dashboard yang bukan miliknya, lalu menekan Beranda dan kembali
+            // ke tampilan guru. Persis keluhan "beranda guru kadang seperti
+            // admin, lalu balik lagi".
+            //
+            // Tujuannya dikoreksi SAAT KLIK, bukan saat render: membaca peran
+            // dari Resource sesi di tengah render (di luar Suspense) memicu
+            // hydration-mismatch, dan atribut `href` yang berbeda antara HTML
+            // server dan hasil hidrasi persis bentuk masalah itu. Di sini
+            // pembacaannya untracked dan hanya terjadi setelah jari menyentuh.
+            // `back_href` disalin ke sini (Option<&'static str> itu Copy) —
+            // `href` hanya ada di dalam closure penyusun tautannya, di bawah.
+            #[cfg(target_arch = "wasm32")]
+            if back_href == Some("/staf") {
+                let peran = session
+                    .and_then(|s| s.get_untracked())
+                    .flatten()
+                    .map(|u| u.role)
+                    .unwrap_or_default();
+                let beranda = crate::models::role_home(&peran);
+                if !peran.is_empty() && beranda != "/staf" {
+                    ev.prevent_default();
+                    if let Some(w) = web_sys::window() {
+                        let _ = w.location().assign(beranda);
+                    }
+                }
+            }
+            return; // selain itu: biarkan <a href> berjalan normal
         }
         ev.prevent_default();
         #[cfg(target_arch = "wasm32")]
@@ -331,9 +362,13 @@ fn nav_visible(path: &str) -> bool {
         "/kelas-saya",
         "/dewan-guru", "/poin", "/poin-saya", "/verifikasi-pamong",
         "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua", "/kontrol-pengguna",
-        "/akademik", "/kalender", "/izin-staf", "/materi", "/rekap-mingguan",
+        "/akademik", "/kalender", "/izin-staf", "/izin-aktif", "/materi", "/rekap-mingguan",
         "/galeri", "/tagihan", "/tagihan-saya", "/kelola-artikel", "/manajemen-user",
         "/status-server",
+        // Beranda peran PENJAGA. Sempat terlewat: tanpa prefix ini, satu-satunya
+        // halamannya tampil TANPA navbar sama sekali (dan tanpa kanvas lebar di
+        // desktop) — lihat catatan `nav_visible` di atas.
+        "/tamu-masuk",
     ];
     PREFIXES
         .iter()
@@ -1695,27 +1730,29 @@ pub fn KotakCari(
     }
 }
 
-/// Daftar kartu dua kolom yang tingginya berdiri sendiri (masonry).
+/// Daftar kartu: satu kolom di ponsel, dua kolom di layar lebar.
 ///
-/// `<div class="ppm-card-grid">` polos memakai CSS Grid, dan grid selalu
-/// menyusun per BARIS: kartu pendek di sebelah kartu panjang meninggalkan
-/// lubang kosong sampai baris berikutnya boleh mulai. Yang dipakai di sini
-/// multi-kolom CSS (`.ppm-masonry`), yang mengalirkan kartu tanpa baris.
+/// Dulu ini memakai multi-kolom CSS (`.ppm-masonry`) agar kartu mengalir tanpa
+/// baris — kartu pendek langsung menempel di bawah kartu pendek lain, tanpa
+/// lubang menunggu baris berikutnya. Idenya benar, akibatnya tidak: kolom
+/// kanan pada multi-kolom adalah PARUH BAWAH daftar, jadi tiap kali daftarnya
+/// bertambah (refetch, gulir-tak-berujung) peramban menyeimbangkan ulang
+/// keduanya — kartu meloncat antar kolom dan sisi kanan berkedip hilang-muncul.
+/// Dan bila isinya cuma SATU kartu, separuh kanan tetap kosong melompong.
 ///
-/// KARTU TIDAK LAGI DIPECAH KE DUA PEMBUNGKUS. Versi sebelumnya membagi genap
-/// ke kiri dan ganjil ke kanan lalu membetulkan tampilannya dengan `order` —
-/// dan `order` hanya memindahkan yang TERLIHAT. Pembaca layar serta urutan Tab
+/// Sekarang `.ppm-card-grid`: tiap kartu punya selnya sendiri (tak pernah
+/// dipecah, tak pernah dihitung ulang saat daftar tumbuh), dan kolom yang tak
+/// terpakai diruntuhkan `auto-fit` sehingga satu kartu melebar penuh. Lubang
+/// antar-baris memang kembali — itu harga yang jauh lebih murah daripada
+/// konten yang lenyap.
+///
+/// KARTU TIDAK DIPECAH KE DUA PEMBUNGKUS. Versi lampau membagi genap ke kiri
+/// dan ganjil ke kanan lalu membetulkan tampilannya dengan `order` — dan
+/// `order` hanya memindahkan yang TERLIHAT. Pembaca layar serta urutan Tab
 /// mengikuti DOM, jadi keduanya membacakan 1,3,5,2,4 sementara mata melihat
 /// 1,2,3,4,5. Di sini urutan DOM = urutan baca = urutan tampil.
-///
-/// Harga yang dibayar: di desktop urutannya jadi per-kolom (paruh pertama di
-/// kiri, sisanya di kanan), bukan selang-seling. Lihat `.ppm-masonry` di
-/// style/tailwind.css.
-///
-/// Dipakai untuk daftar kartu seragam. Kalau isinya campur (mis. satu pesan
-/// "kosong" yang harus melebar penuh), pakai `.ppm-card-grid` langsung.
 pub fn kartu_grid(kartu: Vec<AnyView>) -> impl IntoView {
-    view! { <div class="ppm-masonry">{kartu}</div> }
+    view! { <div class="ppm-card-grid">{kartu}</div> }
 }
 
 /// Placeholder memuat berbentuk balok — menggantikan blok `animate-pulse`

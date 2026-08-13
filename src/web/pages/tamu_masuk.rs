@@ -13,24 +13,40 @@
 //! berdiri di gerbang. Yang bisa dilakukan penjaga bukan membatalkan kejadian,
 //! melainkan MENCATAT bahwa datanya tak cocok supaya pengurus menindaklanjuti.
 //! Tombol yang menjanjikan pembatalan akan berbohong.
+//!
+//! ADMIN & KETUA juga membuka halaman ini (server sudah mengizinkannya sejak
+//! awal lewat `TAMU_REVIEW_ROLES`; yang kurang cuma jalan masuknya — kini ada
+//! petak "Buku Tamu" di /staf). Mereka membacanya sebagai RIWAYAT, bukan
+//! antrean, jadi ada penyaring rentang waktu dan daftarnya bergulir tak
+//! berujung — buku tamu hanya tumbuh, dan versi pertama yang `LIMIT 100` tanpa
+//! offset membuat kunjungan ke-101 mustahil dilihat dari mana pun.
 
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::TamuMasukItem;
-use crate::web::api::{periksa_tamu_action, tamu_masuk_data};
+use crate::models::{TamuMasukItem, RENTANG_TAMU};
+use crate::web::api::{periksa_tamu_action, tamu_masuk_data, tamu_masuk_page};
 use crate::web::components::{
     kartu_grid, DeviceFrame, EmptyState, FetchError, FlashMsg, MediaFrame, MobileHeader,
 };
+
+/// Sama dengan `service::guest::TAMU_PER_PAGE` — klien memakainya untuk
+/// menyimpulkan "sudah halaman terakhir" dari jumlah baris yang datang.
+const PER_HALAMAN: i64 = 20;
 
 #[component]
 pub fn TamuMasukPage() -> impl IntoView {
     // Bawaannya HANYA yang belum diperiksa: itulah pekerjaan yang menunggu.
     // Riwayat lengkap ada di balik satu ketukan, bukan sebaliknya.
     let hanya_belum = RwSignal::new(true);
+    // Bawaan "30 hari": penjaga hanya peduli hari ini, tapi admin yang membuka
+    // riwayat hampir selalu mencari kunjungan beberapa pekan terakhir — dan
+    // memuat SELURUH buku tamu sejak awal hanya untuk itu adalah pemborosan
+    // yang bertambah tiap bulan.
+    let rentang = RwSignal::new("30".to_string());
     let data = Resource::new(
-        move || hanya_belum.get(),
-        |belum| async move { tamu_masuk_data(belum).await },
+        move || (hanya_belum.get(), rentang.get()),
+        |(belum, r)| async move { tamu_masuk_data(belum, r).await },
     );
 
     crate::web::components::guard_sesi(data);
@@ -45,6 +61,31 @@ pub fn TamuMasukPage() -> impl IntoView {
 
                 <div class="px-5 pt-5 space-y-4 stagger">
                     <FlashMsg pesan=msg />
+
+                    // ── Rentang waktu ────────────────────────────────────
+                    <div class="flex gap-1.5 overflow-x-auto pb-0.5">
+                        {RENTANG_TAMU
+                            .iter()
+                            .map(|(nilai, label)| {
+                                let v = *nilai;
+                                let aktif = move || rentang.get() == v;
+                                view! {
+                                    <button
+                                        class=move || {
+                                            if aktif() {
+                                                "px-3.5 py-1.5 rounded-full bg-primary text-on-primary text-body-sm font-semibold whitespace-nowrap shrink-0 press"
+                                            } else {
+                                                "px-3.5 py-1.5 rounded-full bg-surface-container text-on-surface-variant text-body-sm font-medium whitespace-nowrap shrink-0 press"
+                                            }
+                                        }
+                                        on:click=move |_| rentang.set(v.to_string())
+                                    >
+                                        {*label}
+                                    </button>
+                                }
+                            })
+                            .collect_view()}
+                    </div>
 
                     <Suspense fallback=|| {
                         view! {
@@ -75,7 +116,7 @@ pub fn TamuMasukPage() -> impl IntoView {
                                                         </span>
                                                     </div>
                                                     <p class="text-body-sm text-on-surface-variant mt-1">
-                                                        "Menunggu diperiksa"
+                                                        "Menunggu diperiksa · " {d.rentang_label.clone()}
                                                     </p>
                                                 </div>
                                                 // Tombol, bukan tab: hanya ada dua keadaan, dan
@@ -98,23 +139,22 @@ pub fn TamuMasukPage() -> impl IntoView {
                                                 view! {
                                                     <EmptyState
                                                         icon="task_alt"
-                                                        title="Tidak ada tamu menunggu"
-                                                        subtitle="Semua kunjungan yang tercatat sudah diperiksa."
+                                                        title="Tidak ada tamu di rentang ini"
+                                                        subtitle="Coba lebarkan rentang waktunya, atau semua kunjungan memang sudah diperiksa."
                                                     />
                                                 }
                                                     .into_any()
                                             } else {
-                                                kartu_grid(
-                                                        d.items
-                                                            .into_iter()
-                                                            .map(|t| {
-                                                                view! {
-                                                                    <KartuTamu t=t msg=msg refetch=move || data.refetch() />
-                                                                }
-                                                                    .into_any()
-                                                            })
-                                                            .collect::<Vec<_>>(),
-                                                    )
+                                                view! {
+                                                    <DaftarTamu
+                                                        awal=d.items
+                                                        total=d.total
+                                                        hanya_belum=hanya_belum
+                                                        rentang=rentang
+                                                        msg=msg
+                                                        refetch=move || data.refetch()
+                                                    />
+                                                }
                                                     .into_any()
                                             }}
                                         }
@@ -263,5 +303,115 @@ fn KartuTamu(
                     .into_any()
             }}
         </div>
+    }
+}
+
+/// Daftar kunjungan yang BERTAMBAH saat digulir.
+///
+/// Pola sama dengan `/students` dan `/poin`: sentinel setinggi 1px di dasar
+/// daftar, diamati `IntersectionObserver` (bukan listener `scroll`, yang menyala
+/// puluhan kali per detik dan harus di-throttle sendiri).
+///
+/// Halaman pertama datang bersama payload utama; komponen ini hanya menyusul
+/// sisanya. Saat penyaring berubah, `Suspense` di induk membangun ulang
+/// komponen ini dari nol — jadi tumpukan lamanya ikut hilang dengan sendirinya,
+/// tanpa perlu efek pembersih.
+#[component]
+fn DaftarTamu(
+    awal: Vec<TamuMasukItem>,
+    total: i64,
+    hanya_belum: RwSignal<bool>,
+    rentang: RwSignal<String>,
+    msg: RwSignal<Option<(bool, String)>>,
+    refetch: impl Fn() + Copy + Send + 'static,
+) -> impl IntoView {
+    let baris = RwSignal::new(awal);
+    let memuat = RwSignal::new(false);
+    let habis = RwSignal::new(false);
+
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
+    let ambil = move |offset: i64| {
+        if memuat.get_untracked() {
+            return;
+        }
+        memuat.set(true);
+        let (belum, r) = (hanya_belum.get_untracked(), rentang.get_untracked());
+        leptos::task::spawn_local(async move {
+            match tamu_masuk_page(belum, r, offset).await {
+                Ok(rows) => {
+                    habis.set((rows.len() as i64) < PER_HALAMAN);
+                    baris.update(|v| v.extend(rows));
+                }
+                Err(_) => habis.set(true),
+            }
+            memuat.set(false);
+        });
+    };
+
+    let sentinel: NodeRef<leptos::html::Div> = NodeRef::new();
+    #[cfg(target_arch = "wasm32")]
+    Effect::new(move |sudah: Option<bool>| {
+        if sudah == Some(true) {
+            return true;
+        }
+        let Some(el) = sentinel.get() else { return false };
+        use wasm_bindgen::closure::Closure;
+        use wasm_bindgen::JsCast;
+        let cb = Closure::<dyn FnMut(js_sys::Array)>::new(move |entries: js_sys::Array| {
+            let terlihat = entries.iter().any(|e| {
+                e.dyn_into::<web_sys::IntersectionObserverEntry>()
+                    .map(|e| e.is_intersecting())
+                    .unwrap_or(false)
+            });
+            // Sentinel tetap terlihat SELAMA pemuatan; tanpa penjagaan ini ia
+            // menembakkan permintaan beruntun untuk offset yang sama.
+            if terlihat && !habis.get_untracked() && !memuat.get_untracked() {
+                ambil(baris.get_untracked().len() as i64);
+            }
+        });
+        let opts = web_sys::IntersectionObserverInit::new();
+        opts.set_root_margin("400px");
+        if let Ok(obs) =
+            web_sys::IntersectionObserver::new_with_options(cb.as_ref().unchecked_ref(), &opts)
+        {
+            obs.observe(&el);
+            cb.forget();
+            std::mem::forget(obs);
+        }
+        true
+    });
+
+    view! {
+        <p class="text-body-sm text-on-surface-variant">
+            {move || {
+                let dimuat = baris.get().len();
+                if (dimuat as i64) < total {
+                    format!("Menampilkan {dimuat} dari {total} kunjungan")
+                } else {
+                    format!("{total} kunjungan")
+                }
+            }}
+        </p>
+        {move || {
+            kartu_grid(
+                baris
+                    .get()
+                    .into_iter()
+                    .map(|t| view! { <KartuTamu t=t msg=msg refetch=refetch /> }.into_any())
+                    .collect::<Vec<_>>(),
+            )
+        }}
+        <div node_ref=sentinel class="h-px"></div>
+        <Show when=move || memuat.get()>
+            <p class="py-4 text-center text-body-sm text-on-surface-variant flex items-center justify-center gap-2">
+                <span class="material-symbols-outlined text-[18px] pulse-dot">"sync"</span>
+                "Memuat…"
+            </p>
+        </Show>
+        <Show when=move || habis.get() && (baris.get().len() as i64 > PER_HALAMAN)>
+            <p class="py-4 text-center text-[11px] text-on-surface-variant/70">
+                "Semua kunjungan di rentang ini sudah ditampilkan."
+            </p>
+        </Show>
     }
 }

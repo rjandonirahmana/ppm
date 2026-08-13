@@ -193,6 +193,53 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
                 </div>
             </header>
 
+            // ── Spanduk: sedang izin/sakit ─────────────────────────────────
+            // PALING ATAS, sebelum kartu poin. Santri yang sedang sakit membuka
+            // aplikasi dari beranda; yang perlu ia ketahui lebih dulu bukan
+            // poinnya, melainkan sampai kapan izinnya berlaku dan jam berapa ia
+            // harus sudah kembali.
+            {home
+                .izin_aktif
+                .clone()
+                .map(|a| {
+                    let sisa = if a.sisa_hari <= 1 {
+                        "hari terakhir".to_string()
+                    } else {
+                        format!("{} hari lagi", a.sisa_hari)
+                    };
+                    let ikon = if a.kind == "sick" { "healing" } else { "event_available" };
+                    view! {
+                        <a
+                            href="/izin"
+                            class="block rounded-2xl p-4 bg-warning/10 border border-warning/40 press"
+                        >
+                            <div class="flex items-start gap-3">
+                                <span class="w-11 h-11 rounded-full bg-warning/20 shrink-0 flex items-center justify-center text-warning">
+                                    <span class="material-symbols-outlined">{ikon}</span>
+                                </span>
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-body-md font-bold text-on-background">
+                                        "Kamu sedang " {a.kind_label.to_lowercase()}
+                                    </p>
+                                    <p class="text-body-sm text-on-background">{a.range_label}</p>
+                                    <p class="text-[11px] text-on-surface-variant">
+                                        {a.sampai_label} " · " {sisa}
+                                    </p>
+                                    {(!a.jam_label.is_empty())
+                                        .then(|| {
+                                            view! {
+                                                <p class="text-[11px] text-on-surface-variant">
+                                                    "Berlaku tiap hari " {a.jam_label.clone()}
+                                                </p>
+                                            }
+                                        })}
+                                </div>
+                                <span class="material-symbols-outlined text-on-surface-variant">"chevron_right"</span>
+                            </div>
+                        </a>
+                    }
+                })}
+
             // ── Kartu Poin ──────────────────────────────────────────────────
             // Kartunya sendiri yang jadi tautan ke riwayat: di sinilah santri
             // melihat angkanya, dan pertanyaan berikutnya SELALU "kenapa

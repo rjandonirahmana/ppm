@@ -110,6 +110,35 @@ pub fn permit_stage(
     }
 }
 
+/// Satu santri yang izin/sakitnya SEDANG BERLAKU hari ini.
+///
+/// Bentuk yang SAMA dipakai dua layar: daftar pantauan staf (`/izin-aktif`) dan
+/// spanduk di layar santri sendiri (`/izin`). Yang berbeda cuma medan mana yang
+/// ditampilkan — dua payload untuk data yang sama cepat atau lambat berbeda
+/// isinya.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SedangIzinItem {
+    pub user_id: i64,
+    pub name: String,
+    /// "-" bila santri belum punya NIS.
+    pub nis: String,
+    /// "-" bila belum masuk kelas mana pun.
+    pub class_name: String,
+    /// "Izin Sakit" / "Izin Pulang" / "Keperluan".
+    pub kind_label: String,
+    /// sick|leave|keperluan|other — untuk warna lencana.
+    pub kind: String,
+    /// "13 Agu 2026 – 15 Agu 2026".
+    pub range_label: String,
+    /// "07:00 – 12:00 WIB"; kosong = sehari penuh.
+    pub jam_label: String,
+    /// "sampai hari ini" / "sampai 15 Agu 2026".
+    pub sampai_label: String,
+    /// Berapa hari lagi izinnya berlaku, TERMASUK hari ini (minimal 1).
+    pub sisa_hari: i64,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IzinData {
     /// Persentase kehadiran semester ini.
@@ -119,6 +148,12 @@ pub struct IzinData {
     pub points: i32,
     /// "Halaqah Subuh • 05:12 WIB" — scan terakhir hari ini (bila ada).
     pub detected: Option<String>,
+    /// Izin/sakit yang SEDANG BERLAKU untuk santri ini — None bila tak ada.
+    /// Ditampilkan sebagai spanduk supaya santri tahu sampai kapan izinnya
+    /// berlaku, dan tahu bahwa ia masih boleh mengajukan perpanjangan bila
+    /// masih sakit.
+    #[serde(default)]
+    pub aktif: Option<SedangIzinItem>,
     pub permits: Vec<PermitItem>,
 }
 

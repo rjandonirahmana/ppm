@@ -127,30 +127,85 @@ pub async fn check_status(
 ///
 /// `hanya_belum` menyisakan yang belum diperiksa — itu pekerjaan penjaga.
 /// Riwayat lengkap tetap bisa dibuka untuk menelusuri kunjungan lama.
+pub const TAMU_PER_PAGE: i64 = 20;
+
+/// Rentang waktu → (batas paling awal, label untuk layar).
+///
+/// "Semester ini" dibaca dari tabel semester akademik (migrasi 40), bukan
+/// ditebak enam bulan ke belakang: pondok yang memundurkan awal semester akan
+/// melihat angka yang salah sepanjang periode itu, dan tak ada yang menyadari
+/// karena angkanya tetap tampak masuk akal.
+async fn batas_rentang(
+    pool: &deadpool_postgres::Pool,
+    rentang: &str,
+) -> (Option<chrono::DateTime<chrono::Utc>>, String) {
+    match rentang {
+        "hari_ini" => (Some(super::fmt::days_ago_wib(0)), "Hari ini".into()),
+        "7" => (Some(super::fmt::days_ago_wib(6)), "7 hari terakhir".into()),
+        "30" => (Some(super::fmt::days_ago_wib(29)), "30 hari terakhir".into()),
+        "semester" => match super::santri::current_semester(pool).await {
+            Ok((mulai, label)) => (Some(mulai), label),
+            Err(_) => (None, "Semua".into()),
+        },
+        // Termasuk "semua" dan nilai tak dikenal: JANGAN diam-diam menyaring
+        // sesuatu yang tak diminta.
+        _ => (None, "Semua".into()),
+    }
+}
+
+fn baris_tamu(g: crate::repository::KunjunganTamu) -> crate::models::TamuMasukItem {
+    crate::models::TamuMasukItem {
+        id: g.id,
+        name: g.name,
+        phone: g.phone,
+        purpose: g.purpose,
+        face_url: g.face_url.unwrap_or_default(),
+        waktu_label: super::fmt::fmt_when(g.checked_in_at),
+        diperiksa: g.verified_at.is_some(),
+        diperiksa_oleh: g.verified_by_name.unwrap_or_default(),
+        catatan: g.verify_note,
+    }
+}
+
 pub async fn tamu_masuk(
     pool: &deadpool_postgres::Pool,
     hanya_belum: bool,
+    rentang: &str,
 ) -> Result<crate::models::TamuMasukData> {
-    let rows = crate::repository::list_kunjungan_tamu(pool, hanya_belum, 100).await?;
-    // Dihitung terpisah dari daftar: saat penjaga membuka riwayat lengkap,
-    // angka "menunggu diperiksa" harus tetap menyebut yang menunggu — bukan
-    // jumlah baris yang kebetulan sedang tampil.
-    let belum = crate::repository::list_kunjungan_tamu(pool, true, 500).await?.len() as i64;
-    let items = rows
-        .into_iter()
-        .map(|g| crate::models::TamuMasukItem {
-            id: g.id,
-            name: g.name,
-            phone: g.phone,
-            purpose: g.purpose,
-            face_url: g.face_url.unwrap_or_default(),
-            waktu_label: super::fmt::fmt_when(g.checked_in_at),
-            diperiksa: g.verified_at.is_some(),
-            diperiksa_oleh: g.verified_by_name.unwrap_or_default(),
-            catatan: g.verify_note,
-        })
-        .collect();
-    Ok(crate::models::TamuMasukData { belum_diperiksa: belum, items })
+    let (sejak, rentang_label) = batas_rentang(pool, rentang).await;
+    let (rows, total, belum) = tokio::join!(
+        crate::repository::list_kunjungan_tamu(pool, hanya_belum, sejak, TAMU_PER_PAGE, 0),
+        crate::repository::count_kunjungan_tamu(pool, hanya_belum, sejak),
+        // Dihitung terpisah dari daftar: saat riwayat lengkap dibuka, angka
+        // "menunggu diperiksa" harus tetap menyebut yang menunggu — bukan
+        // jumlah baris yang kebetulan sedang tampil.
+        crate::repository::count_kunjungan_tamu(pool, true, sejak),
+    );
+    Ok(crate::models::TamuMasukData {
+        belum_diperiksa: belum?,
+        total: total?,
+        rentang_label,
+        items: rows?.into_iter().map(baris_tamu).collect(),
+    })
+}
+
+/// Halaman berikutnya (gulir-tak-berujung).
+pub async fn tamu_masuk_page(
+    pool: &deadpool_postgres::Pool,
+    hanya_belum: bool,
+    rentang: &str,
+    offset: i64,
+) -> Result<Vec<crate::models::TamuMasukItem>> {
+    let (sejak, _) = batas_rentang(pool, rentang).await;
+    let rows = crate::repository::list_kunjungan_tamu(
+        pool,
+        hanya_belum,
+        sejak,
+        TAMU_PER_PAGE,
+        offset.max(0),
+    )
+    .await?;
+    Ok(rows.into_iter().map(baris_tamu).collect())
 }
 
 /// Tandai satu kunjungan sudah diperiksa. Catatan kosong = data cocok.

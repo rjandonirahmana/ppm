@@ -16,4 +16,11 @@ pub struct SantriHome {
     pub month_pct: Option<i32>,
     /// Perubahan poin bulan berjalan (dari point_logs).
     pub month_points: i64,
+    /// Izin/sakit yang SEDANG BERLAKU — spanduk di beranda. None = masuk biasa.
+    ///
+    /// Ditaruh di beranda, bukan hanya di halaman izin: santri yang sedang
+    /// sakit membuka aplikasi dari beranda, dan yang perlu ia ketahui lebih
+    /// dulu bukan poinnya melainkan sampai kapan izinnya berlaku.
+    #[serde(default)]
+    pub izin_aktif: Option<super::santri::SedangIzinItem>,
 }

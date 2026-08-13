@@ -39,15 +39,22 @@ pub struct KunjunganTamu {
     pub verify_note: String,
 }
 
-/// Kunjungan tamu terbaru dulu. `hanya_belum` = sisakan yang belum diperiksa.
+/// Kunjungan tamu terbaru dulu. `hanya_belum` = sisakan yang belum diperiksa;
+/// `sejak` = batas waktu paling awal (None = seluruh riwayat).
 ///
 /// Tabel ini sudah terisi sejak migrasi 35 tapi TAK PERNAH DIBACA — tak ada
 /// satu pun layar yang menampilkannya. Fungsi inilah pembaca pertamanya, untuk
 /// peran penjaga (migrasi 83).
+///
+/// `offset` melayani gulir-tak-berujung: buku tamu hanya tumbuh, dan versi
+/// pertama yang `LIMIT 100` tanpa offset membuat kunjungan ke-101 mustahil
+/// dilihat dari layar mana pun.
 pub async fn list_kunjungan_tamu(
     pool: &Pool,
     hanya_belum: bool,
+    sejak: Option<chrono::DateTime<chrono::Utc>>,
     limit: i64,
+    offset: i64,
 ) -> Result<Vec<KunjunganTamu>> {
     let c = pool.get().await?;
     let rows = c
@@ -57,9 +64,10 @@ pub async fn list_kunjungan_tamu(
                FROM guest_visits g \
                LEFT JOIN users u ON u.id = g.verified_by \
               WHERE ($1::bool = FALSE OR g.verified_at IS NULL) \
-              ORDER BY g.checked_in_at DESC \
-              LIMIT $2",
-            &[&hanya_belum, &limit],
+                AND ($4::timestamptz IS NULL OR g.checked_in_at >= $4) \
+              ORDER BY g.checked_in_at DESC, g.id DESC \
+              LIMIT $2 OFFSET $3",
+            &[&hanya_belum, &limit, &offset, &sejak],
         )
         .await
         .context("list_kunjungan_tamu")?;
@@ -77,6 +85,30 @@ pub async fn list_kunjungan_tamu(
             verify_note: r.get(8),
         })
         .collect())
+}
+
+/// Jumlah kunjungan yang cocok dengan penyaring — untuk lencana "menunggu
+/// diperiksa" dan penanda "sudah halaman terakhir".
+///
+/// COUNT(*), bukan `list(...).len()`. Versi pertama menghitung dengan mengambil
+/// 500 baris lalu mengukur panjangnya: mahal, dan begitu antreannya melewati
+/// 500 angkanya diam-diam berhenti bertambah.
+pub async fn count_kunjungan_tamu(
+    pool: &Pool,
+    hanya_belum: bool,
+    sejak: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<i64> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "SELECT COUNT(*) FROM guest_visits g \
+              WHERE ($1::bool = FALSE OR g.verified_at IS NULL) \
+                AND ($2::timestamptz IS NULL OR g.checked_in_at >= $2)",
+            &[&hanya_belum, &sejak],
+        )
+        .await
+        .context("count_kunjungan_tamu")?;
+    Ok(row.get(0))
 }
 
 /// Tandai satu kunjungan sudah diperiksa penjaga.

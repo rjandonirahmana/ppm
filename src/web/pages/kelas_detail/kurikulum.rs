@@ -15,8 +15,15 @@ use crate::web::components::{
 
 // ── Tab KURIKULUM (migrasi 17) ───────────────────────────────────────────────
 
+/// Penyusun kurikulum satu kelas: tambah materi, geser posisi berjalan, dan
+/// peta kekosongan santri.
+///
+/// `pub` (bukan `pub(super)`) sejak "Kelas Saya" ikut memakainya — wali kelas
+/// mengurus kurikulumnya dari sana tanpa perlu mampir ke /kelas/:id. Satu
+/// komponen untuk dua halaman: menyalin formnya berarti dua salinan yang harus
+/// diedit bersamaan setiap kali aturan kurikulum berubah.
 #[component]
-pub(super) fn KurikulumTab(
+pub fn KurikulumTab(
     class_id: i64,
     d: KelasDetail,
     refetch: impl Fn() + Copy + Send + 'static,

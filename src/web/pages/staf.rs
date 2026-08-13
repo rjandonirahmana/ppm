@@ -79,6 +79,9 @@ const ALAT: &[(&str, &str, &str, &[&str])] = &[
     ("stars", "Poin", "/poin", &[]),
     ("cast_for_education", "Sesi", "/sesi", &[]),
     ("summarize", "Rekap", "/rekap-mingguan", &[]),
+    // Siapa yang hari ini tak masuk — BACAAN untuk semua staf, termasuk ketua
+    // & admin yang sengaja tak boleh masuk antrean keputusan /izin-staf.
+    ("event_busy", "Sedang Izin", "/izin-aktif", &[]),
     // KETUA saja, bukan admin — lihat alasannya di blok tagihan `web/api.rs`:
     // siapa yang sudah/belum menyetor adalah urusan keluarga santri.
     ("payments", "Pembayaran", "/tagihan", &["ketua"]),
@@ -86,6 +89,8 @@ const ALAT: &[(&str, &str, &str, &[&str])] = &[
     ("article", "Artikel", "/kelola-artikel", &[]),
     ("shield", "Kontrol", "/kontrol-pengguna", &["admin", "ketua"]),
     ("manage_accounts", "User", "/manajemen-user", &["admin", "ketua"]),
+    // Buku tamu: penjaga yang memeriksa, admin/ketua yang membaca temuannya.
+    ("how_to_reg", "Buku Tamu", "/tamu-masuk", &["admin", "ketua"]),
     ("monitoring", "Server", "/status-server", &["admin", "ketua"]),
 ];
 

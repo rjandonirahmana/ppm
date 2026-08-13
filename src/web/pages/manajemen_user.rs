@@ -37,6 +37,9 @@ const PERAN: &[(&str, &str)] = &[
     ("santri_finance", "Santri (Finance)"),
     ("dewan_guru", "Dewan Guru"),
     ("parent", "Orang Tua"),
+    // Penjaga gerbang (migrasi 83) — sempat terlewat di sini, jadi akun penjaga
+    // tak bisa disaring maupun DIBUAT dari layar ini sama sekali.
+    ("penjaga", "Penjaga"),
     ("ketua", "Ketua"),
     ("admin", "Admin"),
 ];

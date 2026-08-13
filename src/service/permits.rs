@@ -19,7 +19,7 @@ use anyhow::Result;
 use deadpool_postgres::Pool;
 
 use super::fmt::{fmt_range, fmt_when};
-use crate::models::{permit_kind_label, PermitQueueData, PermitReviewItem};
+use crate::models::{permit_kind_label, PermitQueueData, PermitReviewItem, SedangIzinItem};
 use crate::repository as repo;
 
 /// Fallback rute izin untuk santri yang tak punya kelas utama: SATU tahap
@@ -78,6 +78,57 @@ pub async fn notify_permit_splits(
             let _ = super::registration::send_wa_text(http, waha, &wa_phone(phone), &msg).await;
         }
     }
+}
+
+/// Tanggal-tanggal saat sebuah JADWAL benar-benar terlewat oleh sebuah izin.
+///
+/// Inilah satu-satunya tempat aturan "izin itu rentang waktu, bukan jam yang
+/// berulang" ditulis — dipakai pratinjau, pengajuan, dan penyuntingan, supaya
+/// ketiganya mustahil menjawab berbeda.
+///
+/// Tanpa jam (izin sehari penuh): semua tanggal jadwal di dalam rentang.
+/// Dengan jam: izin membentang dari (tanggal mulai + jam keluar) sampai
+/// (tanggal selesai + jam pulang), jadi
+///   • hari PERTAMA  → hanya kelas yang BERAKHIR setelah jam keluar;
+///   • hari TERAKHIR → hanya kelas yang MULAI sebelum jam pulang;
+///   • hari di ANTARANYA → semuanya (santrinya memang tak ada di pondok);
+///   • izin SEHARI (mulai = selesai) → kelas yang jamnya bersinggungan saja.
+pub(crate) fn tanggal_izin(
+    c: &repo::AffectedClass,
+    mulai: chrono::NaiveDate,
+    selesai: chrono::NaiveDate,
+    jam: Option<(chrono::NaiveTime, chrono::NaiveTime)>,
+) -> Vec<chrono::NaiveDate> {
+    let habis = c.sched_end.map_or(selesai, |e| e.min(selesai));
+    let awal = mulai.max(c.sched_start);
+    if awal > habis {
+        return Vec::new();
+    }
+    let tanggal = crate::service::kelas::dates_in_range(
+        &c.recurrence_type,
+        c.sched_start,
+        &crate::service::kelas::parse_dates(&c.custom_dates),
+        awal,
+        habis,
+    );
+    let Some((keluar, pulang)) = jam else {
+        return tanggal;
+    };
+    tanggal
+        .into_iter()
+        .filter(|d| {
+            let hari_pertama = *d == mulai;
+            let hari_terakhir = *d == selesai;
+            match (hari_pertama, hari_terakhir) {
+                // Izin sehari: cukup bersinggungan.
+                (true, true) => c.jam_mulai < pulang && c.jam_selesai > keluar,
+                (true, false) => c.jam_selesai > keluar,
+                (false, true) => c.jam_mulai < pulang,
+                // Hari penuh di tengah rentang.
+                (false, false) => true,
+            }
+        })
+        .collect()
 }
 
 /// Baris antrean + DAMPAKNYA: kelas apa saja yang terlewat bila disetujui.
@@ -157,46 +208,92 @@ pub async fn permit_queue(pool: &Pool, user_id: i64) -> Result<PermitQueueData> 
     })
 }
 
-/// Setujui/tolak izin. Rute sesuai peran: pamong → tahap 1 (hanya kelas
-/// require_pamong); teacher → keputusan final HANYA izin kelasnya; dewan
-/// guru/admin → keputusan final izin mana pun.
-pub async fn decide_permit(pool: &Pool, permit_id: i64, approve: bool, staff_id: i64) -> Result<()> {
-    // DUA TAHAP, mengikuti setelan kelas KBM santri — bukan satu tahap saja.
-    //
-    // Sebelumnya fungsi ini langsung memanggil jalur wali kelas, dengan alasan
-    // "tahap pamong untuk izin sudah dihapus". Tapi antreannya TIDAK ikut
-    // dihapus: `pending_pamong_permits` masih memunculkan izin kepada pamong
-    // untuk kelas ber-`require_pamong`. Jadi pamong melihat izin di layarnya,
-    // menekan Setujui, dan request-nya masuk ke jalur wali — di sana ia bukan
-    // wali siapa pun, sehingga selalu ditolak "Izin ini bukan milik kelas
-    // Anda". Antreannya bekerja, tombolnya tidak.
-    //
-    // `decide_pamong_permit` sudah ada dan penjaganya cocok PERSIS dengan
-    // penyaring antrean itu; ia cuma tak pernah dipanggil dari mana pun.
-    //
-    // Urutannya: coba tahap pamong dulu. Penjaga di dalamnya hanya cocok bila
-    // SEMUA benar — pemutusnya memang pamong kelas acuan, kelasnya memang
-    // menuntut dua tahap, dan izinnya memang masih di tahap itu. Kalau tidak
-    // cocok, tak ada baris tersentuh dan keputusannya jatuh ke jalur wali.
-    // Dengan begitu satu tombol melayani kedua peran tanpa layarnya perlu tahu
-    // sedang berada di tahap mana.
-    if repo::decide_pamong_permit(pool, permit_id, approve, false, Some(staff_id), staff_id).await?
-    {
-        // Tahap pamong saja: absensinya BELUM diwujudkan. Yang mengesahkan izin
-        // tetap wali kelas di tahap berikutnya.
-        return Ok(());
+/// Satu baris izin aktif → payload layar. Dipakai daftar staf DAN spanduk
+/// santri, supaya keduanya mustahil berbeda bentuk.
+pub fn baris_sedang_izin(r: repo::IzinAktifRow, hari: chrono::NaiveDate) -> SedangIzinItem {
+    let habis = r.end_date.unwrap_or(r.start_date);
+    // TERMASUK hari ini: izin yang berakhir hari ini masih berlaku hari ini,
+    // dan menuliskan "0 hari lagi" pada izin yang sedang berjalan hanya
+    // membingungkan yang membacanya.
+    let sisa_hari = (habis - hari).num_days().max(0) + 1;
+    let nis = r.nis.filter(|s| !s.is_empty()).unwrap_or_else(|| "-".into());
+    SedangIzinItem {
+        user_id: r.user_id,
+        name: r.student_name,
+        nis,
+        class_name: r.class_name.filter(|s| !s.is_empty()).unwrap_or_else(|| "-".into()),
+        kind_label: permit_kind_label(&r.kind).into(),
+        kind: r.kind,
+        range_label: fmt_range(r.start_date, r.end_date),
+        // Izin SEHARI: satu rentang jam ("09:00 – 12:00 WIB"). Izin
+        // BERHARI-HARI: dua peristiwa yang berbeda hari, jadi disebut
+        // sendiri-sendiri — "Keluar 14:00 · Pulang 08:00 WIB" — supaya tak
+        // terbaca seolah izinnya berlaku 14:00–08:00 setiap hari.
+        jam_label: match (r.start_time, r.end_time) {
+            (Some(a), Some(b)) if habis == r.start_date => {
+                format!("{} – {} WIB", a.format("%H:%M"), b.format("%H:%M"))
+            }
+            (Some(a), Some(b)) => format!(
+                "Keluar {} · Pulang {} WIB",
+                a.format("%H:%M"),
+                b.format("%H:%M")
+            ),
+            _ => String::new(),
+        },
+        sampai_label: if habis == hari {
+            "sampai hari ini".into()
+        } else {
+            format!("sampai {}", fmt_range(habis, None))
+        },
+        sisa_hari,
+        reason: r.reason,
     }
+}
 
-    // Tahap FINAL: wali kelas KBM santri. Bukan dewan guru, bukan admin — izin
+/// Semua santri yang sedang izin/sakit HARI INI — pantauan ketua/admin/guru.
+pub async fn sedang_izin(pool: &Pool) -> Result<Vec<SedangIzinItem>> {
+    let hari = super::fmt::today_wib();
+    let rows = repo::izin_aktif(pool, hari, None, 300).await?;
+    Ok(rows.into_iter().map(|r| baris_sedang_izin(r, hari)).collect())
+}
+
+/// Izin yang sedang berlaku untuk SATU santri (spanduk di layarnya sendiri).
+pub async fn izin_aktif_saya(pool: &Pool, user_id: i64) -> Result<Option<SedangIzinItem>> {
+    let hari = super::fmt::today_wib();
+    // Bila kebetulan ada lebih dari satu (mis. izin pulang yang beririsan
+    // dengan izin sakit), yang ditampilkan yang BERAKHIR PALING AKHIR — itu
+    // yang menentukan sampai kapan ia sebenarnya tak masuk. Urutan query sudah
+    // menaik menurut tanggal berakhir, jadi cukup ambil yang terakhir.
+    let rows = repo::izin_aktif(pool, hari, Some(user_id), 10).await?;
+    Ok(rows.into_iter().next_back().map(|r| baris_sedang_izin(r, hari)))
+}
+
+/// Setujui/tolak izin — SATU tahap: wali kelas KBM santri.
+///
+/// Percabangan "coba tahap pamong dulu" DIBUANG (Ags 2026). Ia lahir untuk
+/// menutup ketimpangan lama (antrean pamong ada, tombolnya tak berfungsi), dan
+/// sejak perannya dihapus (migrasi 84) percabangan itu justru berbahaya: pada
+/// data lama yang belum tersentuh migrasi, seorang wali yang KEBETULAN juga
+/// tercatat pamong kelas itu akan masuk ke cabang pamong — izinnya cuma maju
+/// setengah tahap lalu tetap menggantung di antrean, dan layarnya melaporkan
+/// "berhasil".
+///
+/// Sekarang: satu tombol, satu jalur, syarat yang SAMA PERSIS dengan penyaring
+/// antreannya (lihat `repo::decide_guru_permit`). Apa pun yang tampil di
+/// /izin-staf pasti bisa diputuskan orang yang melihatnya.
+pub async fn decide_permit(pool: &Pool, permit_id: i64, approve: bool, staff_id: i64) -> Result<()> {
+    // Wali kelas KBM santri. Bukan dewan guru, bukan admin — izin
     // adalah urusan antara santri dan walinya, dan orang yang tak mengenal
     // santrinya tak punya dasar untuk menimbang. `wali_id = staf ini`, jadi
     // izin milik wali LAIN tak akan tersentuh.
-    let ok = repo::decide_guru_permit(pool, permit_id, approve, Some(staff_id), false, staff_id)
-        .await?;
+    let ok = repo::decide_guru_permit(pool, permit_id, approve, Some(staff_id), staff_id).await?;
     if !ok {
+        // Pesan lama menyebut pamong & tahap dua — dua hal yang sudah tak ada
+        // (migrasi 84), dan justru itulah yang membuat galatnya membingungkan:
+        // ia menerangkan sebab yang bukan sebabnya.
         bail_user!(
-            "Izin ini bukan milik kelas Anda, atau sudah diproses. Yang boleh memutuskan \
-             hanya pamong kelas KBM santri (bila kelasnya dua tahap) dan wali kelasnya."
+            "Izin ini sudah diputuskan orang lain, atau bukan milik kelas yang Anda \
+             ampu. Yang boleh memutuskan hanya WALI KELAS KBM santri tersebut."
         );
     }
 
@@ -206,7 +303,7 @@ pub async fn decide_permit(pool: &Pool, permit_id: i64, approve: bool, staff_id:
     //
     // Best-effort: kegagalan di sini TIDAK membatalkan persetujuan yang sudah
     // tercatat. Izin tetap sah; yang tertinggal hanya baris absensinya, dan itu
-    // masih bisa ditandai manual oleh guru/pamong bertugas.
+    // masih bisa ditandai manual oleh guru bertugas di sesinya.
     if approve {
         match repo::materialize_permit_attendance(pool, permit_id).await {
             Ok(n) if n > 0 => tracing::info!(permit_id, "izin → {n} baris absensi"),
@@ -244,7 +341,7 @@ pub async fn split_permit_per_wali(
 ) -> Result<Vec<PermitSplit>> {
     // end_date None = izin sehari → rentang [start, start].
     let range_end = end_date.unwrap_or(start_date);
-    let affected = repo::affected_classes(pool, student_id, start_date, range_end, jam).await?;
+    let affected = repo::affected_classes(pool, student_id, start_date, range_end).await?;
 
     // Saring pola recurrence-nya lebih dulu: `affected` berisi jadwal yang
     // rentang BERLAKUNYA bersinggungan dengan izin, dan itu tak sama dengan
@@ -255,18 +352,7 @@ pub async fn split_permit_per_wali(
     let mut terdampak: Vec<&repo::AffectedClass> = Vec::new();
     let mut sudah: std::collections::HashSet<i64> = std::collections::HashSet::new();
     for c in &affected {
-        let habis = c.sched_end.map_or(range_end, |e| e.min(range_end));
-        let mulai = start_date.max(c.sched_start);
-        if mulai > habis
-            || crate::service::kelas::dates_in_range(
-                &c.recurrence_type,
-                c.sched_start,
-                &crate::service::kelas::parse_dates(&c.custom_dates),
-                mulai,
-                habis,
-            )
-            .is_empty()
-        {
+        if tanggal_izin(c, start_date, range_end, jam).is_empty() {
             continue;
         }
         if sudah.insert(c.class_id) {
@@ -507,22 +593,11 @@ pub async fn update_permit(
         return Ok(());
     };
     let range_end = end_date.unwrap_or(start_date);
-    let affected = repo::affected_classes(pool, d.user_id, start_date, range_end, jam).await?;
+    let affected = repo::affected_classes(pool, d.user_id, start_date, range_end).await?;
     let mut sudah: std::collections::HashSet<i64> = std::collections::HashSet::new();
     let mut ids: Vec<i64> = Vec::new();
     for c in &affected {
-        let habis = c.sched_end.map_or(range_end, |e| e.min(range_end));
-        let mulai = start_date.max(c.sched_start);
-        if mulai > habis
-            || crate::service::kelas::dates_in_range(
-                &c.recurrence_type,
-                c.sched_start,
-                &crate::service::kelas::parse_dates(&c.custom_dates),
-                mulai,
-                habis,
-            )
-            .is_empty()
-        {
+        if tanggal_izin(c, start_date, range_end, jam).is_empty() {
             continue;
         }
         if sudah.insert(c.class_id) {

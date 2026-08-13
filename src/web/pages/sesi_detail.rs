@@ -305,12 +305,12 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                 match tab.get().as_str() {
                     "kelola" => {
                         view! {
-                            // `.ppm-masonry`: satu kolom di ponsel, DUA kolom
+                            // `.ppm-card-grid`: satu kolom di ponsel, DUA kolom
                             // seimbang di desktop. Tab ini berisi empat kartu
                             // mandiri (pengajar, materi target, kitab,
                             // catatan) yang sebelumnya bertumpuk di kolom
                             // `md:max-w-md` dengan separuh layar kanan kosong.
-                            <div class="ppm-masonry">
+                            <div class="ppm-card-grid">
                             // ── Kelola sesi: mulai/akhiri + pengajar ──────
                             <div class="ppm-card p-4 anim-in">
                                 <label class="text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">

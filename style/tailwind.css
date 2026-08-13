@@ -371,8 +371,19 @@ button:active{transform:scale(.96)}
 @media (min-width:768px){
   body:not([data-preview="mobile"]) .ppm-card-grid{
     display:grid;
-    grid-template-columns:repeat(2,minmax(0,1fr));
+    /* `auto-fit`, BUKAN `repeat(2, …)`. Dengan dua kolom tetap, daftar yang
+       isinya satu kartu memakai separuh kiri dan meninggalkan separuh kanan
+       KOSONG — terbaca seperti ada sesuatu yang gagal dimuat. auto-fit
+       meruntuhkan kolom yang tak terpakai, jadi satu kartu melebar penuh dan
+       dua kartu tetap berdampingan.
+
+       Minimal trek = separuh lebar dikurangi separuh gap, jadi cacahnya
+       mustahil lebih dari dua: tiga trek butuh 1,5× lebar kontainer. */
+    grid-template-columns:repeat(auto-fit,minmax(calc(50% - .375rem),1fr));
     gap:.75rem;
+    /* Tanpa ini grid meregangkan tiap kartu setinggi kartu TERTINGGI di
+       barisnya — membuka satu kartu ikut menarik tetangganya jadi tinggi
+       dengan ruang kosong di bawahnya. */
     align-items:start;
   }
 }
@@ -407,19 +418,20 @@ button:active{transform:scale(.96)}
    kiri-kanan. Keduanya urutan baca yang sah — bedanya yang ini juga benar
    ketika yang membaca bukan mata. `break-inside:avoid` menjaga satu kartu tak
    terbelah antar kolom. */
-.ppm-masonry{display:flex;flex-direction:column;gap:.75rem}
-@media (min-width:768px){
-  body:not([data-preview="mobile"]) .ppm-masonry{
-    display:block;
-    columns:2;
-    column-gap:.75rem;
-  }
-  body:not([data-preview="mobile"]) .ppm-masonry > *{
-    break-inside:avoid;
-    -webkit-column-break-inside:avoid;
-    margin-bottom:.75rem;
-  }
-}
+/* `.ppm-masonry` DIHAPUS (Ags 2026) — dulu multi-kolom CSS (`columns:2`) untuk
+   menghindari lubang antar-baris grid. Dua penyakitnya lebih mahal daripada
+   lubang yang dihindarinya, dan keduanya dilaporkan pengguna:
+
+   1. SATU kartu → tetap dua kolom, separuh kanan kosong melompong.
+   2. DAFTAR PANJANG → kolom kanan adalah PARUH BAWAH daftar, jadi peramban
+      harus menyeimbangkan tinggi dua kolom pada satu elemen yang sangat
+      tinggi. Setiap kali isinya berubah (refetch, gulir-tak-berujung yang
+      menambah baris) seluruh keseimbangan dihitung ulang: kartu meloncat
+      antar kolom dan sisi KANAN berkedip hilang-muncul. Multi-kolom memang
+      tak dirancang untuk daftar yang tumbuh.
+
+   Semuanya kini memakai `.ppm-card-grid` di atas: tiap kartu punya selnya
+   sendiri, tak pernah dipecah, tak pernah dihitung ulang saat daftar tumbuh. */
 
 /* Area gestur geser (komponen SwipeArea) — kalender bulanan dsb.
    `touch-action:pan-y` menyerahkan sumbu Y ke browser (gulir halaman tetap

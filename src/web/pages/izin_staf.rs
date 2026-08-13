@@ -1,7 +1,9 @@
-//! web/pages/izin_staf.rs — Tinjau Izin (tahap 2, pamong/dewan guru/admin),
+//! web/pages/izin_staf.rs — Tinjau Izin (keputusan WALI KELAS),
 //! migrasi 17. Antrean izin yang SUDAH lolos konfirmasi orang tua
-//! (parent_status='approved') menunggu keputusan pamong/dewan guru/admin.
-//! Pola sama verifikasi_pamong.rs (Resource + Suspense + kartu Setujui/Tolak).
+//! Antrean izin santri yang menunggu keputusan wali kelas KBM-nya. SATU tahap
+//! sejak peran pamong dihapus (migrasi 84): apa pun yang tampil di sini pasti
+//! bisa diputuskan orang yang melihatnya — daftar & keputusan memakai syarat
+//! yang sama persis (lihat `repository::decide_guru_permit`).
 
 use leptos::prelude::*;
 use leptos_meta::Title;
@@ -80,7 +82,7 @@ pub fn IzinStafPage() -> impl IntoView {
                                         view! {
                                             <div class="ppm-chip bg-secondary-container text-primary inline-flex items-center gap-1">
                                                 <span class="material-symbols-outlined text-[15px]">"how_to_reg"</span>
-                                                {format!("{} · rute per-kelas (via pamong diatur di tiap kelas)", stage.clone())}
+                                                {format!("{} · satu tahap, diputus wali kelas KBM santri", stage.clone())}
                                             </div>
                                             <div class="grid grid-cols-2 gap-3 md:max-w-lg">
                                                 <div class="ppm-card p-4">
@@ -196,66 +198,22 @@ fn PermitCard(
                 <span class="ppm-chip bg-primary/10 text-primary shrink-0">{p.kind_label}</span>
             </div>
 
-            // ── Rute persetujuan yang SEBENARNYA ───────────────────────────
-            // Dulu tertulis "ORANG TUA → PENGURUS" dengan bar mati di 50%.
-            // Orang tua berhenti jadi penyetuju sejak migrasi 46, dan
-            // "PENGURUS" tak menyebut siapa pun secara khusus — jadi
-            // indikatornya memberi kabar yang keliru sekaligus tak berguna.
-            //
-            // Sekarang: tahap yang benar-benar ada, dan bar-nya mengikuti
-            // keadaan izin ini. Kelas satu langkah hanya menampilkan wali.
-            {if p.dua_tahap {
-                // KOSONG bila pamong belum meninjau, SETENGAH bila sudah.
-                // Sebelumnya selalu setengah — bar yang tak pernah berubah
-                // memberi kesan satu tahap sudah beres padahal belum ada yang
-                // menyentuhnya. Tahap kedua (keputusan wali) baru mengisinya
-                // penuh, dan itu terjadi setelah kartunya hilang dari antrean.
-                let lebar = if p.pamong_ok {
-                    "h-full bg-primary w-1/2 transition-all"
-                } else {
-                    "h-full bg-primary w-0 transition-all"
-                };
-                let cls_pamong = if p.pamong_ok {
-                    "text-primary"
-                } else {
-                    "text-on-surface-variant"
-                };
-                view! {
-                    <div class="w-full">
-                        <div class="flex justify-between text-[10px] font-bold mb-1">
-                            <span class=cls_pamong>
-                                {if p.pamong_ok { "PAMONG KELAS ✓" } else { "PAMONG KELAS" }}
-                            </span>
-                            <span class="text-primary">"WALI KELAS"</span>
-                        </div>
-                        <div class="h-1.5 w-full bg-outline-variant rounded-full overflow-hidden">
-                            <div class=lebar></div>
-                        </div>
-                        {(!p.pamong_ok)
-                            .then(|| {
-                                view! {
-                                    <p class="text-[10px] text-on-surface-variant mt-1">
-                                        "Pamong belum meninjau — Anda tetap boleh memutuskan."
-                                    </p>
-                                }
-                            })}
-                    </div>
-                }
-                    .into_any()
-            } else {
-                view! {
-                    <div class="w-full">
-                        <div class="flex justify-between text-[10px] font-bold text-primary mb-1">
-                            <span>"WALI KELAS"</span>
-                            <span>"KEPUTUSAN FINAL"</span>
-                        </div>
-                        <div class="h-1.5 w-full bg-outline-variant rounded-full overflow-hidden">
-                            <div class="h-full bg-primary w-full"></div>
-                        </div>
-                    </div>
-                }
-                    .into_any()
-            }}
+            // ── Rute persetujuan ───────────────────────────────────────────
+            // SATU tahap saja. Dulu bercabang: kelas "dua langkah" menampilkan
+            // PAMONG → WALI KELAS lengkap dengan bar kemajuannya. Peran pamong
+            // dihapus (migrasi 84), jadi cabang itu hanya bisa menampilkan
+            // tahap yang tak akan pernah dilalui siapa pun — dan sebelum ini
+            // ia bahkan menjanjikan "Anda tetap boleh memutuskan" pada izin
+            // yang justru ditolak server karena pamongnya belum meninjau.
+            <div class="w-full">
+                <div class="flex justify-between text-[10px] font-bold text-primary mb-1">
+                    <span>"WALI KELAS"</span>
+                    <span>"KEPUTUSAN FINAL"</span>
+                </div>
+                <div class="h-1.5 w-full bg-outline-variant rounded-full overflow-hidden">
+                    <div class="h-full bg-primary w-full"></div>
+                </div>
+            </div>
 
             <p class="text-body-sm text-on-surface-variant flex items-center gap-1">
                 <span class="material-symbols-outlined text-[15px]">"calendar_month"</span>

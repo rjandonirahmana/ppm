@@ -20,6 +20,9 @@ use crate::web::components::{
     guard_sesi, kartu_grid, DeviceFrame, EmptyState, FetchError, MobileHeader,
     Skeleton,
 };
+// Komponen kurikulum dipakai BERSAMA dengan tab di /kelas/:id — lihat
+// `PanelKurikulum` di bawah.
+use crate::web::pages::{KurikulumTab, PosisiBerjalan};
 
 #[component]
 pub fn KelasSayaPage() -> impl IntoView {
@@ -82,6 +85,9 @@ fn KelasCard(k: KelasSayaItem) -> impl IntoView {
     // Daftar santri bisa panjang; dilipat agar kartu tetap terbaca — yang
     // dicari lebih sering "materi sekarang", bukan daftar nama.
     let buka_teman = RwSignal::new(false);
+    // Penyusun kurikulum — hanya untuk WALI KELAS kelas ini, dan hanya dimuat
+    // saat dibuka (lihat `PanelKurikulum`).
+    let buka_kurikulum = RwSignal::new(false);
 
     let jumlah_teman = k.members.len();
     let members = StoredValue::new(k.members);
@@ -90,6 +96,8 @@ fn KelasCard(k: KelasSayaItem) -> impl IntoView {
     let jenjang = crate::models::jenjang_label(&k.jenjang);
     let category = crate::models::kategori_label(&k.category).to_string();
     let peran = k.peran_saya.clone();
+    let boleh_kelola = !peran.is_empty();
+    let class_id = k.id;
     let wali = k.wali_kelas.clone();
 
     view! {
@@ -115,11 +123,17 @@ fn KelasCard(k: KelasSayaItem) -> impl IntoView {
             // sebelahnya akan terbaca seperti data yang gagal dimuat.
             <Petugas peran="Wali Kelas" nama=wali icon="badge" />
 
-            // ── Materi yang sedang dibahas per jadwal ──────────────────────
+            // ── Materi yang sedang dibahas per jadwal (BACAAN) ─────────────
+            // Disembunyikan saat panel kelola dibuka: panel itu memuat daftar
+            // jadwal yang SAMA, lengkap dengan tombol ubahnya. Menampilkan
+            // keduanya sekaligus membuat satu kartu memajang jadwal yang sama
+            // dua kali, dan yang di atas tampak seperti versi yang tak bisa
+            // disunting entah kenapa.
             {(!k.schedules.is_empty())
                 .then(|| {
+                    let baca_saja = move || !buka_kurikulum.get();
                     view! {
-                        <div class="space-y-1.5">
+                        <div class="space-y-1.5" class:hidden=move || !baca_saja()>
                             <p class="text-[10px] font-bold tracking-wide text-on-surface-variant">
                                 "JADWAL & MATERI SEKARANG"
                             </p>
@@ -224,6 +238,37 @@ fn KelasCard(k: KelasSayaItem) -> impl IntoView {
                     }
                 })}
 
+            // ── Kelola kurikulum (wali kelas) ──────────────────────────────
+            // Wali kelas mengurus kurikulumnya DARI SINI. Sebelumnya satu-
+            // satunya jalannya /kelas/:id — halaman kelola milik admin, yang
+            // harus dicari dulu di daftar seluruh kelas pondok, padahal wali
+            // sudah berdiri di depan kartu kelasnya sendiri.
+            {boleh_kelola
+                .then(|| {
+                    view! {
+                        <div class="pt-1 border-t border-outline-variant/40">
+                            <button
+                                class="w-full flex items-center justify-between py-1.5 press"
+                                on:click=move |_| buka_kurikulum.update(|b| *b = !*b)
+                            >
+                                <span class="text-[10px] font-bold tracking-wide text-primary flex items-center gap-1">
+                                    <span class="material-symbols-outlined text-[16px]">"edit_note"</span>
+                                    "KELOLA MATERI BERJALAN & KURIKULUM"
+                                </span>
+                                <span
+                                    class="material-symbols-outlined text-on-surface-variant transition-transform text-[20px]"
+                                    class:rotate-180=move || buka_kurikulum.get()
+                                >
+                                    "expand_more"
+                                </span>
+                            </button>
+                            <Show when=move || buka_kurikulum.get()>
+                                <PanelKurikulum class_id=class_id />
+                            </Show>
+                        </div>
+                    }
+                })}
+
             // ── Teman sekelas ──────────────────────────────────────────────
             <div>
                 <button
@@ -319,4 +364,170 @@ fn Petugas(peran: &'static str, nama: String, icon: &'static str) -> impl IntoVi
             }}
         </div>
     }
+}
+
+/// Penyusun kurikulum satu kelas, dipasang di dalam kartu "Kelas Saya".
+///
+/// Isinya BUKAN salinan: yang dirender komponen yang sama persis dengan tab
+/// Kurikulum di `/kelas/:id` ([`KurikulumTab`]) — tambah materi, geser posisi
+/// berjalan, dan peta "santri paling banyak kurang di ayat/halaman berapa".
+/// Menyalin formnya ke sini berarti dua salinan yang harus diedit bersamaan
+/// tiap kali aturan kurikulum berubah, dan yang kedua pasti tertinggal.
+///
+/// Payload detail kelas diambil SAAT PANELNYA DIBUKA, bukan ikut dimuat
+/// bersama halaman: "Kelas Saya" bisa berisi banyak kartu, dan menarik detail
+/// lengkap tiap kelas hanya untuk panel yang mungkin tak pernah disentuh
+/// membuat halaman ini lambat bagi semua orang — termasuk santri, yang tak
+/// punya tombol ini sama sekali.
+///
+/// Kewenangan tetap diperiksa SERVER (`require_petugas_kelas` pada tiap aksi
+/// kurikulum); tombolnya hanya disembunyikan dari yang bukan wali.
+#[component]
+fn PanelKurikulum(class_id: i64) -> impl IntoView {
+    let detail = Resource::new(
+        move || class_id,
+        |id| async move { crate::web::api::kelas_detail(id).await },
+    );
+
+    view! {
+        <div class="pt-2 anim-in">
+            <Suspense fallback=|| view! { <Skeleton baris=2 tinggi="h-24" /> }>
+                {move || {
+                    detail
+                        .get()
+                        .map(|res| match res {
+                            Err(e) => view! { <FetchError err=e.to_string() /> }.into_any(),
+                            Ok(d) => {
+                                // MATERI BERJALAN itu milik JADWAL, bukan
+                                // kurikulum: satu kelas bisa punya beberapa
+                                // jadwal (KBM subuh, pesantren kilat) yang
+                                // masing-masing sedang di halaman berbeda.
+                                // Posisi di kartu kurikulum adalah kemajuan
+                                // KELAS atas materi itu secara keseluruhan —
+                                // makna yang berbeda, dan keduanya memang
+                                // disunting di tempat yang berbeda.
+                                //
+                                // Materi jadwal disaring ke kurikulum kelas —
+                                // aturan yang sama dengan tab Jadwal; jadwal
+                                // mengajarkan apa yang direncanakan kelasnya.
+                                let dalam_kurikulum: std::collections::HashSet<i64> = d
+                                    .curriculum
+                                    .iter()
+                                    .map(|c| c.book_id)
+                                    .filter(|b| *b > 0)
+                                    .collect();
+                                let buku_jadwal = StoredValue::new(
+                                    d.book_options
+                                        .iter()
+                                        .filter(|b| dalam_kurikulum.contains(&b.id))
+                                        .cloned()
+                                        .collect::<Vec<_>>(),
+                                );
+                                // Saringan SAMA dengan daftar bacaan di atas:
+                                // `class_schedules` menyimpan seluruh riwayat
+                                // jadwal kelas, termasuk yang masanya sudah
+                                // habis. Menawarkan "ubah materi berjalan" pada
+                                // jadwal yang sudah berakhir hanya mengundang
+                                // wali menggeser posisi yang tak lagi dibaca
+                                // siapa pun.
+                                let hari_ini = js_hari_ini();
+                                let jadwal: Vec<crate::models::ScheduleItem> = d
+                                    .schedules
+                                    .iter()
+                                    .filter(|s| {
+                                        if !s.end_date.is_empty() {
+                                            return s.end_date.as_str() >= hari_ini.as_str();
+                                        }
+                                        if s.recurrence == "custom" {
+                                            return s
+                                                .custom_dates
+                                                .split(',')
+                                                .map(|d| d.trim())
+                                                .filter(|d| !d.is_empty())
+                                                .max()
+                                                .is_none_or(|terakhir| terakhir >= hari_ini.as_str());
+                                        }
+                                        true
+                                    })
+                                    .cloned()
+                                    .collect();
+                                view! {
+                                    {(!jadwal.is_empty())
+                                        .then(|| {
+                                            view! {
+                                                <div class="space-y-2 mb-4">
+                                                    {jadwal
+                                                        .into_iter()
+                                                        .map(|s| {
+                                                            let sid = s.id;
+                                                            let judul = s.title.clone();
+                                                            let jam = s.time_label.clone();
+                                                            let ulang = s.recurrence_label.clone();
+                                                            view! {
+                                                                <div class="bg-surface-container-low rounded-xl px-3 py-2">
+                                                                    <div class="flex items-center justify-between gap-2">
+                                                                        <p class="text-body-sm font-semibold text-on-background truncate">
+                                                                            {judul}
+                                                                        </p>
+                                                                        <span class="text-[10px] text-on-surface-variant shrink-0">
+                                                                            {ulang}
+                                                                        </span>
+                                                                    </div>
+                                                                    <p class="text-[11px] text-on-surface-variant">{jam}</p>
+                                                                    <PosisiBerjalan
+                                                                        class_id=class_id
+                                                                        schedule_id=sid
+                                                                        s=s
+                                                                        books=buku_jadwal
+                                                                        refetch=move || detail.refetch()
+                                                                    />
+                                                                </div>
+                                                            }
+                                                        })
+                                                        .collect_view()}
+                                                </div>
+                                            }
+                                        })}
+                                    <KurikulumTab
+                                        class_id=class_id
+                                        d=d
+                                        refetch=move || detail.refetch()
+                                    />
+                                }
+                                    .into_any()
+                            }
+                        })
+                }}
+            </Suspense>
+        </div>
+    }
+}
+
+/// Tanggal hari ini (WIB) sebagai "YYYY-MM-DD".
+///
+/// Dibandingkan sebagai TEKS, bukan tanggal ter-parse: `ScheduleItem` memang
+/// membawa tanggalnya dalam bentuk ISO, dan format itu sudah urut secara
+/// leksikografis — "2026-08-13" < "2026-09-01" persis seperti tanggalnya.
+/// Menariknya kembali jadi `NaiveDate` hanya untuk membandingkan berarti
+/// memindahkan chrono ke bundel WASM tanpa menambah satu pun kepastian.
+///
+/// WIB, bukan waktu perangkat: santri yang ponselnya masih di zona lain tak
+/// boleh melihat jadwal yang berbeda dari temannya. Selisihnya cuma penting
+/// beberapa jam sehari, tapi justru jam-jam itulah kelas subuh dijadwalkan.
+fn js_hari_ini() -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let ms = js_sys::Date::now() + 7.0 * 3_600_000.0;
+        let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(ms));
+        return format!(
+            "{:04}-{:02}-{:02}",
+            d.get_utc_full_year(),
+            d.get_utc_month() + 1,
+            d.get_utc_date()
+        );
+    }
+    // Di render server tanggalnya tak dipakai menyaring apa pun yang terlihat
+    // (panel ini baru terbuka setelah diklik, jadi selalu di klien).
+    #[cfg(not(target_arch = "wasm32"))]
+    String::new()
 }

@@ -259,25 +259,26 @@ pub fn IzinPage() -> impl IntoView {
                             />
                         </div>
 
-                        // Jam — opsional. Dikosongkan = izin sehari penuh
-                        // (perilaku lama). Diisi = hanya kelas yang jamnya
-                        // bersinggungan yang terlewat, jadi santri yang keluar
-                        // dua jam tak kehilangan kehadiran seharian.
+                        // JAM KELUAR & JAM PULANG — opsional. Dikosongkan =
+                        // izin sehari penuh. Diisi = izin dihitung sebagai satu
+                        // rentang waktu: dari (tanggal mulai + jam keluar)
+                        // sampai (tanggal selesai + jam pulang), jadi kelas di
+                        // luar rentang itu TIDAK ikut terlewat.
                         <div class="space-y-2">
                             <label class="text-label-md text-on-surface-variant">
-                                "Jam (kosongkan bila izin sehari penuh)"
+                                "Jam keluar & jam pulang (kosongkan bila izin sehari penuh)"
                             </label>
                             <div class="grid grid-cols-2 gap-3">
                                 <input
                                     type="time"
-                                    aria-label="Jam mulai"
+                                    aria-label="Jam keluar"
                                     class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-body-md text-on-surface"
                                     prop:value=move || jam_mulai.get()
                                     on:input=move |ev| jam_mulai.set(event_target_value(&ev))
                                 />
                                 <input
                                     type="time"
-                                    aria-label="Jam selesai"
+                                    aria-label="Jam pulang"
                                     class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-body-md text-on-surface"
                                     prop:value=move || jam_selesai.get()
                                     on:input=move |ev| jam_selesai.set(event_target_value(&ev))
@@ -349,7 +350,48 @@ pub fn IzinPage() -> impl IntoView {
 #[component]
 fn IzinStats(d: IzinData) -> impl IntoView {
     let width = format!("width:{}%", d.pct.clamp(0, 100));
+    let aktif = d.aktif.clone();
     view! {
+        // ── Spanduk: izin/sakit yang SEDANG BERLAKU ─────────────────────────
+        // Ditaruh PALING ATAS, di atas statistik. Santri yang sedang sakit
+        // membuka halaman ini untuk dua hal: memastikan izinnya sudah berlaku
+        // sampai kapan, dan memperpanjangnya bila belum sembuh. Sebelum ini
+        // keduanya cuma bisa disimpulkan sendiri dari daftar pengajuan di
+        // bawah — yang menampilkan tanggal, tapi tak pernah mengatakan "kamu
+        // sedang izin".
+        {aktif
+            .map(|a| {
+                let sisa = if a.sisa_hari <= 1 {
+                    "hari terakhir".to_string()
+                } else {
+                    format!("{} hari lagi", a.sisa_hari)
+                };
+                let ikon = if a.kind == "sick" { "healing" } else { "event_available" };
+                view! {
+                    <div class="rounded-2xl p-4 bg-warning/10 border border-warning/40 flex items-start gap-3">
+                        <div class="w-11 h-11 rounded-full bg-warning/20 shrink-0 flex items-center justify-center text-warning">
+                            <span class="material-symbols-outlined">{ikon}</span>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-body-md font-bold text-on-background">
+                                "Kamu sedang " {a.kind_label.to_lowercase()}
+                            </p>
+                            <p class="text-body-sm text-on-background">{a.range_label}</p>
+                            <p class="text-[11px] text-on-surface-variant">
+                                {a.sampai_label} " · " {sisa}
+                                {(!a.jam_label.is_empty()).then(|| format!(" · {}", a.jam_label))}
+                            </p>
+                            // Kalimat ini yang penting: banyak santri mengira
+                            // satu izin sudah menutup seluruh masa sakitnya,
+                            // lalu tercatat ALFA begitu tanggalnya lewat.
+                            <p class="text-[11px] text-warning font-semibold mt-1">
+                                "Masih sakit setelah tanggal itu? Ajukan lagi di bawah sebelum masa izinmu habis — hari yang tak tertutup izin dihitung alfa."
+                            </p>
+                        </div>
+                    </div>
+                }
+            })}
+
         // Kartu kehadiran semester
         <div class="spiritual-gradient rounded-2xl p-6 text-on-primary shadow-lg shadow-primary/20">
             <p class="text-label-md opacity-80 tracking-[0.15em]">"KEHADIRAN SEMESTER INI"</p>

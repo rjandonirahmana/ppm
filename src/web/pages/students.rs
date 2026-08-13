@@ -434,7 +434,34 @@ fn StudentList(
                         view! {
                             <div
                                 class="p-3 md:px-4 flex items-center gap-3 hover:bg-surface-container-low transition-colors anim-in cursor-pointer"
-                                on:click=move |_| {
+                                on:click=move |_ev| {
+                                    // Klik yang lahir DI DALAM sebuah <a> (kolom
+                                    // Poin) bukan untuk panel ini — dilewati.
+                                    //
+                                    // Dulu ini diselesaikan dengan
+                                    // `ev.stop_propagation()` PADA tautannya, dan
+                                    // itu keliru dengan cara yang tak kelihatan:
+                                    // leptos_router memasang SATU listener klik
+                                    // di WINDOW (`window_event_listener`, fase
+                                    // bubble) untuk menangkap semua tautan.
+                                    // Menghentikan propagasi berarti event itu tak
+                                    // pernah sampai ke sana — routernya tak tahu,
+                                    // peramban memuat ulang SELURUH halaman.
+                                    // Layarnya "berhasil pindah", tapi lewat jalan
+                                    // memutar yang mengunduh & menghidrasi ulang
+                                    // WASM dari nol tiap kali.
+                                    #[cfg(target_arch = "wasm32")]
+                                    {
+                                        use wasm_bindgen::JsCast;
+                                        let dari_tautan = _ev
+                                            .target()
+                                            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                                            .and_then(|el| el.closest("a").ok().flatten())
+                                            .is_some();
+                                        if dari_tautan {
+                                            return;
+                                        }
+                                    }
                                     expanded
                                         .update(|e| {
                                             *e = if *e == Some(sid) { None } else { Some(sid) };
@@ -502,7 +529,6 @@ fn StudentList(
                                 <a
                                     href=format!("/poin/{sid}")
                                     class="text-right shrink-0 w-16 py-1 group"
-                                    on:click=|ev| ev.stop_propagation()
                                     title="Lihat riwayat poin santri ini"
                                 >
                                     <p class="text-body-lg font-bold text-primary group-hover:underline underline-offset-2">

@@ -111,6 +111,14 @@ fn AnalisisBody(
                 <span class="material-symbols-outlined text-primary">"school"</span>
                 <span class="text-body-sm font-semibold text-on-background">"Kelas Saya"</span>
             </a>
+            // Siapa yang hari ini tak masuk. Sebelumnya pintunya hanya ada di
+            // grid /staf — beranda ADMIN — jadi guru harus mampir ke dashboard
+            // yang bukan miliknya dulu untuk menjawab pertanyaan yang muncul
+            // tiap pagi di kelasnya sendiri.
+            <a href="/izin-aktif" class="ppm-card p-3 flex items-center gap-2 press">
+                <span class="material-symbols-outlined text-primary">"event_busy"</span>
+                <span class="text-body-sm font-semibold text-on-background">"Sedang Izin"</span>
+            </a>
         </div>
 
         // Desktop: ringkasan harian (hero+progres+sesi hari ini) kolom utama
@@ -196,7 +204,7 @@ fn AnalisisBody(
                             <h3 class="text-title-md text-on-background font-semibold">"Sesi Hari Ini"</h3>
                             <a href="/sesi" class="text-body-sm font-semibold text-primary">"Lihat Semua"</a>
                         </div>
-                        <div class="space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0">
+                        <div class="ppm-card-grid">
                             {today
                                 .iter()
                                 .cloned()

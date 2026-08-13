@@ -113,11 +113,12 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
     let (since, _) = current_semester(pool).await?;
     let today = Utc::now().with_timezone(&wib()).date_naive();
 
-    let (stats, home, detected, permits) = tokio::join!(
+    let (stats, home, detected, permits, aktif) = tokio::join!(
         repo::semester_stats(pool, user_id, since),
         repo::user_home(pool, user_id),
         repo::latest_scan_today(pool, user_id, today),
         repo::list_my_permits(pool, user_id, 5),
+        super::permits::izin_aktif_saya(pool, user_id),
     );
 
     let (hadir, _izin, alpa, total) = stats?;
@@ -160,6 +161,9 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
         absen: alpa,
         points,
         detected,
+        // Gagalnya spanduk TIDAK boleh menggagalkan seluruh halaman izin —
+        // yang utama di sini tetap form pengajuannya.
+        aktif: aktif.unwrap_or(None),
         permits,
     })
 }
@@ -180,6 +184,7 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
 /// akan pernah lolos bila diajukan dari awal.
 ///
 /// Return `(kind, start, end, jam, reason)` yang sudah bersih.
+#[allow(clippy::type_complexity)]
 pub(crate) fn validasi_izin<'a>(
     kind: &'a str,
     start: &str,
@@ -208,12 +213,21 @@ pub(crate) fn validasi_izin<'a>(
             Err(_) => bail_user!("Tanggal selesai tidak valid."),
         },
     };
-    // Izin per JAM: keduanya diisi atau keduanya kosong. Satu ujung saja tak
-    // bisa dibandingkan dengan jam jadwal mana pun.
+    // JAM KELUAR (pada tanggal mulai) & JAM PULANG (pada tanggal selesai).
+    // Keduanya diisi atau keduanya kosong — satu ujung saja tak membentuk
+    // rentang waktu apa pun.
+    //
+    // Sebelumnya kedua angka ini berarti "jam berlakunya izin PADA SETIAP HARI"
+    // dalam rentang. Untuk izin sehari keduanya sama saja, tapi untuk izin
+    // berhari-hari maknanya keliru: santri yang pulang Jumat sore dan kembali
+    // Minggu pagi bukan berarti ia izin "sore sampai pagi" tiap hari — ia
+    // PERGI, dan seluruh hari di antaranya ikut terlewat. Sekarang keduanya
+    // dibaca sebagai satu rentang waktu: dari (tanggal mulai + jam keluar)
+    // sampai (tanggal selesai + jam pulang).
     let jam = match (jam_mulai.trim(), jam_selesai.trim()) {
         ("", "") => None,
         (a, b) if a.is_empty() || b.is_empty() => {
-            bail_user!("Isi jam mulai DAN jam selesai, atau kosongkan keduanya untuk izin sehari penuh.")
+            bail_user!("Isi jam keluar DAN jam pulang, atau kosongkan keduanya untuk izin sehari penuh.")
         }
         (a, b) => {
             let (Ok(ja), Ok(jb)) = (
@@ -222,8 +236,11 @@ pub(crate) fn validasi_izin<'a>(
             ) else {
                 bail_user!("Jam izin tidak valid (format 24 jam, mis. 09:00).");
             };
-            if jb <= ja {
-                bail_user!("Jam selesai harus setelah jam mulai.");
+            // Urutan jam hanya bermakna bila keluar & pulang di HARI YANG SAMA.
+            // Pada izin berhari-hari, pulang pukul 08:00 setelah keluar pukul
+            // 14:00 dua hari sebelumnya jelas sah — dan aturan lama menolaknya.
+            if end_date.is_none_or(|e| e == start_date) && jb <= ja {
+                bail_user!("Jam pulang harus setelah jam keluar bila izinnya sehari.");
             }
             Some((ja, jb))
         }
@@ -298,7 +315,7 @@ pub async fn pratinjau_izin(
         }
     };
 
-    let affected = repo::affected_classes(pool, user_id, start_date, range_end, jam).await?;
+    let affected = repo::affected_classes(pool, user_id, start_date, range_end).await?;
 
     // Satu kelas bisa punya beberapa jadwal; sesinya dijumlahkan, kelasnya
     // tetap satu baris. Urutan kemunculan pertama dipertahankan supaya daftar
@@ -310,19 +327,9 @@ pub async fn pratinjau_izin(
     let mut total = 0i64;
 
     for c in &affected {
-        let habis = c.sched_end.map_or(range_end, |e| e.min(range_end));
-        let mulai = start_date.max(c.sched_start);
-        if mulai > habis {
-            continue;
-        }
-        let n = super::kelas::dates_in_range(
-            &c.recurrence_type,
-            c.sched_start,
-            &super::kelas::parse_dates(&c.custom_dates),
-            mulai,
-            habis,
-        )
-        .len() as i64;
+        // Aturan yang SAMA dengan pengajuan sungguhan (`tanggal_izin`) — angka
+        // di pratinjau tak boleh berbeda dari yang nanti benar-benar terjadi.
+        let n = super::permits::tanggal_izin(c, start_date, range_end, jam).len() as i64;
         if n == 0 {
             continue;
         }

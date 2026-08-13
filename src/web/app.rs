@@ -234,6 +234,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/verifikasi-pamong") view=VerifikasiPamongPage />
                 <Route path=path!("/verifikasi-tahap-2") view=VerifikasiTahap2Page />
                 <Route path=path!("/izin-staf") view=IzinStafPage />
+                <Route path=path!("/izin-aktif") view=IzinAktifPage />
                 <Route path=path!("/materi") view=MateriPage />
                 <Route path=path!("/galeri") view=GaleriPage />
                 <Route path=path!("/kelola-artikel") view=KelolaArtikelPage />

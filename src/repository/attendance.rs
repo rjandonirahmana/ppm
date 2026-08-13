@@ -1113,8 +1113,10 @@ pub async fn run_auto_absent(pool: &Pool) -> Result<i64> {
                                            WHERE prc.permit_id = p.id \
                                              AND prc.class_id = s.class_id)) \
                           AND (p.start_time IS NULL \
-                               OR (sch.start_time < p.end_time \
-                                   AND sch.end_time > p.start_time))) \
+                               OR ((s.session_date + sch.start_time) \
+                                       < (COALESCE(p.end_date, p.start_date) + p.end_time) \
+                                   AND (s.session_date + sch.end_time) \
+                                       > (p.start_date + p.start_time))) ) \
                 ON CONFLICT DO NOTHING \
                 RETURNING id, user_id, class_schedule_id \
              ), \

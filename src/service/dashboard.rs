@@ -14,12 +14,13 @@ use crate::repository as repo;
 /// Payload dashboard santri. Empat query dijalankan PARALEL (satu round-trip
 /// latensi, pola sama e-ticketing futures::join!).
 pub async fn santri_home(pool: &Pool, user_id: i64) -> Result<SantriHome> {
-    let (home, recent, schedule, progress, month_points) = tokio::join!(
+    let (home, recent, schedule, progress, month_points, izin_aktif) = tokio::join!(
         repo::user_home(pool, user_id),
         repo::recent_attendances(pool, user_id, 3),
         repo::next_schedule(pool, user_id),
         repo::month_progress(pool, user_id),
         repo::month_points(pool, user_id),
+        crate::service::permits::izin_aktif_saya(pool, user_id),
     );
 
     let Some(home) = home? else {
@@ -66,6 +67,8 @@ pub async fn santri_home(pool: &Pool, user_id: i64) -> Result<SantriHome> {
         recent,
         month_pct,
         month_points: month_points.unwrap_or(0),
+        // Gagalnya spanduk tak boleh menggagalkan seluruh beranda.
+        izin_aktif: izin_aktif.unwrap_or(None),
     })
 }
 

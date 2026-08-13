@@ -561,8 +561,11 @@ fn JadwalCard(
 /// Bentuk isiannya mengikuti jenis materi (ayat+surat untuk Qur'an, halaman
 /// untuk Hadist), memakai komponen yang sama dengan rentang kurikulum supaya
 /// keduanya tak bisa berbeda cara membacanya.
+/// `pub` (bukan `pub(super)`) sejak "Kelas Saya" ikut memakainya — wali kelas
+/// menggeser posisi materi dari kartu kelasnya sendiri, tanpa mampir ke
+/// /kelas/:id.
 #[component]
-pub(super) fn PosisiBerjalan(
+pub fn PosisiBerjalan(
     class_id: i64,
     schedule_id: i64,
     s: crate::models::ScheduleItem,
@@ -645,12 +648,19 @@ pub(super) fn PosisiBerjalan(
                             .into_any()
                     }}
                 </div>
+                // BERLABEL, bukan ikon telanjang. Sebelumnya tombol ini hanya
+                // gambar buku 8×8 di pojok — tak ada yang menduga posisi materi
+                // bisa disunting dari situ, dan wali kelas mengira layar ini
+                // sekadar bacaan.
                 <button
-                    class="w-8 h-8 rounded-lg bg-surface-container text-primary flex items-center justify-center press shrink-0"
+                    class="px-2.5 h-8 rounded-lg bg-surface-container text-primary flex items-center gap-1 press shrink-0"
                     on:click=move |_| buka.update(|b| *b = !*b)
                     aria-label="Ubah materi yang dibahas"
                 >
                     <span class="material-symbols-outlined text-[18px]">"menu_book"</span>
+                    <span class="text-[11px] font-bold">
+                        {move || if buka.get() { "Tutup" } else { "Ubah" }}
+                    </span>
                 </button>
             </div>
 

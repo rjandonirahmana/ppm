@@ -260,6 +260,28 @@ pub struct TamuMasukItem {
 /// Payload layar /tamu-masuk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TamuMasukData {
+    /// Menunggu diperiksa DALAM RENTANG yang sedang dilihat.
     pub belum_diperiksa: i64,
+    /// Jumlah kunjungan yang cocok penyaring — bukan panjang `items` (yang
+    /// hanya halaman pertama).
+    pub total: i64,
+    /// Nama rentang yang sedang aktif, mis. "Semester Ganjil 25/26" — hanya
+    /// server yang tahu semester mana yang sedang berjalan (tabel migrasi 40).
+    pub rentang_label: String,
+    /// HALAMAN PERTAMA; sisanya lewat `tamu_masuk_page`.
     pub items: Vec<TamuMasukItem>,
 }
+
+/// Pilihan rentang waktu buku tamu. Nilai kirinya yang dikirim ke server.
+///
+/// Tinggal di `models` supaya layar (WASM) dan penerjemah tanggal (server)
+/// membaca daftar yang SAMA — kode rentang yang diketik ulang di dua tempat
+/// cepat atau lambat berbeda satu huruf, dan penyaringnya diam-diam jadi
+/// "semua".
+pub const RENTANG_TAMU: &[(&str, &str)] = &[
+    ("hari_ini", "Hari ini"),
+    ("7", "7 hari"),
+    ("30", "30 hari"),
+    ("semester", "Semester ini"),
+    ("semua", "Semua"),
+];
