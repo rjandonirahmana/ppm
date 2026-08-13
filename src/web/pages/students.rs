@@ -476,10 +476,40 @@ fn StudentList(
                                             </span>
                                         }
                                     })}
-                                <div class="text-right shrink-0 w-14">
-                                    <p class="text-body-lg font-bold text-primary">{s.points}</p>
+                                // Poin = TAUTAN ke buku besarnya. Guru wali kelas
+                                // sampai sekarang cuma melihat angkanya; kalau
+                                // seorang santri bertanya "kenapa poin saya turun",
+                                // jawabannya hanya ada di layar admin. Ini pintu
+                                // yang sama (/poin/:id), dan server memang sudah
+                                // mengizinkan guru membacanya — hanya belum ada
+                                // yang menautkannya.
+                                //
+                                // `stop_propagation`: baris ini juga pengalih panel
+                                // progres buku, dan tanpa itu satu klik membuka
+                                // panel SEKALIGUS berpindah halaman.
+                                // Sengaja TANPA latar sendiri. Versi pertama
+                                // memakai kotak ber-hover `bg-secondary-container`
+                                // dan hasilnya sebuah petak hijau pekat yang
+                                // menempel di baris — terbaca seperti lencana
+                                // "terpilih", bukan tautan, dan bertabrakan
+                                // dengan chip Angkatan yang warnanya sama persis.
+                                // Tanda ›-nya pun karakter teks, bukan ikon, jadi
+                                // ukurannya tak sejajar dengan chevron di
+                                // sebelahnya. Yang tersisa sekarang: angka yang
+                                // bergaris bawah saat disentuh — cukup untuk
+                                // dikenali sebagai tautan, cukup diam untuk tak
+                                // merebut perhatian dari nama santrinya.
+                                <a
+                                    href=format!("/poin/{sid}")
+                                    class="text-right shrink-0 w-16 py-1 group"
+                                    on:click=|ev| ev.stop_propagation()
+                                    title="Lihat riwayat poin santri ini"
+                                >
+                                    <p class="text-body-lg font-bold text-primary group-hover:underline underline-offset-2">
+                                        {s.points}
+                                    </p>
                                     <p class="text-[10px] text-on-surface-variant">"Poin"</p>
-                                </div>
+                                </a>
                                 // `expand_less` TAK ada di subset font (jadi teks
                                 // mentah) → pakai `expand_more` (ada) lalu rotasi
                                 // 180° saat terbuka = panah-atas.

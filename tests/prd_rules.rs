@@ -27,7 +27,10 @@ fn attendance_note_sesuai_status() {
     assert_eq!(attendance_note("permit"), "Izin");
     // Sakit/Cuti bersurat sah — dicatat terpisah, tak dihitung pelanggaran.
     assert_eq!(attendance_note("sick"), "Sakit/Cuti");
-    assert_eq!(attendance_note("outside_schedule"), "Di luar jadwal");
+    // 'outside_schedule' DIHAPUS (migrasi 85): tap di luar jam kelas tak lagi
+    // dicatat, jadi statusnya tak pernah sampai ke sini — ia kini sekadar kata
+    // tak dikenal, sama seperti yang lain.
+    assert_eq!(attendance_note("outside_schedule"), "Keterangan");
     assert_eq!(attendance_note("entah"), "Keterangan");
 }
 
@@ -36,8 +39,12 @@ fn point_rule_fallback_tanpa_konteks() {
     assert_eq!(point_rule("present").0, 10);
     assert_eq!(point_rule("permit").0, 0);
     assert_eq!(point_rule("sick").0, 0);
-    assert_eq!(point_rule("outside_schedule").0, 0);
     assert!(point_rule("absent").0 < 0);
+    // Status yang tak dikenal (termasuk 'outside_schedule' yang dihapus migrasi
+    // 85) jatuh ke cabang terakhir = diperlakukan seperti alfa. Itu memang yang
+    // diinginkan: kalau suatu saat ada status asing masuk, ia harus MENCOLOK,
+    // bukan diam-diam bernilai nol.
+    assert!(point_rule("outside_schedule").0 < 0);
 }
 
 // ── Reward mingguan (PRD hal. 8) ─────────────────────────────────────────────
@@ -75,10 +82,12 @@ fn prestasi_sesuai_ambang() {
 fn pemanggilan_tier_sesuai_net() {
     assert_eq!(pemanggilan_tier(-9).0, "KoorSantri");
     assert_eq!(pemanggilan_tier(-11).0, "KoorSantri");
-    assert_eq!(pemanggilan_tier(-12).0, "Pamong");
-    assert_eq!(pemanggilan_tier(-17).0, "Pamong");
-    assert_eq!(pemanggilan_tier(-18).0, "Wali Kelas");
-    assert_eq!(pemanggilan_tier(-100).0, "Wali Kelas");
+    // Jenjangnya digeser sejak peran pamong dihapus (migrasi 84): tingkat
+    // tengah jadi Wali Kelas, yang terberat naik ke Ketua. Ambangnya tetap.
+    assert_eq!(pemanggilan_tier(-12).0, "Wali Kelas");
+    assert_eq!(pemanggilan_tier(-17).0, "Wali Kelas");
+    assert_eq!(pemanggilan_tier(-18).0, "Ketua");
+    assert_eq!(pemanggilan_tier(-100).0, "Ketua");
 }
 
 // ── Sistem SP dari saldo (PRD hal. 14) ───────────────────────────────────────

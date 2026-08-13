@@ -81,7 +81,8 @@ pub struct WeeklyCatCount {
 
 /// Hitung kehadiran per santri PER KATEGORI kegiatan (dari activity_type jadwal)
 /// dalam rentang [start,end] WIB. Hanya santri yang punya catatan (INNER JOIN).
-/// telat menyertakan 'outside_schedule'.
+/// (Status 'outside_schedule' DIHAPUS, migrasi 85 — tap di luar jam kelas tak
+/// lagi dicatat sama sekali, jadi tak ada yang perlu ikut dihitung sbg telat.)
 pub async fn weekly_counts_by_category(
     pool: &Pool,
     start: NaiveDate,
@@ -92,7 +93,7 @@ pub async fn weekly_counts_by_category(
         .query(
             "SELECT u.id, u.full_name, u.nis, COALESCE(sch.activity_type, 'other'), \
                 COUNT(*) FILTER (WHERE a.status = 'present'), \
-                COUNT(*) FILTER (WHERE a.status IN ('late','outside_schedule')), \
+                COUNT(*) FILTER (WHERE a.status = 'late'), \
                 COUNT(*) FILTER (WHERE a.status = 'permit'), \
                 COUNT(*) FILTER (WHERE a.status = 'sick'), \
                 COUNT(*) FILTER (WHERE a.status = 'absent') \
@@ -180,7 +181,7 @@ pub async fn credited_users_for_week(pool: &Pool, week_start: NaiveDate) -> Resu
 
 /// Rekap kehadiran per-santri untuk rentang tanggal (WIB). Semua santri aktif
 /// dimasukkan (LEFT JOIN) walau tanpa catatan pekan itu (semua nol).
-/// telat menyertakan 'outside_schedule' (hadir di luar jadwal).
+
 pub async fn weekly_recap(
     pool: &Pool,
     start: NaiveDate,
@@ -195,7 +196,7 @@ pub async fn weekly_recap(
                     ORDER BY (c.category = 'kbm') DESC, c.id \
                     LIMIT 1), \
                 COUNT(*) FILTER (WHERE a.status = 'present'), \
-                COUNT(*) FILTER (WHERE a.status IN ('late','outside_schedule')), \
+                COUNT(*) FILTER (WHERE a.status = 'late'), \
                 COUNT(*) FILTER (WHERE a.status IN ('permit','sick')), \
                 COUNT(*) FILTER (WHERE a.status = 'absent'), \
                 u.points \
@@ -978,8 +979,8 @@ pub async fn decide_verify(
         // `category` diturunkan dari TANDA delta, sama seperti jalur otomatis.
         // Ini setara dengan pemetaan per-status yang dulu dipakai di sini:
         // present selalu ≥ 0 → attendance; late/absent/permit selalu ≤ 0 →
-        // discipline; sick & outside_schedule berdelta 0 dan sudah disaring
-        // `delta <> 0`, jadi tak pernah sampai menghasilkan baris log.
+        // discipline; sick berdelta 0 dan sudah disaring `delta <> 0`, jadi
+        // tak pernah sampai menghasilkan baris log.
         //
         // attendance_id: tautan agar koreksi bisa MENARIK BALIK poin ini
         // (hapus log → trigger mengembalikan saldo). Migrasi 51.
@@ -1303,10 +1304,18 @@ pub async fn attendance_session_staff(
 /// COALESCE ke wali/pamong KELAS: bila sesi belum menetapkan petugasnya,
 /// yang berlaku adalah wali kelas & pamong kelas — jadi sesi yang terlanjur
 /// lewat tanpa penugasan tetap bisa dikoreksi.
+///
+/// `is_admin` melewati pemeriksaan petugas. Absensi manual adalah jalur UTAMA
+/// selama RFID belum terpasang, dan tanpa pintu ini satu sesi yang gurunya
+/// berhalangan tak bisa diabsen siapa pun — termasuk oleh pengurus yang
+/// dimintai tolong. Yang dilewati hanya "siapa petugasnya", bukan pagar lain:
+/// keanggotaan kelas tetap disaring saat penulisan (lihat
+/// [`upsert_session_attendance_bulk`]).
 pub async fn session_for_correction(
     pool: &Pool,
     session_id: i64,
     actor_id: i64,
+    is_admin: bool,
 ) -> Result<Option<(Option<i64>, NaiveDate, Option<chrono::NaiveTime>)>> {
     let c = pool.get().await?;
     let row = c
@@ -1316,9 +1325,8 @@ pub async fn session_for_correction(
              JOIN classes cl ON cl.id = cs.class_id \
              LEFT JOIN class_schedules sch ON sch.id = cs.class_schedule_id \
              WHERE cs.id = $1 \
-               AND $2 IN (COALESCE(cs.teacher_id, cl.wali_kelas_id), \
-                          COALESCE(cs.pamong_id, cl.pamong_id))",
-            &[&session_id, &actor_id],
+               AND ($3 OR $2 = COALESCE(cs.teacher_id, cl.wali_kelas_id))",
+            &[&session_id, &actor_id, &is_admin],
         )
         .await
         .context("session_for_correction")?;

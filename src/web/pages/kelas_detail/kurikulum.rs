@@ -30,7 +30,7 @@ pub(super) fn KurikulumTab(
                 // Kurikulum boleh disusun GURU & PAMONG, bukan admin saja:
                 // merekalah yang tahu kelasnya sedang membaca kitab apa dan
                 // sampai mana. Yang tetap admin-saja adalah struktur kelasnya
-                // (anggota, jadwal, wali/pamong).
+                // (anggota, jadwal, wali kelas).
                 <BuatKurikulumForm class_id=class_id book_options=book_opts refetch=refetch />
             </div>
 

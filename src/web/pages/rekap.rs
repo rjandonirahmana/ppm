@@ -492,9 +492,11 @@ fn SpRow(s: SpItem) -> impl IntoView {
 
 #[component]
 fn PemanggilanRow(p: PemanggilanItem) -> impl IntoView {
+    // Merah = tingkat terberat. Ia ikut BERGESER bersama jenjangnya (migrasi
+    // 84): dulu Wali Kelas yang paling berat, sekarang Ketua.
     let badge = match p.tier_kind.as_str() {
-        "wali" => "ppm-chip-sm bg-error/10 text-error shrink-0",
-        "pamong" => "ppm-chip-sm bg-warning/10 text-warning shrink-0",
+        "ketua" => "ppm-chip-sm bg-error/10 text-error shrink-0",
+        "wali" => "ppm-chip-sm bg-warning/10 text-warning shrink-0",
         _ => "ppm-chip-sm bg-info/10 text-info shrink-0",
     };
     let meta = if p.nis.is_empty() {

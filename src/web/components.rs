@@ -11,12 +11,14 @@ use crate::models::{BookProgressItem, SessionUser, Surah};
 /// tampil di desktop.
 ///
 /// Tujuannya sengaja tidak bergantung peran. Sempat dibuat begitu (admin →
-/// `/setelan`), dan itu keliru: `/setelan` adalah konfigurasi APLIKASI —
-/// alur persetujuan izin, reset saldo poin semester — bukan pengaturan milik
-/// orang yang sedang memakainya. Gerigi di sebelah lonceng dibaca semua orang
-/// sebagai "akun saya", dan itu `/profil`, halaman yang sama yang ditunjuk
-/// "Pengaturan" di sidebar desktop. Admin tetap menjangkau `/setelan` lewat
-/// kotak "Setelan" di grid Alat Administrasi pada dashboard-nya.
+/// `/setelan`), dan itu keliru: halaman itu konfigurasi APLIKASI, bukan
+/// pengaturan milik orang yang sedang memakainya. Gerigi di sebelah lonceng
+/// dibaca semua orang sebagai "akun saya", dan itu `/profil`, halaman yang sama
+/// yang ditunjuk "Pengaturan" di sidebar desktop.
+///
+/// `/setelan` sendiri sudah TIDAK ADA (Ags 2026): alur persetujuan izin kini
+/// diatur per-kelas di `/kelas/:id`, dan reset saldo poin awal semester pindah
+/// ke `/poin` — tempat poin memang dikelola.
 #[component]
 fn SettingsLink(wide: bool) -> impl IntoView {
     let cls = if wide {
@@ -36,6 +38,119 @@ fn SettingsLink(wide: bool) -> impl IntoView {
 /// user** (avatar inisial + nama + peran) menggantikan tombol setting — sidebar
 /// desktop sudah punya Settings/Logout sendiri, jadi header di sana cukup jadi
 /// heading halaman + identitas, bukan duplikasi kontrol.
+/// Tumpukan jalur yang sudah dilalui DI DALAM aplikasi ini sejak tab dibuka.
+/// Disediakan `App`, dibaca tombol kembali [`MobileHeader`].
+///
+/// Tanpa ini tombol kembali tak punya pilihan selain `back_href` — alamat TETAP
+/// yang ditulis di tiap halaman. Itulah sebab keluhan "kembali malah ke halaman
+/// lain": dari `/students` menekan poin seorang santri lalu kembali, yang
+/// terbuka `/poin` (tulisan di `poin.rs`), bukan `/students` tempat ia tadi
+/// berada. Hal sama pada `/sesi/:id` (selalu ke `/sesi` walau datang dari detail
+/// kelas) dan `/kelas/:id` (selalu ke `/kelas`).
+///
+/// KENAPA TUMPUKAN, bukan sekadar penghitung maju. Halaman yang dibuka LANGSUNG
+/// (tautan WhatsApp, bookmark, hasil refresh) tak punya riwayat milik aplikasi
+/// ini, dan `history.back()` di sana melempar pengguna keluar — ke Google atau
+/// tab kosong. Penghitung yang hanya naik juga tak cukup: setelah pengguna
+/// menekan tombol back PERAMBAN, hitungannya jadi terlalu besar dan tombol di
+/// header ikut melempar keluar. Dengan tumpukan, langkah mundur dikenali
+/// (jalur baru = satu tingkat di bawah puncak) dan puncaknya di-pop.
+#[derive(Clone, Copy)]
+pub struct RiwayatNav(pub RwSignal<Vec<String>>);
+
+impl RiwayatNav {
+    /// Masih ada halaman aplikasi di belakang layar ini?
+    pub fn bisa_mundur(&self) -> bool {
+        self.0.with_untracked(|v| v.len() > 1)
+    }
+}
+
+/// Sediakan [`RiwayatNav`] — dipanggil di badan `App`, SEBELUM `<Router>`.
+///
+/// Harus di sana, bukan di komponen anak: `provide_context` hanya terlihat oleh
+/// TURUNAN pemiliknya, jadi konteks yang dipasang di dalam sebuah anak Router
+/// tak akan pernah sampai ke halaman yang jadi saudaranya.
+pub fn sediakan_riwayat_nav() {
+    provide_context(RiwayatNav(RwSignal::new(Vec::new())));
+}
+
+/// Catat tiap perpindahan halaman — dipanggil dari komponen DI DALAM `<Router>`
+/// (`use_location` butuh konteks router).
+///
+/// Efeknya hanya berjalan di klien, jadi tumpukan ini tak pernah ikut ke HTML
+/// server; markup tombol kembali sengaja SAMA di kedua sisi (selalu `<a href>`),
+/// hanya perilakunya yang ditingkatkan setelah hidrasi.
+pub fn lacak_perpindahan() {
+    let Some(riwayat) = use_context::<RiwayatNav>() else { return };
+    let pathname = use_location().pathname;
+    Effect::new(move |_| {
+        let kini = pathname.get();
+        riwayat.0.update(|v| langkah_nav(v, &kini));
+    });
+}
+
+/// Satu langkah perpindahan → perubahan tumpukan. Dipisah dari efeknya supaya
+/// bisa diuji tanpa peramban; ini inti dari benar-tidaknya tombol kembali.
+pub(crate) fn langkah_nav(tumpukan: &mut Vec<String>, kini: &str) {
+    match tumpukan.last() {
+        // Jalur yang sama dirender ulang (mis. query berubah) — bukan pindah.
+        Some(atas) if atas == kini => {}
+        // Jalur baru = tepat satu tingkat di bawah puncak → pengguna MUNDUR
+        // (tombol back peramban ATAU tombol kembali di header). Puncaknya
+        // dilepas, bukan ditumpuk lagi — kalau tidak, tumpukan terus tumbuh
+        // saat orang bolak-balik dan tombol kembali akhirnya melempar keluar
+        // aplikasi.
+        _ if tumpukan.len() >= 2 && tumpukan[tumpukan.len() - 2] == kini => {
+            tumpukan.pop();
+        }
+        _ => tumpukan.push(kini.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests_nav {
+    use super::langkah_nav;
+
+    fn jalan(langkah: &[&str]) -> Vec<String> {
+        let mut v = Vec::new();
+        for l in langkah {
+            langkah_nav(&mut v, l);
+        }
+        v
+    }
+
+    #[test]
+    fn maju_menumpuk() {
+        assert_eq!(jalan(&["/students", "/poin/7"]).len(), 2);
+    }
+
+    /// Halaman pertama = tak ada yang bisa dimunduri; tombol kembali WAJIB
+    /// jatuh ke `back_href`, kalau tidak pengguna terlempar keluar aplikasi.
+    #[test]
+    fn halaman_pertama_tak_bisa_mundur() {
+        assert_eq!(jalan(&["/poin/7"]).len(), 1);
+    }
+
+    #[test]
+    fn mundur_melepas_puncak() {
+        // /students → /poin/7 → kembali
+        assert_eq!(jalan(&["/students", "/poin/7", "/students"]), vec!["/students"]);
+    }
+
+    /// Bolak-balik berkali-kali tak boleh menggelembungkan tumpukan — inilah
+    /// yang membuat penghitung-maju-saja salah dan tombolnya keluar aplikasi.
+    #[test]
+    fn bolak_balik_tak_menggelembung() {
+        let v = jalan(&["/sesi", "/sesi/3", "/sesi", "/sesi/3", "/sesi"]);
+        assert_eq!(v, vec!["/sesi"]);
+    }
+
+    #[test]
+    fn render_ulang_jalur_sama_diabaikan() {
+        assert_eq!(jalan(&["/kelas", "/kelas", "/kelas"]), vec!["/kelas"]);
+    }
+}
+
 #[component]
 pub fn MobileHeader(
     title: &'static str,
@@ -51,6 +166,29 @@ pub fn MobileHeader(
     settings: bool,
 ) -> impl IntoView {
     let session = use_context::<Resource<Option<SessionUser>>>();
+    // Tombol kembali: pakai riwayat SUNGGUHAN bila pengguna sampai ke sini
+    // lewat navigasi di dalam aplikasi; `back_href` hanya jaring pengaman untuk
+    // halaman yang dibuka langsung. Lihat [`RiwayatNav`].
+    let riwayat = use_context::<RiwayatNav>();
+    let kembali = move |ev: leptos::ev::MouseEvent| {
+        // Klik dengan Ctrl/Cmd/Shift/Alt atau tombol tengah = "buka di tab
+        // baru". Membajaknya jadi history.back() akan membuat tab baru berisi
+        // halaman yang salah — biarkan peramban yang mengurus.
+        if ev.button() != 0 || ev.ctrl_key() || ev.meta_key() || ev.shift_key() || ev.alt_key() {
+            return;
+        }
+        let ada_riwayat = riwayat.map(|r| r.bisa_mundur()).unwrap_or(false);
+        if !ada_riwayat {
+            return; // biarkan <a href> berjalan normal
+        }
+        ev.prevent_default();
+        #[cfg(target_arch = "wasm32")]
+        if let Some(w) = web_sys::window() {
+            if let Ok(h) = w.history() {
+                let _ = h.back();
+            }
+        }
+    };
     view! {
         // z-40 (bukan z-20): `backdrop-blur` bikin stacking-context baru, jadi
         // popover NotifBell (z-40 internal) ikut "terkurung" di level header.
@@ -63,6 +201,8 @@ pub fn MobileHeader(
                         <a
                             href=href
                             class="w-9 h-9 -ml-1 rounded-full flex items-center justify-center text-on-surface hover:bg-surface-container"
+                            aria-label="Kembali"
+                            on:click=kembali
                         >
                             <span class="material-symbols-outlined">"arrow_back"</span>
                         </a>
@@ -93,14 +233,12 @@ pub fn MobileHeader(
                             .take(2)
                             .filter_map(|w| w.chars().next())
                             .collect();
-                        let role_label = match u.role.as_str() {
-                            "admin" => "Administrator",
-                            "ketua" => "Ketua",
-                            "supervisor" => "Pamong",
-                            "teacher" | "dewan_guru" => "Dewan Guru",
-                            "parent" => "Orang Tua",
-                            _ => "Santri",
-                        };
+                        // SATU sumber label peran (`models::role_label`) — dua
+                        // salinan `match` di berkas ini sempat menyimpang dan
+                        // tetap menulis "Pamong" berbulan-bulan setelah peran
+                        // itu dihapus (migrasi 84), karena tak ada yang
+                        // mengingatkan bahwa keduanya harus diedit bersamaan.
+                        let role_label = crate::models::role_label(&u.role);
                         view! {
                             <div class="hidden md:flex items-center gap-3 pl-4 ml-1 border-l border-outline-variant/50 shrink-0">
                                 <NotifBell />
@@ -191,9 +329,9 @@ fn nav_visible(path: &str) -> bool {
     const PREFIXES: &[&str] = &[
         "/santri", "/izin", "/riwayat", "/sesi", "/profil", "/ganti-sandi", "/laporan", "/staf", "/guru",
         "/kelas-saya",
-        "/dewan-guru", "/poin", "/poin-dewan", "/verifikasi-pamong",
+        "/dewan-guru", "/poin", "/poin-saya", "/verifikasi-pamong",
         "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua", "/kontrol-pengguna",
-        "/akademik", "/kalender", "/izin-staf", "/materi", "/rekap-mingguan", "/setelan",
+        "/akademik", "/kalender", "/izin-staf", "/materi", "/rekap-mingguan",
         "/galeri", "/tagihan", "/tagihan-saya", "/kelola-artikel", "/manajemen-user",
         "/status-server",
     ];
@@ -311,15 +449,8 @@ pub fn DesktopSidebar() -> impl IntoView {
             let user = session.and_then(|s| s.get()).flatten();
             let (role, name) = user.map(|u| (u.role, u.name)).unwrap_or_default();
             let has_role = !role.is_empty();
-            let role_label = match role.as_str() {
-                "admin" => "Administrator",
-                "ketua" => "Ketua",
-                "supervisor" => "Pamong",
-                "teacher" | "dewan_guru" => "Dewan Guru",
-                "parent" => "Orang Tua",
-                "santri" | "santri_finance" => "Santri",
-                _ => "",
-            };
+            // Lihat catatan di `MobileHeader`: satu sumber, bukan salinan.
+            let role_label = if has_role { crate::models::role_label(&role) } else { "" };
             let initial: String =
                 name.split_whitespace().take(2).filter_map(|w| w.chars().next()).collect();
             let items = nav_for(&role);
@@ -480,8 +611,6 @@ macro_rules! nav_staf {
     };
 }
 
-/// Nav peran: pamong (supervisor). Beranda → /verifikasi-pamong.
-pub const NAV_PAMONG: &[NavDef] = nav_staf!("/verifikasi-pamong");
 
 /// Navbar PENJAGA — hanya dua tujuan.
 ///
@@ -622,7 +751,9 @@ pub const NAV_ORTU: &[NavDef] = &[
 pub fn nav_for(role: &str) -> &'static [NavDef] {
     match role {
         "parent" => NAV_ORTU,
-        "supervisor" => NAV_PAMONG,
+        // Mantan pamong (klaim JWT lama) memakai navbar dewan guru — lihat
+        // `role_satisfies`.
+        "supervisor" => NAV_DEWAN,
         "teacher" => NAV_DEWAN, // 'teacher' digabung ke dewan_guru (migrasi 36)
         "dewan_guru" => NAV_DEWAN,
         "admin" | "ketua" => NAV_STAF, // ketua = admin + finance
@@ -1400,10 +1531,8 @@ pub fn LencanaAdmin() -> impl IntoView {
 
 /// Kelas latar + teks untuk satu status kehadiran. Tanpa ukuran, tanpa bentuk.
 ///
-/// `outside_schedule` sengaja NETRAL, bukan hijau. Sebelumnya ia jatuh ke cabang
-/// `_` di beberapa halaman yang bawaannya "hadir", jadi santri yang tap kartunya
-/// di luar jadwal tampil bercentang hijau seperti hadir penuh — padahal justru
-/// keadaan yang perlu diperiksa pamong.
+/// Status tak dikenal jatuh ke cabang `_` yang NETRAL, bukan hijau: pernah
+/// terjadi status di luar daftar tampil bercentang hijau seperti hadir penuh.
 pub fn warna_kehadiran(kind: &str) -> &'static str {
     match kind {
         "present" => "bg-success/10 text-success",

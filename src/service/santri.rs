@@ -58,7 +58,6 @@ pub(crate) fn status_display(status: &str) -> (&'static str, &'static str) {
         "present" => ("HADIR", "present"),
         "late" => ("TERLAMBAT", "late"),
         // Warna reuse "late" (oranye) — visual "irregular"; label dibedakan.
-        "outside_schedule" => ("DI LUAR JADWAL", "late"),
         "permit" | "sick" => ("IZIN", "permit"),
         _ => ("ALPA", "absent"),
     }

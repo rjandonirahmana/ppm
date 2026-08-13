@@ -167,6 +167,11 @@ pub fn App() -> impl IntoView {
     let session = Resource::new_blocking(|| (), |_| async move { get_session().await.ok().flatten() });
     provide_context(session);
 
+    // Jejak halaman yang sudah dilalui, untuk tombol kembali (lihat
+    // `components::RiwayatNav`). Disediakan DI SINI — konteks hanya menurun ke
+    // anak, jadi memasangnya di dalam <Router> tak akan terlihat halaman.
+    crate::web::components::sediakan_riwayat_nav();
+
     // Nyalakan efek DOM (count-up + reveal) HANYA setelah hydration selesai —
     // Effect cuma jalan di klien, pasca-mount. Ini mencegah skrip inline
     // memutasi node yang sedang dihidrasi (hydration mismatch → klik mati /
@@ -188,6 +193,11 @@ pub fn App() -> impl IntoView {
     view! {
         <Title text="AFM SMART — Portal Absensi Santri" />
         <Router>
+            // Pencatat perpindahan halaman — dibaca tombol kembali di header
+            // supaya ia benar-benar mundur ke halaman SEBELUMNYA, bukan ke
+            // alamat tetap yang ditulis tiap halaman. Harus DI DALAM <Router>:
+            // `use_location()` baru ada setelah router terpasang.
+            <PelacakNav />
             <PreviewMode />
             <FlatRoutes fallback=|| view! { <NotFoundPage /> }>
                 // Publik: beranda profil pesantren untuk pengunjung.
@@ -208,6 +218,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/sesi") view=SesiPage />
                 <Route path=path!("/sesi/:id") view=SesiDetailPage />
                 <Route path=path!("/sesi/:id/live") view=SesiLivePage />
+                <Route path=path!("/poin-saya") view=PoinSayaPage />
                 <Route path=path!("/profil") view=ProfilPage />
                 <Route path=path!("/ganti-sandi") view=GantiSandiPage />
                 <Route path=path!("/laporan") view=LaporanPage />
@@ -219,7 +230,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/guru") view=GuruDashboardPage />
                 <Route path=path!("/dewan-guru") view=DewanGuruDashboardPage />
                 <Route path=path!("/poin") view=PoinPage />
-                <Route path=path!("/poin-dewan") view=PoinDewanPage />
+                <Route path=path!("/poin/:id") view=PoinDetailPage />
                 <Route path=path!("/verifikasi-pamong") view=VerifikasiPamongPage />
                 <Route path=path!("/verifikasi-tahap-2") view=VerifikasiTahap2Page />
                 <Route path=path!("/izin-staf") view=IzinStafPage />
@@ -230,7 +241,6 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/tagihan-saya") view=MyBillsPage />
                 <Route path=path!("/kontrol-pengguna") view=KontrolPenggunaPage />
                 <Route path=path!("/manajemen-user") view=ManajemenUserPage />
-                <Route path=path!("/setelan") view=SetelanPage />
                 <Route path=path!("/status-server") view=StatusServerPage />
                 <Route path=path!("/rekap-mingguan") view=RekapMingguanPage />
                 <Route path=path!("/students") view=StudentsPage />
@@ -259,6 +269,14 @@ pub fn App() -> impl IntoView {
             <DesktopSidebar />
         </Router>
     }
+}
+
+/// Mencatat perpindahan halaman (lihat `components::RiwayatNav`).
+/// Komponen kosong — ia hanya perlu tempat di dalam `<Router>` untuk hidup.
+#[component]
+fn PelacakNav() -> impl IntoView {
+    crate::web::components::lacak_perpindahan();
+    view! {}
 }
 
 /// Pratinjau tampilan PONSEL di layar desktop — dinyalakan `?preview=mobile`.

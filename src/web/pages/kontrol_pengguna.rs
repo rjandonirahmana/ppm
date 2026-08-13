@@ -210,15 +210,15 @@ fn RentangLog(hari: RwSignal<i32>) -> impl IntoView {
 #[component]
 fn InvitePanel() -> impl IntoView {
     // Peran yang boleh diundang (admin TIDAK termasuk — dibuat manual).
-    // Peran STAF hanya untuk admin: mengundang dewan guru/pamong = memberi
-    // wewenang setara, jadi pamong & dewan guru tak boleh mencetaknya (server
-    // menolaknya lewat service::registration::can_invite — dropdown ini hanya
+    // Peran STAF hanya untuk admin: mengundang dewan guru = memberi wewenang
+    // setara, jadi dewan guru tak boleh mencetaknya sendiri (server menolaknya
+    // lewat service::registration::can_invite — dropdown ini hanya
     // menyembunyikan pilihan yang pasti ditolak).
+    // 'supervisor' (pamong) DIBUANG: perannya dihapus (migrasi 84).
     const ROLES: &[(&str, &str)] = &[
         ("santri", "Santri"),
         ("parent", "Orang Tua"),
         ("dewan_guru", "Dewan Guru"),
-        ("supervisor", "Pamong"),
         ("penjaga", "Penjaga"),
     ];
     let session = use_context::<Resource<Option<SessionUser>>>();

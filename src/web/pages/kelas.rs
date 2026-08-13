@@ -1,4 +1,4 @@
-//! web/pages/kelas.rs — Manajemen Kelas (admin/dewan guru/pamong).
+//! web/pages/kelas.rs — Manajemen Kelas (admin/ketua/dewan guru).
 //!
 //! Kelola kurikulum & pembagian santri: statistik total kelas/santri, cari
 //! kelas, buat kelas baru, dan buka detail tiap kelas ("Lihat Santri" →

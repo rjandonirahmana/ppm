@@ -1,7 +1,9 @@
-//! service/server.rs — Pembacaan kesehatan mesin (CPU, memori, uptime) untuk
-//! halaman /status-server.
+//! service/server.rs — Pembacaan kesehatan mesin (CPU, memori, DISK, uptime)
+//! untuk halaman /status-server.
 //!
-//! TANPA DEPENDENSI BARU. Semuanya dibaca dari berkas semu Linux (`/proc`,
+//! Sisa DISK satu-satunya yang tak bisa dibaca dari berkas semu — `/proc` cuma
+//! memuat daftar mount, bukan kapasitasnya — jadi ia lewat `statvfs(2)` (lihat
+//! [`ruang_disk`]). Sisanya dibaca dari berkas semu Linux (`/proc`,
 //! `/sys/fs/cgroup`) yang memang disediakan kernel untuk keperluan ini. Sebuah
 //! crate seperti `sysinfo` akan menambah puluhan detik waktu kompilasi dan
 //! selusin dependensi transitif untuk empat berkas teks yang formatnya sudah
@@ -131,6 +133,98 @@ fn app_rss() -> u64 {
         .unwrap_or(0)
 }
 
+// ── Penyimpanan (SSD/NVMe) ───────────────────────────────────────────────────
+
+/// (total, terpakai, tersedia) satu filesystem, dalam byte.
+///
+/// `statvfs(2)`, bukan `/proc`: berkas semu itu memuat daftar mount, bukan
+/// kapasitasnya — ruang kosong memang hanya tersedia lewat syscall ini. Juga
+/// bukan memanggil `df`: itu berarti menjalankan proses tiap halaman dibuka dan
+/// bergantung pada base image yang menyertakan coreutils.
+///
+/// Berjalan di macOS juga (statvfs ada di POSIX), jadi kartu penyimpanan tetap
+/// berisi di mesin pengembang meski CPU/memori-nya tidak.
+fn ruang_disk(path: &std::path::Path) -> Option<(u64, u64, u64)> {
+    let c = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).ok()?;
+    // SAFETY: `c` adalah C-string valid berumur panjang selama pemanggilan, dan
+    // `s` adalah statvfs milik kita yang di-nol-kan lebih dulu. statvfs hanya
+    // MENULIS ke `s` dan tak menyimpan pointer apa pun.
+    let s = unsafe {
+        let mut s: libc::statvfs = std::mem::zeroed();
+        if libc::statvfs(c.as_ptr(), &mut s) != 0 {
+            return None;
+        }
+        s
+    };
+    // f_frsize = ukuran blok sesungguhnya; f_bsize hanya ukuran blok "yang
+    // disukai" I/O dan pada sebagian filesystem berbeda dari yang dipakai
+    // menghitung f_blocks. Salah memilih = angka melenceng berkali lipat.
+    let unit = if s.f_frsize > 0 { s.f_frsize as u64 } else { s.f_bsize as u64 };
+    let total = (s.f_blocks as u64).checked_mul(unit)?;
+    let bebas_root = (s.f_bfree as u64).saturating_mul(unit);
+    let tersedia = (s.f_bavail as u64).saturating_mul(unit);
+    Some((total, total.saturating_sub(bebas_root), tersedia))
+}
+
+/// Jalur yang benar-benar ADA terdekat dari `path`, menaiki induknya.
+///
+/// `RECORDINGS_DIR` & `UPLOAD_TMP_DIR` dibuat saat pertama dipakai, jadi di
+/// server yang belum pernah merekam direktorinya belum ada — dan statvfs atas
+/// jalur yang tak ada gagal. Yang ingin diketahui admin toh disk TEMPAT
+/// direktori itu akan lahir, dan induknya ada di disk yang sama.
+fn jalur_terdekat(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut p = path.to_path_buf();
+    loop {
+        if p.exists() {
+            return Some(p);
+        }
+        if !p.pop() || p.as_os_str().is_empty() {
+            return None;
+        }
+    }
+}
+
+/// Ruang disk untuk tiap FILESYSTEM yang dipakai aplikasi.
+///
+/// Tiga jalur diperiksa — disk sistem, direktori rekaman, direktori berkas
+/// sementara unggahan — lalu yang berada di filesystem yang SAMA dibuang
+/// (dibandingkan lewat nomor device `st_dev`). Di penataan biasa hasilnya satu
+/// kartu; entri kedua muncul justru saat rekaman ditaruh di volume terpisah,
+/// dan itu persis keadaan yang perlu dilihat sendiri-sendiri.
+fn daftar_disk() -> Vec<crate::models::DiskInfo> {
+    use std::os::unix::fs::MetadataExt;
+
+    let kandidat: [(&str, std::path::PathBuf); 3] = [
+        ("Disk sistem", std::path::PathBuf::from("/")),
+        ("Rekaman sesi", crate::web::live_audio::recordings_dir()),
+        ("Unggahan sementara", crate::web::multipart::upload_tmp_dir()),
+    ];
+
+    let mut hasil = Vec::new();
+    let mut device_terlihat: Vec<u64> = Vec::new();
+    for (label, path) in kandidat {
+        let Some(nyata) = jalur_terdekat(&path) else { continue };
+        let Ok(dev) = std::fs::metadata(&nyata).map(|m| m.dev()) else { continue };
+        if device_terlihat.contains(&dev) {
+            continue;
+        }
+        let Some((total, terpakai, tersedia)) = ruang_disk(&nyata) else { continue };
+        if total == 0 {
+            continue;
+        }
+        device_terlihat.push(dev);
+        hasil.push(crate::models::DiskInfo {
+            label: label.into(),
+            path: path.display().to_string(),
+            total,
+            terpakai,
+            tersedia,
+            pct: crate::models::pct_disk(terpakai, tersedia),
+        });
+    }
+    hasil
+}
+
 fn loadavg() -> (f32, f32, f32) {
     let Some(isi) = baca("/proc/loadavg") else { return (0.0, 0.0, 0.0) };
     let mut n = isi.split_whitespace().filter_map(|v| v.parse::<f32>().ok());
@@ -161,7 +255,7 @@ pub async fn status(pool: &Pool) -> ServerStatus {
             tersedia: false,
             catatan: format!(
                 "Angka CPU & memori dibaca dari /proc — tersedia di server Linux \
-                 (produksi), tidak di {}. Status kolam database di bawah tetap nyata.",
+                 (produksi), tidak di {}. Penyimpanan & kolam database di bawah tetap nyata.",
                 std::env::consts::OS
             ),
             cpu_pct: 0.0,
@@ -176,6 +270,10 @@ pub async fn status(pool: &Pool) -> ServerStatus {
             swap_total: 0,
             swap_terpakai: 0,
             app_rss: 0,
+            // Disk TIDAK ikut dikosongkan: `statvfs` POSIX, jadi angkanya benar
+            // di macOS juga. Menolaknya di sini cuma menyembunyikan data yang
+            // sudah ada di tangan.
+            disk: daftar_disk(),
             uptime_mesin: "—".into(),
             uptime_app,
             pool_max: st.max_size,
@@ -207,6 +305,7 @@ pub async fn status(pool: &Pool) -> ServerStatus {
         swap_total,
         swap_terpakai,
         app_rss: app_rss(),
+        disk: daftar_disk(),
         uptime_mesin: fmt_durasi(uptime_mesin_detik()),
         uptime_app,
         pool_max: st.max_size,
@@ -232,6 +331,30 @@ mod tests {
         assert_eq!(meminfo_kb(CONTOH, "MemAvailable"), Some(8_158_288 * 1024));
         assert_eq!(meminfo_kb(CONTOH, "SwapFree"), Some(2_097_152 * 1024));
         assert_eq!(meminfo_kb(CONTOH, "TidakAda"), None);
+    }
+
+    /// `statvfs` atas root harus selalu berhasil di Linux MAUPUN macOS, dan
+    /// angkanya harus masuk akal. Uji ini yang menangkap salah pilih satuan
+    /// blok (f_bsize vs f_frsize) — gejalanya total meleset berkali lipat, yang
+    /// tak kentara kalau hanya dilihat sekilas di layar.
+    #[test]
+    fn ruang_disk_root_terbaca_dan_konsisten() {
+        let (total, terpakai, tersedia) =
+            ruang_disk(std::path::Path::new("/")).expect("statvfs / harus berhasil");
+        assert!(total > 0);
+        assert!(terpakai <= total);
+        assert!(tersedia <= total);
+        // Cadangan root membuat tersedia ≤ sisa kasar, tak pernah lebih.
+        assert!(tersedia <= total - terpakai);
+    }
+
+    /// Direktori yang belum ada harus jatuh ke induknya, bukan hilang dari
+    /// daftar — RECORDINGS_DIR baru lahir saat siaran pertama.
+    #[test]
+    fn jalur_belum_ada_naik_ke_induk() {
+        let p = std::path::Path::new("/tmp/ppm-tak-ada-xyz/lagi/dalam");
+        let hasil = jalur_terdekat(p).expect("harus menemukan induk yang ada");
+        assert!(hasil.exists());
     }
 
     /// "MemFree" TIDAK boleh cocok saat yang dicari "Mem": tanpa pemeriksaan

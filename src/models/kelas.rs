@@ -204,23 +204,54 @@ pub struct PointRow {
     pub initial: String,
 }
 
-/// Payload halaman Pantauan Poin (/poin staf, /poin-dewan dewan guru).
+/// Payload halaman Pantauan Poin (/poin).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PoinData {
     /// true → boleh menambah/mengurangi poin manual (dewan guru/admin).
     pub can_adjust: bool,
+    /// true → boleh me-reset saldo poin seluruh santri (admin/ketua saja).
+    /// Dipisah dari `can_adjust`: menyesuaikan poin SATU santri dan mengembalikan
+    /// saldo SELURUH pesantren adalah dua kewenangan yang berbeda jauh.
+    pub can_reset: bool,
     pub avg_points: i32,
     pub total_santri: i64,
+    /// HALAMAN PERTAMA papan poin; sisanya diambil `poin_page_action` saat digulir.
     pub top: Vec<PointRow>,
 }
 
-/// Satu entri riwayat poin (point_logs) — dipakai di kartu detail santri.
+/// Satu entri riwayat poin (point_logs) — layar detail poin santri.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PointLogItem {
     pub delta: i32,
     pub reason: String,
     pub category: String,
     pub when_label: String,
+    /// "Ustadz Fulan (Admin)" bila dicatat orang; kosong bila oleh SISTEM
+    /// (kehadiran otomatis, reset saldo semester, saldo awal).
+    pub by_label: String,
+}
+
+/// Payload halaman detail poin satu santri (/poin/:id): profil singkat + buku
+/// besar poinnya.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PoinDetailData {
+    pub user_id: i64,
+    pub name: String,
+    pub initial: String,
+    pub nis: String,
+    pub angkatan: String,
+    pub phone: String,
+    pub points: i32,
+    /// Nama kelas yang diikuti (chip di layar).
+    pub classes: Vec<String>,
+    /// Jumlah poin yang MASUK dan KELUAR sepanjang riwayat — supaya saldo bisa
+    /// dibaca sebagai hasil, bukan angka yang muncul begitu saja.
+    pub total_plus: i64,
+    pub total_minus: i64,
+    /// Halaman pertama riwayat; sisanya lewat `poin_history_page_action`.
+    pub history: Vec<PointLogItem>,
+    pub history_total: i64,
+    pub can_adjust: bool,
 }
 
 /// Satu kelas di halaman Manajemen Kelas.
@@ -387,18 +418,11 @@ pub struct KelasDetail {
     /// jadwal)? Hanya admin/ketua. Dihitung server supaya UI mengunci sendiri
     /// alih-alih menawarkan tombol yang pasti ditolak.
     pub can_manage: bool,
-    /// Boleh menata JADWAL & ANGGOTA kelas ini? admin/ketua ATAU pamong kelas
-    /// ini. Sengaja terpisah dari `can_manage`: pamong menata susunan kelas
-    /// sehari-hari, tapi identitas kelas dan penunjukan petugas tetap admin.
-    /// Wali kelas TIDAK termasuk — ia mengajar dan memutuskan izin.
+    /// Boleh menata JADWAL & ANGGOTA kelas ini? admin/ketua ATAU wali kelasnya.
+    /// Sengaja terpisah dari `can_manage`: wali kelas menata susunan kelas
+    /// sehari-hari, tapi identitas kelas dan penunjukan wali tetap admin.
     #[serde(default)]
     pub can_manage_jadwal: bool,
-    /// Pamong kelas (migrasi 30): verifikasi kehadiran + tahap-1 izin + terima WA
-    /// pengingat sesi. 0 = belum diset.
-    pub pamong_id: i64,
-    pub pamong_name: String,
-    /// Opsi pamong (role supervisor) untuk dropdown.
-    pub pamong_options: Vec<TeacherOption>,
     pub members: Vec<MemberItem>,
     pub schedules: Vec<ScheduleItem>,
     pub schedule_options: Vec<ScheduleOption>,
@@ -569,14 +593,13 @@ pub struct KelasSayaJadwal {
 pub struct KelasSayaItem {
     pub id: i64,
     pub name: String,
-    /// Peran PEMIRSA di kelas ini: "Wali Kelas" / "Pamong" / "Wali Kelas &
-    /// Pamong". Kosong untuk santri — ia peserta, bukan petugas.
+    /// Peran PEMIRSA di kelas ini: "Wali Kelas", atau kosong untuk santri —
+    /// ia peserta, bukan petugas. Sejak migrasi 84 hanya ada satu jabatan.
     pub peran_saya: String,
     pub category: String,
     pub jenjang: String,
     /// Kosong = belum ditunjuk.
     pub wali_kelas: String,
-    pub pamong: String,
     pub curriculum: Vec<CurriculumItem>,
     pub schedules: Vec<KelasSayaJadwal>,
     pub members: Vec<MemberItem>,
@@ -585,7 +608,7 @@ pub struct KelasSayaItem {
 /// Payload halaman "Kelas Saya".
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KelasSayaData {
-    /// true = pemirsa adalah STAF (wali kelas / pamong), bukan santri —
+    /// true = pemirsa adalah STAF (wali kelas), bukan santri —
     /// dipakai halaman untuk menyesuaikan kalimatnya.
     pub sebagai_staf: bool,
     pub items: Vec<KelasSayaItem>,

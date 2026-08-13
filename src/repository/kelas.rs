@@ -399,10 +399,16 @@ pub struct PointRowDb {
 ///     antar-santri bebas, jadi papan bisa berganti susunan sendiri (dan dengan
 ///     `LIMIT`, santri di ambang batas bisa muncul-hilang). `u.id` dipakai
 ///     sebagai pemecah seri yang stabil.
+///
+/// `offset` melayani gulir-tak-berujung halaman `/poin`. Urutan yang
+/// deterministik di atas bukan kemewahan di sini melainkan SYARAT: dengan
+/// pemecah seri yang tak stabil, halaman kedua bisa mengulang atau melewatkan
+/// santri yang sudah tampil di halaman pertama.
 pub async fn points_board(
     pool: &Pool,
     teacher_id: Option<i64>,
     limit: i64,
+    offset: i64,
     desc: bool,
 ) -> Result<Vec<PointRowDb>> {
     let c = pool.get().await?;
@@ -415,9 +421,9 @@ pub async fn points_board(
                         WHERE cp.user_id = u.id ORDER BY cp.class_id LIMIT 1), \
                     u.points \
                  FROM users u WHERE u.role IN ('santri', 'santri_finance') AND u.is_active = TRUE \
-                 ORDER BY u.points {order}, u.id LIMIT $1"
+                 ORDER BY u.points {order}, u.id LIMIT $1 OFFSET $2"
             );
-            c.query(&sql, &[&limit]).await
+            c.query(&sql, &[&limit, &offset]).await
         }
         Some(tid) => {
             let sql = format!(
@@ -434,9 +440,9 @@ pub async fn points_board(
                        SELECT 1 FROM class_participants cp WHERE cp.user_id = u.id \
                        AND cp.class_id IN (SELECT DISTINCT class_id FROM class_sessions WHERE teacher_id = $1) \
                    ) \
-                 ORDER BY u.points {order}, u.id LIMIT $2"
+                 ORDER BY u.points {order}, u.id LIMIT $2 OFFSET $3"
             );
-            c.query(&sql, &[&tid, &limit]).await
+            c.query(&sql, &[&tid, &limit, &offset]).await
         }
     }
     .context("points_board")?;
@@ -658,6 +664,83 @@ pub async fn point_history_of(
         .await
         .context("point_history_of")?;
     Ok(rows.into_iter().map(|r| (r.get(0), r.get(1), r.get(2))).collect())
+}
+
+/// Satu baris buku besar poin, LENGKAP dengan pemberinya — bentuk yang dipakai
+/// layar detail poin santri (`/poin/:id`).
+///
+/// `point_history_of` sengaja tidak dipakai di sana: ia hanya mengembalikan
+/// (alasan, delta, waktu), dan pertanyaan pertama yang muncul saat melihat
+/// pemotongan poin justru "siapa yang melakukannya". `given_by` sudah dicatat
+/// sejak dulu oleh `adjust_points` — hanya tak pernah dibaca layar mana pun.
+pub struct PointLogRowDb {
+    pub delta: i32,
+    pub reason: String,
+    pub category: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Nama petugas yang mencatatnya. None = tercatat SISTEM (kehadiran
+    /// otomatis, reset saldo semester, saldo awal) — bukan orang.
+    pub given_by_name: Option<String>,
+    pub given_by_role: Option<String>,
+}
+
+/// Satu halaman riwayat poin santri, terbaru dulu.
+pub async fn point_history_page(
+    pool: &Pool,
+    user_id: i64,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<PointLogRowDb>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT pl.delta, pl.reason, pl.category, pl.created_at, g.full_name, g.role \
+             FROM point_logs pl \
+             LEFT JOIN users g ON g.id = pl.given_by \
+             WHERE pl.user_id = $1 \
+             ORDER BY pl.created_at DESC, pl.id DESC LIMIT $2 OFFSET $3",
+            &[&user_id, &limit, &offset],
+        )
+        .await
+        .context("point_history_page")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| PointLogRowDb {
+            delta: r.get(0),
+            reason: r.get(1),
+            category: r.get(2),
+            created_at: r.get(3),
+            given_by_name: r.get(4),
+            given_by_role: r.get(5),
+        })
+        .collect())
+}
+
+/// (poin masuk, poin keluar) sepanjang riwayat santri. Keluar dikembalikan
+/// sebagai nilai POSITIF (magnitudo) supaya layar tak perlu membalik tandanya.
+pub async fn point_totals(pool: &Pool, user_id: i64) -> Result<(i64, i64)> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "SELECT COALESCE(SUM(delta) FILTER (WHERE delta > 0), 0), \
+                    COALESCE(-SUM(delta) FILTER (WHERE delta < 0), 0) \
+             FROM point_logs WHERE user_id = $1",
+            &[&user_id],
+        )
+        .await
+        .context("point_totals")?;
+    Ok((row.get(0), row.get(1)))
+}
+
+/// Jumlah baris riwayat poin santri — dipakai layar untuk tahu masih ada
+/// halaman berikutnya atau tidak.
+pub async fn count_point_logs(pool: &Pool, user_id: i64) -> Result<i64> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one("SELECT COUNT(*) FROM point_logs WHERE user_id = $1", &[&user_id])
+        .await
+        .context("count_point_logs")?;
+    Ok(row.get(0))
 }
 
 /// Tambah/kurangi poin manual (dewan guru/admin) + catat di point_logs.
@@ -2178,10 +2261,8 @@ pub struct SantriKelasRow {
     pub category: Option<String>,
     pub jenjang: Option<String>,
     pub wali_kelas: Option<String>,
-    pub pamong: Option<String>,
-    /// Peran PEMIRSA di kelas ini (selalu false untuk santri).
+    /// Pemirsa adalah wali kelas ini? (selalu false untuk santri).
     pub saya_wali: bool,
-    pub saya_pamong: bool,
 }
 
 /// Kelas-kelas yang diikuti `user_id` (lewat `class_participants`).
@@ -2193,12 +2274,10 @@ pub async fn classes_of_student(pool: &Pool, user_id: i64) -> Result<Vec<SantriK
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT DISTINCT cl.id, cl.name, cl.category, cl.jenjang, \
-                    w.full_name, pm.full_name \
+            "SELECT DISTINCT cl.id, cl.name, cl.category, cl.jenjang, w.full_name \
              FROM class_participants cp \
              JOIN classes cl ON cl.id = cp.class_id \
-             LEFT JOIN users w  ON w.id  = cl.wali_kelas_id \
-             LEFT JOIN users pm ON pm.id = cl.pamong_id \
+             LEFT JOIN users w ON w.id = cl.wali_kelas_id \
              WHERE cp.user_id = $1 \
              ORDER BY cl.name",
             &[&user_id],
@@ -2213,9 +2292,7 @@ pub async fn classes_of_student(pool: &Pool, user_id: i64) -> Result<Vec<SantriK
             category: r.get(2),
             jenjang: r.get(3),
             wali_kelas: r.get(4),
-            pamong: r.get(5),
             saya_wali: false,
-            saya_pamong: false,
         })
         .collect())
 }
@@ -2281,14 +2358,13 @@ pub async fn classes_of_staff(pool: &Pool, user_id: i64) -> Result<Vec<SantriKel
     let c = pool.get().await?;
     let rows = c
         .query(
-            "SELECT cl.id, cl.name, cl.category, cl.jenjang, \
-                    w.full_name, pm.full_name, \
-                    (cl.wali_kelas_id = $1) AS saya_wali, \
-                    (cl.pamong_id = $1) AS saya_pamong \
+            // Sejak peran pamong dihapus (migrasi 84), satu-satunya jalan
+            // seseorang "punya" kelas adalah menjadi WALI KELAS-nya — dan itu
+            // kini berlaku untuk semua kategori, termasuk sholat/apel/piket.
+            "SELECT cl.id, cl.name, cl.category, cl.jenjang, w.full_name, TRUE AS saya_wali \
              FROM classes cl \
-             LEFT JOIN users w  ON w.id  = cl.wali_kelas_id \
-             LEFT JOIN users pm ON pm.id = cl.pamong_id \
-             WHERE cl.wali_kelas_id = $1 OR cl.pamong_id = $1 \
+             LEFT JOIN users w ON w.id = cl.wali_kelas_id \
+             WHERE cl.wali_kelas_id = $1 \
              ORDER BY cl.name",
             &[&user_id],
         )
@@ -2302,9 +2378,7 @@ pub async fn classes_of_staff(pool: &Pool, user_id: i64) -> Result<Vec<SantriKel
             category: r.get(2),
             jenjang: r.get(3),
             wali_kelas: r.get(4),
-            pamong: r.get(5),
-            saya_wali: r.get::<_, Option<bool>>(6).unwrap_or(false),
-            saya_pamong: r.get::<_, Option<bool>>(7).unwrap_or(false),
+            saya_wali: r.get::<_, Option<bool>>(5).unwrap_or(false),
         })
         .collect())
 }

@@ -65,7 +65,11 @@ fn role_home_tiap_peran() {
     // 'teacher' digabung ke dewan_guru (migrasi 36) → dashboard sama.
     assert_eq!(role_home("teacher"), "/dewan-guru");
     assert_eq!(role_home("dewan_guru"), "/dewan-guru");
-    assert_eq!(role_home("supervisor"), "/verifikasi-pamong");
+    // Peran 'supervisor' (pamong) DIHAPUS (migrasi 84) — pamong menjadi guru.
+    // Klaim JWT lama masih menyebutnya sampai pemiliknya logout, jadi ia harus
+    // mendarat di beranda peran BARUNYA, bukan di antrean yang tak akan pernah
+    // terisi lagi.
+    assert_eq!(role_home("supervisor"), "/dewan-guru");
     assert_eq!(role_home("santri"), "/santri");
     assert_eq!(role_home("santri_finance"), "/santri"); // santri + finance
     assert_eq!(role_home("parent"), "/orang-tua");
@@ -103,7 +107,13 @@ fn santri_finance_setara_santri() {
 fn role_biasa_cocok_persis() {
     assert!(role_satisfies("admin", &["admin"]));
     assert!(role_satisfies("dewan_guru", &["supervisor", "dewan_guru", "admin"]));
-    assert!(!role_satisfies("supervisor", &["admin", "dewan_guru"]));
+    // 'supervisor' kini ALIAS 'dewan_guru' (migrasi 84: pamong menjadi guru).
+    // Tanpa ini, mantan pamong terkunci dari layar yang justru baru jadi haknya
+    // selama cookie lamanya belum kedaluwarsa — dan cookie di sini berumur 400 hari.
+    assert!(role_satisfies("supervisor", &["admin", "dewan_guru"]));
+    // Tapi ia BUKAN admin: alias itu satu arah, hanya ke dewan_guru.
+    assert!(!role_satisfies("supervisor", &["admin"]));
+    assert!(!role_satisfies("supervisor", &["ketua"]));
     assert!(!role_satisfies("santri", &["admin"]));
     assert!(!role_satisfies("parent", &["santri"]));
 }

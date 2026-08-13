@@ -1,7 +1,7 @@
 //! web/pages/server_status.rs — Status Server (/status-server, ADMIN saja).
 //!
 //! Menjawab satu pertanyaan yang selama ini hanya bisa dijawab dengan SSH ke
-//! VPS: berapa CPU dan memori yang masih tersisa sekarang? Sebelum halaman ini,
+//! VPS: berapa CPU, memori, dan RUANG DISK yang masih tersisa sekarang? Sebelum halaman ini,
 //! tanda pertama bahwa servernya kehabisan napas adalah aplikasi yang mati
 //! sendiri — dan yang tahu cara memeriksanya cuma satu orang.
 //!
@@ -39,7 +39,7 @@ pub fn StatusServerPage() -> impl IntoView {
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide ppm-content">
                 <MobileHeader
                     title="Status Server"
-                    subtitle="Pemakaian CPU, memori, dan koneksi"
+                    subtitle="Sisa disk, memori, CPU, dan koneksi"
                     back_href="/staf"
                 />
 
@@ -100,6 +100,7 @@ fn IsiStatus(s: ServerStatus) -> impl IntoView {
     let catatan_banner = s.catatan.clone();
     let catatan_kaki = s.catatan.clone();
     let tersedia = s.tersedia;
+    let disk = s.disk.clone();
 
     view! {
         <Show when=move || !tersedia fallback=|| ()>
@@ -180,6 +181,32 @@ fn IsiStatus(s: ServerStatus) -> impl IntoView {
                 }
             })}
 
+        // ── Penyimpanan (SSD/NVMe) ───────────────────────────────────────
+        // Ditaruh SEBELUM koneksi database dan sesudah memori: dari semua angka
+        // di halaman ini, disk penuh adalah satu-satunya yang tak pulih sendiri
+        // setelah restart.
+        {(!disk.is_empty())
+            .then(|| {
+                view! {
+                    <div class="ppm-card p-4 space-y-3">
+                        <div class="flex items-baseline justify-between gap-2">
+                            <p class="text-body-sm font-semibold text-on-background">
+                                "Penyimpanan (SSD/NVMe)"
+                            </p>
+                            <p class="text-[11px] text-on-surface-variant">"Sisa = yang menentukan"</p>
+                        </div>
+                        {disk.into_iter().map(|d| view! { <KartuDisk d=d /> }).collect_view()}
+                        <p class="text-[11px] text-on-surface-variant">
+                            "Yang menghabiskan disk di server ini, berurutan: rekaman sesi (.webm, \
+                             menumpuk tiap siaran), berkas sementara unggahan, image & log Docker, \
+                             lalu data Postgres. Bila disk penuh, Postgres BERHENTI menerima \
+                             tulisan — absensi & pembayaran gagal disimpan, dan restart tak \
+                             menolong sampai ruangnya dikosongkan."
+                        </p>
+                    </div>
+                }
+            })}
+
         // ── Koneksi database ─────────────────────────────────────────────
         <div class="ppm-card p-4 space-y-2">
             <p class="text-body-sm font-semibold text-on-background">"Koneksi Database"</p>
@@ -230,6 +257,48 @@ fn IsiStatus(s: ServerStatus) -> impl IntoView {
             .then(|| {
                 view! { <p class="text-[11px] text-on-surface-variant">{catatan_kaki}</p> }
             })}
+    }
+}
+
+/// Satu filesystem. Angka BESARNYA adalah SISA, bukan yang terpakai —
+/// pertanyaan yang dibawa admin ke halaman ini selalu "masih muat berapa lagi",
+/// dan memaksanya mengurangi dua angka besar di kepala adalah cara termudah
+/// salah baca.
+#[component]
+fn KartuDisk(d: crate::models::DiskInfo) -> impl IntoView {
+    let (label, warna) = tingkat_pakai(d.pct);
+    let peringatan = crate::models::peringatan_disk(d.tersedia, d.pct);
+    view! {
+        <div class="rounded-xl bg-surface-container-low p-3 space-y-2">
+            <div class="flex items-baseline justify-between gap-2">
+                <p class="text-body-sm font-semibold text-on-background truncate">{d.label}</p>
+                <p class=format!("text-body-sm font-bold {warna} shrink-0")>{label}</p>
+            </div>
+            <div class="flex items-baseline gap-2 flex-wrap">
+                <p class="text-2xl font-bold text-on-background tabular-nums">
+                    {fmt_bytes(d.tersedia)}
+                </p>
+                <p class="text-body-sm text-on-surface-variant">
+                    {format!(
+                        "sisa · {} terpakai dari {}",
+                        fmt_bytes(d.terpakai),
+                        fmt_bytes(d.total),
+                    )}
+                </p>
+            </div>
+            <Bar pct=d.pct />
+            <p class="text-[11px] text-on-surface-variant break-all">
+                {format!("{} · {:.0}% terpakai", d.path, d.pct)}
+            </p>
+            {peringatan
+                .map(|p| {
+                    view! {
+                        <p class="text-[11px] text-warning bg-warning/10 rounded-lg px-2.5 py-1.5">
+                            {p}
+                        </p>
+                    }
+                })}
+        </div>
     }
 }
 

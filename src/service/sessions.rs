@@ -95,7 +95,6 @@ pub async fn list_for(pool: &Pool, user: &SessionUser) -> Result<SessionsData> {
                     status_kind: status_kind.into(),
                     teacher: r.teacher.unwrap_or_else(|| "-".into()),
                     teacher_id: r.teacher_id,
-                    pamong_id: r.pamong_id,
                     category: r.category.filter(|c| !c.is_empty()).unwrap_or_else(|| "-".into()),
                 }
             })
@@ -119,7 +118,6 @@ fn att_display(status: Option<&str>) -> (&'static str, &'static str) {
         Some("absent") => ("ALPA", "absent"),
         Some("permit") => ("IZIN", "permit"),
         Some("sick") => ("SAKIT", "sick"),
-        Some("outside_schedule") => ("DI LUAR JADWAL", "late"),
         Some(_) => ("—", "none"),
         None => ("BELUM TERCATAT", "none"),
     }
@@ -148,11 +146,10 @@ pub async fn detail_for(
         bail_user!("Sesi tidak ditemukan.");
     };
 
-    let (att_rows, chat_rows, teachers, pamongs, books) = tokio::join!(
+    let (att_rows, chat_rows, teachers, books) = tokio::join!(
         repo::session_attendance(pool, session_id, d.class_id),
         repo::session_chats(pool, session_id, 200),
         repo::teacher_options(pool),
-        repo::pamong_options(pool),
         repo::books_in_curriculum(pool, d.class_id),
     );
 
@@ -230,19 +227,19 @@ pub async fn detail_for(
         chats,
         recording_url: d.recording_path,
         recording_label,
-        // Fallback ke wali/pamong KELAS bila sesi belum menetapkan petugasnya —
-        // cocok dengan COALESCE di query koreksi.
-        can_correct: [d.teacher_id, d.pamong_id, d.class_wali_id, d.class_pamong_id]
-            .into_iter()
-            .flatten()
-            .any(|id| id == user.id),
+        // Fallback ke WALI KELAS bila sesi belum menetapkan pengajarnya —
+        // cocok dengan COALESCE di query koreksi. Admin & ketua selalu boleh:
+        // absensi manual sekarang jalur utama (RFID belum terpasang), dan
+        // menutup pintunya berarti satu sesi yang gurunya berhalangan tak bisa
+        // diabsen siapa pun. Server tetap memeriksa ulang (`is_admin` di
+        // `session_for_correction`) — ini cuma yang tampil di layar.
+        can_correct: crate::models::role_satisfies(&user.role, &["admin"])
+            || [d.teacher_id, d.class_wali_id]
+                .into_iter()
+                .flatten()
+                .any(|id| id == user.id),
         teacher_id: d.teacher_id,
         teacher_options: teachers?
-            .into_iter()
-            .map(|(id, name)| crate::models::TeacherOption { id, name })
-            .collect(),
-        pamong_id: d.pamong_id,
-        pamong_options: pamongs?
             .into_iter()
             .map(|(id, name)| crate::models::TeacherOption { id, name })
             .collect(),

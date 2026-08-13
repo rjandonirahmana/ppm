@@ -15,12 +15,12 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{AnakOrtu, ManagedUser, ProfilEdit, StudentSearchItem};
+use crate::models::{AnakOrtu, ManagedUser, OrtuSantri, ProfilEdit, StudentSearchItem};
 use crate::web::api::{
     anak_ortu_data, anak_ortu_search, angkatan_tersedia_data, change_user_role_action,
     managed_users_data, set_anak_ortu_action, set_user_active_action, set_users_active_action,
     update_managed_user_action,
-};
+    ortu_santri_data, ortu_santri_search, set_ortu_santri_action,};
 use crate::web::components::{
     DeviceFrame, EmptyState, FetchError, FlashMsg, MobileHeader, Sheet,
 };
@@ -36,7 +36,6 @@ const PERAN: &[(&str, &str)] = &[
     ("santri", "Santri"),
     ("santri_finance", "Santri (Finance)"),
     ("dewan_guru", "Dewan Guru"),
-    ("supervisor", "Pamong"),
     ("parent", "Orang Tua"),
     ("ketua", "Ketua"),
     ("admin", "Admin"),
@@ -714,9 +713,12 @@ fn FormProfil(
                 }
             })}
 
-        // Panel anak hanya untuk akun Orang Tua — lihat penjelasannya di
-        // komponen `PanelAnak`.
+        // Panel relasi keluarga — DUA arah, dipilih menurut peran akun yang
+        // sedang disunting. Keduanya menulis ke junction yang sama; yang
+        // berbeda cuma dari sisi mana pengelola sedang melihat.
         {(u.role == "parent").then(|| view! { <PanelAnak parent_id=id /> })}
+        {crate::models::role_satisfies(&u.role, &["santri"])
+            .then(|| view! { <PanelOrtu student_id=id /> })}
 
         // ── Ganti peran ──────────────────────────────────────────────────
         // Dipisah dari tombol "Simpan": mengubah peran mengubah HAK AKSES, dan
@@ -1023,5 +1025,218 @@ fn Pilihan(
                 })
                 .collect_view()}
         </select>
+    }
+}
+
+/// Panel ORANG TUA pada Edit Profil seorang SANTRI — cermin dari [`PanelAnak`].
+///
+/// Kenapa dua panel untuk satu relasi. Pengelola datang dari dua arah: kadang
+/// ia sedang membuka akun ortu yang baru dibuat ("anaknya siapa?"), kadang
+/// sedang membuka akun santri ("ayah-ibunya sudah terdaftar belum?"). Selama
+/// ini hanya arah pertama yang punya layar, jadi menautkan dari akun santri
+/// berarti mencari dulu akun ortunya di daftar, membukanya, lalu mencari
+/// santrinya kembali di sana.
+///
+/// Relasinya BANYAK-KE-BANYAK dan itu memang disengaja: satu santri boleh punya
+/// ayah, ibu, atau wali dengan akun masing-masing, dan satu akun ortu boleh
+/// punya beberapa anak di pondok. Tak ada batas jumlah di sisi mana pun —
+/// `parent_connections` hanya melarang PASANGAN yang sama tercatat dua kali.
+///
+/// Berdiri SENDIRI dari tombol "Simpan" di atasnya, alasannya sama dengan
+/// `PanelAnak`: menautkan berlaku seketika, bukan menunggu penyimpanan profil.
+#[component]
+fn PanelOrtu(student_id: i64) -> impl IntoView {
+    let ortu = Resource::new(move || student_id, |id| async move { ortu_santri_data(id).await });
+    let cari = RwSignal::new(String::new());
+    let hasil = RwSignal::new(Vec::<OrtuSantri>::new());
+    let busy = RwSignal::new(false);
+    let pesan = RwSignal::new(Option::<(bool, String)>::None);
+
+    let telusuri = move |_| {
+        let q = cari.get_untracked();
+        if q.trim().chars().count() < 2 {
+            pesan.set(Some((false, "Ketik minimal 2 huruf nama, atau nomor HP.".into())));
+            return;
+        }
+        pesan.set(None);
+        leptos::task::spawn_local(async move {
+            match ortu_santri_search(q).await {
+                Ok(r) if r.is_empty() => {
+                    pesan.set(Some((
+                        false,
+                        "Tak ada akun Orang Tua yang cocok. Akunnya harus dibuat dulu \
+                         (peran: Orang Tua)."
+                            .into(),
+                    )));
+                    hasil.set(Vec::new());
+                }
+                Ok(r) => hasil.set(r),
+                Err(e) => pesan.set(Some((false, crate::web::components::pesan_galat(e)))),
+            }
+        });
+    };
+
+    let ubah = move |parent_id: i64, sambung: bool| {
+        if busy.get_untracked() {
+            return;
+        }
+        busy.set(true);
+        leptos::task::spawn_local(async move {
+            match set_ortu_santri_action(student_id, parent_id, sambung).await {
+                Ok(t) => {
+                    pesan.set(Some((true, t)));
+                    // Hasil pencarian dikosongkan setelah menautkan: barisnya
+                    // sudah pindah ke daftar di atas, dan membiarkannya di sini
+                    // mengundang klik kedua.
+                    if sambung {
+                        hasil.set(Vec::new());
+                        cari.set(String::new());
+                    }
+                    ortu.refetch();
+                }
+                Err(e) => pesan.set(Some((false, crate::web::components::pesan_galat(e)))),
+            }
+            busy.set(false);
+        });
+    };
+
+    view! {
+        <div class="mt-2 mb-4 p-3 rounded-xl border border-outline-variant/60 space-y-2.5">
+            <div>
+                <p class="text-body-sm font-semibold text-on-background">"Orang Tua / Wali"</p>
+                <p class="text-[11px] text-on-surface-variant">
+                    "Akun yang boleh melihat data santri ini di halaman Orang Tua. Boleh lebih dari satu (ayah, ibu, wali)."
+                </p>
+            </div>
+
+            <FlashMsg pesan=pesan />
+
+            <Suspense fallback=|| {
+                view! { <div class="h-10 bg-surface-container rounded-lg animate-pulse"></div> }
+            }>
+                {move || {
+                    ortu.get()
+                        .map(|res| match res {
+                            Err(e) => {
+                                view! {
+                                    <p class="text-[11px] text-error">
+                                        {crate::web::components::pesan_galat(e)}
+                                    </p>
+                                }
+                                    .into_any()
+                            }
+                            Ok(list) if list.is_empty() => {
+                                view! {
+                                    <p class="text-[11px] text-on-surface-variant">
+                                        "Belum ada orang tua tertaut. Cari di bawah untuk menautkan."
+                                    </p>
+                                }
+                                    .into_any()
+                            }
+                            Ok(list) => {
+                                view! {
+                                    <div class="space-y-1.5">
+                                        {list
+                                            .into_iter()
+                                            .map(|o: OrtuSantri| {
+                                                let pid = o.parent_id;
+                                                let terhubung = o.terhubung;
+                                                view! {
+                                                    <div class="flex items-center gap-2 bg-surface-container rounded-lg px-2.5 py-2">
+                                                        <div class="flex-1 min-w-0">
+                                                            <p class="text-body-sm font-semibold text-on-background truncate">
+                                                                {o.full_name}
+                                                            </p>
+                                                            <p class="text-[10px] text-on-surface-variant truncate">
+                                                                {format!("{} · {}", o.phone, o.status_label)}
+                                                            </p>
+                                                        </div>
+                                                        // Permintaan ortu yang masih menunggu jawaban
+                                                        // santri bisa langsung disetujui pengelola —
+                                                        // santri yang belum pernah membuka aplikasi
+                                                        // tak boleh jadi kebuntuan.
+                                                        {(!terhubung)
+                                                            .then(|| {
+                                                                view! {
+                                                                    <button
+                                                                        class="px-2.5 py-1 rounded-lg bg-primary text-on-primary text-[11px] font-semibold press cursor-pointer disabled:opacity-50 shrink-0"
+                                                                        prop:disabled=move || busy.get()
+                                                                        on:click=move |_| ubah(pid, true)
+                                                                    >
+                                                                        "Setujui"
+                                                                    </button>
+                                                                }
+                                                            })}
+                                                        <button
+                                                            class="px-2.5 py-1 rounded-lg border border-error/40 text-error text-[11px] font-semibold cursor-pointer disabled:opacity-50 shrink-0"
+                                                            prop:disabled=move || busy.get()
+                                                            on:click=move |_| ubah(pid, false)
+                                                        >
+                                                            "Lepas"
+                                                        </button>
+                                                    </div>
+                                                }
+                                            })
+                                            .collect_view()}
+                                    </div>
+                                }
+                                    .into_any()
+                            }
+                        })
+                }}
+            </Suspense>
+
+            // ── Tautkan orang tua ────────────────────────────────────────
+            <div class="flex gap-2">
+                <input
+                    type="search"
+                    placeholder="Cari nama atau nomor HP orang tua…"
+                    class="flex-1 min-w-0 bg-surface-container border-0 rounded-lg px-2.5 py-2 text-body-sm text-on-surface"
+                    prop:value=move || cari.get()
+                    on:input=move |ev| cari.set(event_target_value(&ev))
+                    on:keydown=move |ev| {
+                        if ev.key() == "Enter" {
+                            ev.prevent_default();
+                            telusuri(());
+                        }
+                    }
+                />
+                <button
+                    class="px-3 py-2 rounded-lg border border-outline-variant text-body-sm font-semibold text-on-surface hover:border-primary hover:text-primary transition-colors cursor-pointer shrink-0"
+                    on:click=move |_| telusuri(())
+                >
+                    "Cari"
+                </button>
+            </div>
+
+            {move || {
+                let r = hasil.get();
+                (!r.is_empty())
+                    .then(|| {
+                        view! {
+                            <div class="max-h-40 overflow-y-auto space-y-1">
+                                {r
+                                    .into_iter()
+                                    .map(|o| {
+                                        let pid = o.parent_id;
+                                        view! {
+                                            <button
+                                                class="w-full text-left px-2.5 py-2 bg-surface-container rounded-lg hover:bg-secondary-container/50 cursor-pointer disabled:opacity-50"
+                                                prop:disabled=move || busy.get()
+                                                on:click=move |_| ubah(pid, true)
+                                            >
+                                                <span class="text-body-sm text-on-surface">{o.full_name}</span>
+                                                <span class="text-[10px] text-on-surface-variant">
+                                                    {format!(" · {}", o.phone)}
+                                                </span>
+                                            </button>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </div>
+                        }
+                    })
+            }}
+        </div>
     }
 }

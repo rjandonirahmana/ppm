@@ -43,19 +43,25 @@ pub struct PemanggilanItem {
     pub class_name: String,
     /// Total net poin pekan ini (negatif).
     pub net: i32,
-    /// "KoorSantri" | "Pamong" | "Wali Kelas".
+    /// "KoorSantri" | "Wali Kelas" | "Ketua".
     pub tier: String,
-    /// koor|pamong|wali → warna badge.
+    /// koor|wali|ketua → warna badge.
     pub tier_kind: String,
 }
 
-/// Pemanggil sesuai net poin mingguan (PRD hal. 12): net ≤ -18 → Wali Kelas;
-/// ≤ -12 → Pamong; ≤ -9 → KoorSantri.
+/// Pemanggil sesuai net poin mingguan (PRD hal. 12): net ≤ -18 → Ketua;
+/// ≤ -12 → Wali Kelas; ≤ -9 → KoorSantri.
+///
+/// Tingkat tengahnya dulu PAMONG. Perannya dihapus (migrasi 84), jadi jenjangnya
+/// digeser satu tingkat atas keputusan pengurus (Ags 2026): yang dulu ditangani
+/// pamong kini jadi urusan WALI KELAS, dan yang paling berat naik ke KETUA.
+/// AMBANGNYA TIDAK BERUBAH — yang bergeser siapa yang memanggil, bukan seberapa
+/// minus seorang santri harus jatuh dulu.
 pub fn pemanggilan_tier(net: i32) -> (&'static str, &'static str) {
     if net <= -18 {
-        ("Wali Kelas", "wali")
+        ("Ketua", "ketua")
     } else if net <= -12 {
-        ("Pamong", "pamong")
+        ("Wali Kelas", "wali")
     } else {
         ("KoorSantri", "koor")
     }

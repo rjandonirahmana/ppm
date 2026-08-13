@@ -22,8 +22,6 @@ pub fn point_rule(status: &str) -> (i32, &'static str, &'static str) {
     match status {
         "present" => (DEFAULT_PRESENT_BONUS, "Kedisiplinan", "attendance"),
         "late" => (-DEFAULT_LATE_PENALTY, "Kedisiplinan", "discipline"),
-        // Hadir tapi di luar jadwal: netral (pamong/dewan guru yang menilai).
-        "outside_schedule" => (0, "Di luar jadwal", "attendance"),
         "permit" | "sick" => (0, "Keterangan", "attendance"),
         _ => (-DEFAULT_ABSENT_PENALTY, "Pelanggaran", "discipline"),
     }
@@ -50,7 +48,6 @@ pub fn attendance_note(status: &str) -> &'static str {
         "permit" => "Izin",
         // Sakit/Cuti (surat sah) TIDAK mengurangi poin (PRD hal. 7 NB).
         "sick" => "Sakit/Cuti",
-        "outside_schedule" => "Di luar jadwal",
         _ => "Keterangan",
     }
 }

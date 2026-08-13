@@ -42,6 +42,14 @@ pub fn role_satisfies(role: &str, allowed: &[&str]) -> bool {
     allowed.contains(&role)
         || (role == "ketua" && allowed.contains(&"admin"))
         || (role == "santri_finance" && allowed.contains(&"santri"))
+        // 'supervisor' (pamong) SUDAH TIDAK ADA — migrasi 84 mengubah akunnya
+        // jadi 'dewan_guru'. Tapi peran dibaca dari KLAIM JWT, bukan dari DB
+        // (lihat `get_session`), dan cookie di ponsel pengurus berumur ratusan
+        // hari: mantan pamong akan terus membawa "supervisor" sampai ia logout.
+        // Tanpa baris ini ia terkunci dari layar yang justru baru saja jadi
+        // haknya — dan tak ada yang menghubungkannya dengan migrasi kemarin.
+        // Sama persis perlakuannya dengan 'teacher' (digabung di migrasi 36).
+        || (role == "supervisor" && allowed.contains(&"dewan_guru"))
 }
 
 pub fn role_home(role: &str) -> &'static str {
@@ -51,7 +59,9 @@ pub fn role_home(role: &str) -> &'static str {
         // 'teacher' digabung ke 'dewan_guru' (migrasi 36) — arahkan ke dashboard
         // yang sama bila ada sisa data lama.
         "teacher" | "dewan_guru" => "/dewan-guru",
-        "supervisor" => "/verifikasi-pamong",
+        // Pamong kini guru (migrasi 84); antrean verifikasi pamong tak pernah
+        // terisi lagi, jadi mengirimnya ke sana = beranda yang selamanya kosong.
+        "supervisor" => "/dewan-guru",
         // santri_finance = santri pemegang kunci finance → dashboard santri.
         "santri" | "santri_finance" => "/santri",
         "parent" => "/orang-tua",
@@ -75,7 +85,9 @@ pub fn role_label(role: &str) -> &'static str {
         // 'teacher' digabung ke 'dewan_guru' (migrasi 36); sisa data lama tetap
         // diberi label yang benar alih-alih jatuh ke "Pengguna".
         "teacher" | "dewan_guru" => "Dewan Guru",
-        "supervisor" => "Pamong",
+        // Peran pamong dihapus (migrasi 84) — sisa klaim lama diberi label
+        // peran BARUNYA, bukan nama jabatan yang sudah tak ada.
+        "supervisor" => "Dewan Guru",
         "santri" => "Santri",
         "santri_finance" => "Santri (Finance)",
         "parent" => "Orang Tua",
@@ -113,7 +125,7 @@ pub struct InviteInfo {
 /// pamong/dewan guru mencetaknya bukan besarnya wewenang, melainkan bahwa
 /// menambah petugas adalah keputusan pengurus — bukan efek samping dari
 /// seseorang yang kebetulan punya tombol undangan.
-pub const STAFF_INVITABLE_ROLES: &[&str] = &["dewan_guru", "supervisor", "penjaga"];
+pub const STAFF_INVITABLE_ROLES: &[&str] = &["dewan_guru", "penjaga"];
 
 /// true bila `target_role` termasuk peran staf (khusus admin yang mengundang).
 pub fn is_staff_invite(target_role: &str) -> bool {

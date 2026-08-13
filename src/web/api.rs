@@ -553,7 +553,7 @@ pub async fn permit_queue_data() -> Result<PermitQueueData, ServerFnError> {
     // Admin yang ikut memutuskan hanya menambah tangan tanpa menambah konteks.
     let sess = require_roles(&["supervisor", "dewan_guru", "teacher"]).await?;
     let state = app_state().await?;
-    crate::service::permits::permit_queue(&state.pool, &sess.role, sess.id)
+    crate::service::permits::permit_queue(&state.pool, sess.id)
         .await
         .map_err(err)
 }
@@ -581,26 +581,12 @@ pub async fn decide_permit_action(permit_id: i64, approve: bool) -> Result<(), S
         .map_err(err)
 }
 
-/// Mode persetujuan izin saat ini (admin) — "two_stage" | "direct_guru".
-#[server(GetPermitMode, "/api-fn")]
-pub async fn permit_mode_get() -> Result<String, ServerFnError> {
-    require_roles(&["admin"]).await?;
-    let state = app_state().await?;
-    Ok(crate::service::permits::approval_mode(&state.pool).await)
-}
-
-/// Ubah mode persetujuan izin (admin).
-#[server(SetPermitMode, "/api-fn")]
-pub async fn permit_mode_set(mode: String) -> Result<(), ServerFnError> {
-    require_roles(&["admin"]).await?;
-    let state = app_state().await?;
-    crate::service::permits::set_approval_mode(&state.pool, &mode)
-        .await
-        .map_err(err)
-}
-
-/// Reset saldo poin semua santri ke 300 (awal semester, admin). Return jumlah
-/// santri ter-reset.
+/// Reset saldo poin semua santri ke 300 (awal semester, admin/ketua). Return
+/// jumlah santri ter-reset.
+///
+/// Dulu tombolnya ada di `/setelan`; halaman itu dihapus (Ags 2026) karena isi
+/// satunya lagi — alur persetujuan izin — sudah pindah ke setelan PER-KELAS.
+/// Tombolnya kini di `/poin`, satu layar dengan saldo yang di-resetnya.
 #[server(ResetSemesterPoints, "/api-fn")]
 pub async fn reset_semester_points_action() -> Result<i64, ServerFnError> {
     require_roles(&["admin"]).await?;
@@ -1043,13 +1029,20 @@ pub async fn correct_attendance_bulk_action(
     session_id: i64,
     items: Vec<crate::models::KoreksiAbsensi>,
 ) -> Result<i64, ServerFnError> {
-    // Guru & pamong sama-sama boleh — kewenangan sesungguhnya (petugas sesi
-    // ini atau bukan) diperiksa di service terhadap data sesi.
+    // Semua staf boleh MENCOBA — kewenangan sesungguhnya (pengajar sesi ini,
+    // wali kelasnya, atau admin/ketua) diperiksa di service terhadap data sesi.
     let sess = require_roles(&["supervisor", "dewan_guru", "teacher", "admin"]).await?;
+    let is_admin = crate::models::role_satisfies(&sess.role, &["admin"]);
     let state = app_state().await?;
-    crate::service::attendance::correct_attendance_bulk(&state.pool, session_id, &items, sess.id)
-        .await
-        .map_err(err)
+    crate::service::attendance::correct_attendance_bulk(
+        &state.pool,
+        session_id,
+        &items,
+        sess.id,
+        is_admin,
+    )
+    .await
+    .map_err(err)
 }
 
 /// Verifikasi SATU sesi sekaligus: setujui semua yang menunggu KECUALI `reject_ids`
@@ -1238,23 +1231,18 @@ pub async fn update_class_action(
         .map_err(err)
 }
 
-/// Tetapkan wali kelas + pamong + rute persetujuan izin (perlu pamong?) satu kelas.
-#[server(SetClassStaff, "/api-fn")]
-pub async fn set_class_staff_action(
+/// Tetapkan WALI KELAS satu kelas (0 = kosongkan).
+///
+/// Dulu `set_class_staff_action`, yang sekalian menulis pamong & mode
+/// verifikasi. Keduanya hilang bersama peran pamong (migrasi 84).
+#[server(SetClassWali, "/api-fn")]
+pub async fn set_class_wali_action(
     class_id: i64,
     wali_kelas_id: i64,
-    pamong_id: i64,
-    verify_mode: String,
 ) -> Result<(), ServerFnError> {
     require_roles(KELAS_ADMIN).await?;
     let state = app_state().await?;
-    crate::service::kelas::set_class_staff(
-        &state.pool,
-        class_id,
-        wali_kelas_id,
-        pamong_id,
-        &verify_mode,
-    )
+    crate::service::kelas::set_class_wali(&state.pool, class_id, wali_kelas_id)
     .await
     .map_err(err)
 }
@@ -1470,17 +1458,6 @@ pub async fn set_session_teacher_action(session_id: i64, teacher_id: i64) -> Res
     let class_id = kelas_dari_sesi(&state.pool, session_id).await?;
     require_petugas_kelas(class_id).await?;
     crate::service::kelas::set_session_teacher(&state.pool, session_id, teacher_id)
-        .await
-        .map_err(err)
-}
-
-/// Pasang/ubah PAMONG bertugas verifikasi sebuah sesi (0 = kosongkan) — migrasi 33.
-#[server(SetSessionPamong, "/api-fn")]
-pub async fn set_session_pamong_action(session_id: i64, pamong_id: i64) -> Result<(), ServerFnError> {
-    let state = app_state().await?;
-    let class_id = kelas_dari_sesi(&state.pool, session_id).await?;
-    require_petugas_kelas(class_id).await?;
-    crate::service::kelas::set_session_pamong(&state.pool, session_id, pamong_id)
         .await
         .map_err(err)
 }
@@ -2341,39 +2318,114 @@ pub async fn analisis_data() -> Result<AnalisisData, ServerFnError> {
         .map_err(err)
 }
 
-/// Papan poin santri (/poin, /poin-dewan). Dewan guru/admin melihat & mengelola
+/// Papan poin santri (/poin). Dewan guru/admin melihat & mengelola
 /// SEMUA santri; guru/pamong hanya santri di kelas yang mereka ampu.
 #[server(GetPoinData, "/api-fn")]
 pub async fn poin_data_action() -> Result<PoinData, ServerFnError> {
     let sess = require_roles(&["admin", "dewan_guru", "teacher", "supervisor"]).await?;
     let state = app_state().await?;
     let can_adjust = crate::models::role_satisfies(&sess.role, &["admin", "dewan_guru"]);
+    // Reset saldo SELURUH santri = admin/ketua saja (lihat catatan di PoinData).
+    let can_reset = crate::models::role_satisfies(&sess.role, &["admin"]);
     let teacher_id = (sess.role == "teacher").then_some(sess.id);
-    crate::service::dashboard::poin_data(&state.pool, teacher_id, can_adjust)
+    crate::service::dashboard::poin_data(&state.pool, teacher_id, can_adjust, can_reset)
+        .await
+        .map_err(err)
+}
+
+/// Halaman papan poin berikutnya (gulir-tak-berujung /poin).
+#[server(GetPoinPage, "/api-fn")]
+pub async fn poin_page_action(offset: i64) -> Result<Vec<crate::models::PointRow>, ServerFnError> {
+    let sess = require_roles(&["admin", "dewan_guru", "teacher", "supervisor"]).await?;
+    let state = app_state().await?;
+    let teacher_id = (sess.role == "teacher").then_some(sess.id);
+    crate::service::dashboard::poin_page(&state.pool, teacher_id, offset)
+        .await
+        .map_err(err)
+}
+
+/// Siapa yang dilihat buku besar poinnya, dan bolehkah.
+///
+/// `student_id <= 0` berarti DIRI SENDIRI — itulah yang dipakai `/poin-saya`,
+/// supaya layar santri tak perlu tahu id-nya sendiri (dan tak ada id di URL
+/// yang bisa diutak-atik untuk mengintip orang lain).
+///
+/// Aturannya: staf melihat siapa pun; selain itu HANYA dirinya sendiri. Orang
+/// tua sengaja belum masuk — riwayat poin anak ada di jalur laporan ortu, dan
+/// membuka pintu kedua tanpa memeriksa `parent_connections` di sini berarti
+/// satu akun ortu bisa membaca poin santri mana pun.
+#[cfg(feature = "ssr")]
+fn sasaran_poin(sess: &crate::models::SessionUser, student_id: i64) -> Result<(i64, bool), ServerFnError> {
+    let staf = crate::models::role_satisfies(
+        &sess.role,
+        &["admin", "dewan_guru", "teacher", "supervisor"],
+    );
+    let target = if student_id <= 0 { sess.id } else { student_id };
+    if !staf && target != sess.id {
+        return Err(ServerFnError::new("forbidden"));
+    }
+    // Hanya staf yang boleh menyesuaikan; santri melihat riwayatnya sendiri
+    // tanpa satu pun tombol yang mengubah angkanya.
+    let can_adjust = crate::models::role_satisfies(&sess.role, &["admin", "dewan_guru"]);
+    Ok((target, can_adjust))
+}
+
+/// Detail poin satu santri (`/poin/:id` untuk staf, `/poin-saya` untuk santri):
+/// profil + buku besar poinnya.
+#[server(GetPoinDetail, "/api-fn")]
+pub async fn poin_detail_action(
+    student_id: i64,
+) -> Result<crate::models::PoinDetailData, ServerFnError> {
+    let sess = require_login().await?;
+    let (target, can_adjust) = sasaran_poin(&sess, student_id)?;
+    let state = app_state().await?;
+    crate::service::dashboard::poin_detail(&state.pool, target, can_adjust)
+        .await
+        .map_err(err)
+}
+
+/// Halaman riwayat poin berikutnya (gulir-tak-berujung).
+#[server(GetPoinHistoryPage, "/api-fn")]
+pub async fn poin_history_page_action(
+    student_id: i64,
+    offset: i64,
+) -> Result<Vec<crate::models::PointLogItem>, ServerFnError> {
+    let sess = require_login().await?;
+    let (target, _) = sasaran_poin(&sess, student_id)?;
+    let state = app_state().await?;
+    crate::service::dashboard::poin_history_page(&state.pool, target, offset)
         .await
         .map_err(err)
 }
 
 /// Batas satu kali penyesuaian poin manual.
 ///
-/// Layarnya hanya menawarkan ±1 dan ±5, tapi `delta` datang dari klien — dan
-/// server yang mempercayai angka apa pun berarti satu request rakitan tangan
-/// bisa menambah sejuta poin, tercatat rapi sebagai penyesuaian biasa. Poin
-/// adalah dasar prestasi, SP, dan pemanggilan; sekali angkanya bisa dikarang,
-/// seluruh bangunan aturan di atasnya ikut kehilangan arti.
+/// `delta` datang dari klien — dan server yang mempercayai angka apa pun
+/// berarti satu request rakitan tangan bisa menambah sejuta poin, tercatat rapi
+/// sebagai penyesuaian biasa. Poin adalah dasar prestasi, SP, dan pemanggilan;
+/// sekali angkanya bisa dikarang, seluruh bangunan aturan di atasnya ikut
+/// kehilangan arti.
 ///
-/// 20 dipilih longgar: jauh di atas yang ditawarkan layar (5), masih di bawah
-/// nilai yang bisa mengubah tingkat prestasi seseorang dalam sekali klik.
-/// Penyesuaian yang benar-benar besar tetap bisa dilakukan — beberapa kali,
-/// masing-masing meninggalkan barisnya sendiri di buku besar.
+/// Batasnya dinaikkan dari 20 ke 300 (Ags 2026, permintaan pengurus): layarnya
+/// kini menerima ANGKA BEBAS, bukan lagi empat tombol ±1/±5, dan koreksi yang
+/// wajar — misalnya mengembalikan santri ke saldo awal setelah salah potong —
+/// memang bisa sebesar itu. 300 = saldo satu semester penuh
+/// ([`crate::models::SEMESTER_START_POINTS`]): apa pun yang melebihi itu dalam
+/// SATU baris bukan koreksi lagi, melainkan reset — dan reset punya tombolnya
+/// sendiri.
 ///
 /// Server-only: batas ini ditegakkan di tempat yang tak bisa dilewati klien,
 /// jadi badan server fn-lah satu-satunya pembacanya (di build WASM badan itu
 /// diganti pemanggil jaringan, dan constnya jadi tak terpakai).
 #[cfg(feature = "ssr")]
-const MAX_ADJUST_POIN: i32 = 20;
+const MAX_ADJUST_POIN: i32 = crate::models::SEMESTER_START_POINTS;
 
-/// Tambah/kurangi poin santri secara manual (dewan guru/admin saja).
+/// Tambah/kurangi poin santri secara manual (dewan guru/admin/ketua).
+///
+/// Nilainya diketik bebas oleh pengurus; yang WAJIB ikut adalah `reason` —
+/// baris poin tanpa alasan tak bisa dipertanggungjawabkan kepada santri yang
+/// poinnya berkurang, dan `given_by` (di bawah) hanya menjawab "siapa", bukan
+/// "kenapa". Keduanya tampil di `/poin/:id`.
 #[server(AdjustPoints, "/api-fn")]
 pub async fn adjust_points_action(student_id: i64, delta: i32, reason: String) -> Result<(), ServerFnError> {
     let sess = require_roles(&["admin", "dewan_guru"]).await?;
@@ -2383,15 +2435,23 @@ pub async fn adjust_points_action(student_id: i64, delta: i32, reason: String) -
         ));
     }
     // DITOLAK, bukan dipotong diam-diam ke batas: kalau angkanya di luar batas,
-    // yang mengirim sedang salah paham — dan menyimpan 20 saat ia bermaksud 200
-    // menghasilkan catatan yang salah tanpa ada yang tahu.
+    // yang mengirim sedang salah paham — dan menyimpan 300 saat ia bermaksud
+    // 3000 menghasilkan catatan yang salah tanpa ada yang tahu.
     if delta.abs() > MAX_ADJUST_POIN {
         return Err(ServerFnError::ServerError(format!(
             "Penyesuaian sekali jalan dibatasi ±{MAX_ADJUST_POIN} poin."
         )));
     }
+    let reason = reason.trim().to_string();
+    if reason.chars().count() < 3 {
+        return Err(ServerFnError::ServerError(
+            "Tulis alasan penyesuaian (minimal 3 huruf) — alasannya ikut terbaca di riwayat santri.".into(),
+        ));
+    }
+    if reason.chars().count() > 200 {
+        return Err(ServerFnError::ServerError("Alasan terlalu panjang (maks 200 huruf).".into()));
+    }
     let state = app_state().await?;
-    let reason = if reason.trim().is_empty() { "Penyesuaian manual".to_string() } else { reason };
     crate::repository::adjust_points(&state.pool, student_id, delta, &reason, sess.id)
         .await
         .map_err(err)
@@ -2915,6 +2975,104 @@ pub async fn anak_ortu_search(q: String) -> Result<Vec<StudentSearchItem>, Serve
     require_roles(USER_MANAGE_ROLES).await?;
     let state = app_state().await?;
     crate::service::kelas::search_students(&state.pool, &q, 0, None).await.map_err(err)
+}
+
+// ── Sisi SANTRI dari relasi yang sama (Edit Profil santri) ───────────────────
+//
+// Tiga fungsi di bawah adalah cermin dari tiga di atas. Junction-nya SATU
+// (`parent_connections`), jadi menautkan dari sisi santri maupun sisi ortu
+// menghasilkan baris yang sama persis — dan keduanya banyak-ke-banyak: satu
+// santri boleh punya ayah, ibu, atau wali dengan akun sendiri-sendiri.
+
+/// Orang tua yang tertaut ke seorang santri (admin/ketua).
+#[server(GetOrtuSantri, "/api-fn")]
+pub async fn ortu_santri_data(
+    student_id: i64,
+) -> Result<Vec<crate::models::OrtuSantri>, ServerFnError> {
+    require_roles(USER_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    let rows = crate::repository::parents_of_student(&state.pool, student_id)
+        .await
+        .map_err(err)?;
+    Ok(rows.into_iter().map(baris_ortu).collect())
+}
+
+/// Satu baris ortu → payload layar. Dipakai daftar tertaut DAN hasil pencarian,
+/// supaya keduanya mustahil berbeda bentuk.
+#[cfg(feature = "ssr")]
+fn baris_ortu(r: crate::repository::OrtuRow) -> crate::models::OrtuSantri {
+    let terhubung = r.status == "connected";
+    crate::models::OrtuSantri {
+        parent_id: r.parent_id,
+        full_name: r.full_name,
+        phone: r.phone_number.filter(|s| !s.is_empty()).unwrap_or_else(|| "-".into()),
+        status_label: match r.status.as_str() {
+            "connected" => "Terhubung".into(),
+            // Dari `search_parents` — calon yang belum punya baris relasi sama
+            // sekali, beda dari permintaan yang sudah dikirim ortu.
+            "belum" => "Belum tertaut".into(),
+            _ => "Menunggu persetujuan santri".into(),
+        },
+        terhubung,
+    }
+}
+
+/// Sambungkan/lepas seorang ORANG TUA dari akun santri (admin/ketua).
+#[server(SetOrtuSantri, "/api-fn")]
+pub async fn set_ortu_santri_action(
+    student_id: i64,
+    parent_id: i64,
+    /// true = sambungkan, false = lepaskan.
+    sambung: bool,
+) -> Result<String, ServerFnError> {
+    require_roles(USER_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    // KEDUA peran diperiksa, bukan cuma satu. Menautkan akun guru sebagai
+    // "orang tua" akan memberinya akses data santri lewat halaman /orang-tua;
+    // menautkan santri sebagai "anak" dari santri lain sama saja. Layar memang
+    // hanya menampilkan panel ini untuk santri, tapi yang menolak harus server.
+    let peran_santri =
+        crate::repository::role_of_user(&state.pool, student_id).await.map_err(err)?;
+    if !peran_santri
+        .as_deref()
+        .map(|r| crate::models::role_satisfies(r, &["santri"]))
+        .unwrap_or(false)
+    {
+        return Err(ServerFnError::new(
+            "Orang tua hanya bisa ditautkan ke akun berperan Santri.",
+        ));
+    }
+    let peran_ortu = crate::repository::role_of_user(&state.pool, parent_id).await.map_err(err)?;
+    if peran_ortu.as_deref() != Some("parent") {
+        return Err(ServerFnError::new(
+            "Akun yang dipilih bukan Orang Tua. Ubah perannya dulu di Manajemen User.",
+        ));
+    }
+    if sambung {
+        let ok = crate::repository::admin_link_child(&state.pool, parent_id, student_id)
+            .await
+            .map_err(err)?;
+        Ok(if ok { "Orang tua ditautkan.".into() } else { "Sudah tertaut sebelumnya.".into() })
+    } else {
+        crate::repository::admin_unlink_child(&state.pool, parent_id, student_id)
+            .await
+            .map_err(err)?;
+        Ok("Orang tua dilepas dari santri ini.".into())
+    }
+}
+
+/// Cari akun orang tua untuk ditautkan ke santri (admin/ketua) — nama/HP.
+#[server(OrtuSantriSearch, "/api-fn")]
+pub async fn ortu_santri_search(
+    q: String,
+) -> Result<Vec<crate::models::OrtuSantri>, ServerFnError> {
+    require_roles(USER_MANAGE_ROLES).await?;
+    if q.trim().chars().count() < 2 {
+        return Ok(Vec::new());
+    }
+    let state = app_state().await?;
+    let rows = crate::repository::search_parents(&state.pool, &q, 20).await.map_err(err)?;
+    Ok(rows.into_iter().map(baris_ortu).collect())
 }
 
 /// Alamat langganan kalender (path + token) milik pengguna yang sedang login.

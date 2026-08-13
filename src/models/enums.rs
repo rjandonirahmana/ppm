@@ -24,8 +24,6 @@ pub enum AttendanceStatus {
     Present,
     /// Hadir tapi terlambat.
     Late,
-    /// Scan di luar jam jadwal kelas.
-    OutsideSchedule,
     /// Tidak hadir (alpa).
     Absent,
     /// Izin dengan surat.
@@ -40,7 +38,6 @@ impl AttendanceStatus {
         match s {
             "present" => Some(Self::Present),
             "late" => Some(Self::Late),
-            "outside_schedule" => Some(Self::OutsideSchedule),
             "absent" => Some(Self::Absent),
             "permit" => Some(Self::Permit),
             "sick" => Some(Self::Sick),
@@ -53,7 +50,6 @@ impl AttendanceStatus {
         match self {
             Self::Present => "present",
             Self::Late => "late",
-            Self::OutsideSchedule => "outside_schedule",
             Self::Absent => "absent",
             Self::Permit => "permit",
             Self::Sick => "sick",

@@ -6,8 +6,8 @@ use deadpool_postgres::Pool;
 
 use super::fmt::{fmt_schedule, fmt_when, wib};
 use crate::models::{
-    AnalisisData, AttendanceItem, ClassRank, LatestAtt, LiveSesi, PoinData, PointRow, SantriHome,
-    ScheduleInfo, StafHome, TeacherInsight, TrendPoint,
+    AnalisisData, AttendanceItem, ClassRank, LatestAtt, LiveSesi, PoinData, PoinDetailData,
+    PointLogItem, PointRow, SantriHome, ScheduleInfo, StafHome, TeacherInsight, TrendPoint,
 };
 use crate::repository as repo;
 
@@ -203,21 +203,124 @@ pub async fn analisis(pool: &Pool, name: &str, teacher_id: Option<i64>) -> Resul
     })
 }
 
-/// Papan poin santri (/poin staf/pamong — cakupan sendiri; /poin-dewan dewan
+/// Berapa santri per halaman papan poin. Klien memakai angka yang sama untuk
+/// menyimpulkan "sudah halaman terakhir" dari jumlah baris yang datang, jadi
+/// keduanya WAJIB sepadan (lihat `PER_HALAMAN` di `web/pages/poin.rs`).
+pub const POIN_PER_PAGE: i64 = 20;
+
+/// Papan poin santri (/poin staf/guru — cakupan sendiri; /poin-dewan dewan
 /// guru/admin — `can_adjust=true`, boleh tambah/kurangi poin manual).
-pub async fn poin_data(pool: &Pool, teacher_id: Option<i64>, can_adjust: bool) -> Result<PoinData> {
-    let (avg, board) = tokio::join!(repo::points_avg(pool, teacher_id), repo::points_board(pool, teacher_id, 20, true));
+///
+/// Yang dikirim hanya HALAMAN PERTAMA. Dulu papan ini `LIMIT 20` tanpa offset
+/// dan tanpa penanda apa pun, jadi santri ke-21 dan seterusnya tak pernah bisa
+/// dilihat dari layar ini — bukan "belum termuat", melainkan tak ada jalan
+/// memuatnya. Sisanya kini diambil per halaman lewat [`poin_page`].
+pub async fn poin_data(
+    pool: &Pool,
+    teacher_id: Option<i64>,
+    can_adjust: bool,
+    can_reset: bool,
+) -> Result<PoinData> {
+    let (avg, board) = tokio::join!(
+        repo::points_avg(pool, teacher_id),
+        repo::points_board(pool, teacher_id, POIN_PER_PAGE, 0, true),
+    );
     let (avg_points, total_santri) = avg?;
-    let top = board?
-        .into_iter()
-        .map(|r| PointRow {
-            user_id: r.user_id,
-            name: r.name.clone(),
-            nis: r.nis,
-            class_name: r.class_name,
-            points: r.points,
-            initial: initial_of(&r.name),
-        })
-        .collect();
-    Ok(PoinData { can_adjust, avg_points, total_santri, top })
+    Ok(PoinData {
+        can_adjust,
+        can_reset,
+        avg_points,
+        total_santri,
+        top: board?.into_iter().map(baris_poin).collect(),
+    })
+}
+
+/// Satu halaman papan poin berikutnya (gulir-tak-berujung /poin).
+pub async fn poin_page(pool: &Pool, teacher_id: Option<i64>, offset: i64) -> Result<Vec<PointRow>> {
+    let rows = repo::points_board(pool, teacher_id, POIN_PER_PAGE, offset.max(0), true).await?;
+    Ok(rows.into_iter().map(baris_poin).collect())
+}
+
+/// Satu baris papan → payload layar. Dipakai halaman pertama DAN halaman
+/// berikutnya, supaya keduanya mustahil berbeda bentuk.
+fn baris_poin(r: repo::PointRowDb) -> PointRow {
+    PointRow {
+        initial: initial_of(&r.name),
+        user_id: r.user_id,
+        name: r.name,
+        nis: r.nis,
+        class_name: r.class_name,
+        points: r.points,
+    }
+}
+
+/// Berapa entri riwayat poin per halaman di `/poin/:id`.
+pub const RIWAYAT_POIN_PER_PAGE: i64 = 25;
+
+/// Detail poin SATU santri: profil singkat + buku besar poinnya.
+///
+/// Riwayatnya sengaja mencakup SEMUA kategori — kehadiran otomatis, penyesuaian
+/// manual pengurus, sampai baris reset saldo awal semester. Sejak migrasi 32
+/// `users.points` tak lain adalah jumlah dari kolom ini, jadi daftar yang
+/// menyembunyikan salah satu jenisnya akan menghasilkan halaman yang tak bisa
+/// menjelaskan saldonya sendiri — persis keluhan yang melahirkan migrasi 72.
+pub async fn poin_detail(pool: &Pool, student_id: i64, can_adjust: bool) -> Result<PoinDetailData> {
+    let (profil, kelas, riwayat, total, jumlah) = tokio::join!(
+        repo::profil_row(pool, student_id),
+        repo::classes_of_student(pool, student_id),
+        repo::point_history_page(pool, student_id, RIWAYAT_POIN_PER_PAGE, 0),
+        repo::count_point_logs(pool, student_id),
+        repo::point_totals(pool, student_id),
+    );
+    let Some(p) = profil? else {
+        bail_user!("Santri tidak ditemukan.");
+    };
+    if !crate::models::role_satisfies(&p.role, &["santri"]) {
+        bail_user!("Akun ini bukan santri, jadi tak punya papan poin.");
+    }
+    let nis = p.nis.unwrap_or_default();
+    let (total_plus, total_minus) = jumlah?;
+    Ok(PoinDetailData {
+        user_id: student_id,
+        initial: initial_of(&p.full_name),
+        name: p.full_name,
+        angkatan: crate::service::kelas::angkatan_tampil(p.entry_year, &nis),
+        nis: if nis.is_empty() { "-".into() } else { nis },
+        phone: p.phone_number.unwrap_or_default(),
+        points: p.points,
+        classes: kelas?.into_iter().map(|k| k.name).collect(),
+        total_plus,
+        total_minus,
+        history: riwayat?.into_iter().map(baris_riwayat_poin).collect(),
+        history_total: total?,
+        can_adjust,
+    })
+}
+
+/// Satu halaman riwayat poin berikutnya (gulir-tak-berujung /poin/:id).
+pub async fn poin_history_page(
+    pool: &Pool,
+    student_id: i64,
+    offset: i64,
+) -> Result<Vec<PointLogItem>> {
+    let rows =
+        repo::point_history_page(pool, student_id, RIWAYAT_POIN_PER_PAGE, offset.max(0)).await?;
+    Ok(rows.into_iter().map(baris_riwayat_poin).collect())
+}
+
+fn baris_riwayat_poin(r: repo::PointLogRowDb) -> PointLogItem {
+    PointLogItem {
+        // Kosong = SISTEM. Sengaja tidak ditulis "Sistem" di sini: layar yang
+        // memutuskan bagaimana menyebutnya, dan yang ada di data memang
+        // ketiadaan orang, bukan seorang petugas bernama Sistem.
+        by_label: match (r.given_by_name, r.given_by_role) {
+            (Some(n), Some(role)) => format!("{n} ({})", crate::models::role_label(&role)),
+            (Some(n), None) => n,
+            _ => String::new(),
+        },
+        delta: r.delta,
+        reason: r.reason,
+        category: r.category,
+        when_label: fmt_when(r.created_at),
+    }
 }

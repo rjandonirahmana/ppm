@@ -86,7 +86,6 @@ const ALAT: &[(&str, &str, &str, &[&str])] = &[
     ("article", "Artikel", "/kelola-artikel", &[]),
     ("shield", "Kontrol", "/kontrol-pengguna", &["admin", "ketua"]),
     ("manage_accounts", "User", "/manajemen-user", &["admin", "ketua"]),
-    ("settings", "Setelan", "/setelan", &["admin", "ketua"]),
     ("monitoring", "Server", "/status-server", &["admin", "ketua"]),
 ];
 

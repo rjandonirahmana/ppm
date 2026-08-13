@@ -23,7 +23,7 @@ const LINKS: &[(&str, &str, &str)] = &[
     ("/guru", "Analisis Guru", "analytics"),
     ("/dewan-guru", "Analisis Dewan Guru", "insights"),
     ("/poin", "Pantauan Poin Santri", "stars"),
-    ("/poin-dewan", "Pantauan Poin (Dewan)", "grade"),
+    ("/poin-saya", "Riwayat Poin Saya (Santri)", "history"),
     ("/verifikasi-pamong", "Verifikasi Pamong", "how_to_reg"),
     ("/verifikasi-tahap-2", "Verifikasi Tahap 2", "verified_user"),
     ("/halaqah", "Daftar Halaqah", "groups"),

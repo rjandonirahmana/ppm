@@ -1,11 +1,11 @@
 //! Halaman "Kelas Saya" — dipakai TIGA peran dengan isi yang sama:
 //!   • santri            → kelas yang ia IKUTI
 //!   • wali kelas (guru) → kelas yang ia PEGANG
-//!   • pamong            → kelas yang ia DAMPINGI
+//!   • wali kelas        → kelas yang ia PEGANG (semua kategori, migrasi 84)
 //!
 //! Yang berbeda hanya kelas mana yang diambil (ditentukan server dari peran di
 //! sesi) dan beberapa kalimatnya. Isi kartunya identik — kurikulum, materi yang
-//! sedang dibahas, daftar santri, wali kelas & pamong — karena pertanyaan yang
+//! sedang dibahas, daftar santri, dan wali kelasnya — karena pertanyaan yang
 //! ingin dijawab ketiganya memang sama: "kelas ini sedang di mana?".
 //!
 //! Semuanya BACA SAJA: tak ada tombol ubah/hapus. Pengelolaan tetap di
@@ -46,7 +46,7 @@ pub fn KelasSayaPage() -> impl IntoView {
                                         let (judul, sub) = if d.sebagai_staf {
                                             (
                                                 "Belum ditugaskan di kelas mana pun",
-                                                "Kelas akan muncul di sini setelah kamu ditunjuk sebagai wali kelas atau pamong.",
+                                                "Kelas akan muncul di sini setelah kamu ditunjuk sebagai wali kelas.",
                                             )
                                         } else {
                                             (
@@ -87,12 +87,10 @@ fn KelasCard(k: KelasSayaItem) -> impl IntoView {
     let members = StoredValue::new(k.members);
     // Lencana kembar ("piket"/"piket") tak mungkin lagi sejak migrasi 65:
     // kategori dan jenjang kini dua himpunan terpisah, jadi tinggal dilabeli.
-    let kbm = k.category == "kbm";
     let jenjang = crate::models::jenjang_label(&k.jenjang);
     let category = crate::models::kategori_label(&k.category).to_string();
     let peran = k.peran_saya.clone();
     let wali = k.wali_kelas.clone();
-    let pamong = k.pamong.clone();
 
     view! {
         <div class="ppm-card p-4 anim-in space-y-3 ppm-accent">
@@ -112,21 +110,10 @@ fn KelasCard(k: KelasSayaItem) -> impl IntoView {
             </div>
 
             // ── Petugas ────────────────────────────────────────────────────
-            // Wali kelas hanya ada di KBM (migrasi 65); kelas lain cukup
-            // pamong, jadi kotaknya melebar alih-alih memajang "Belum
-            // ditunjuk" untuk jabatan yang memang tak ada di sini.
-            {if kbm {
-                view! {
-                    <div class="grid grid-cols-2 gap-2">
-                        <Petugas peran="Wali Kelas" nama=wali icon="badge" />
-                        <Petugas peran="Pamong" nama=pamong icon="supervisor_account" />
-                    </div>
-                }
-                    .into_any()
-            } else {
-                view! { <Petugas peran="Pamong" nama=pamong icon="supervisor_account" /> }
-                    .into_any()
-            }}
+            // SATU jabatan saja sejak migrasi 84. Kotaknya melebar penuh —
+            // dulu berdampingan dengan Pamong, dan menyisakan ruang kosong di
+            // sebelahnya akan terbaca seperti data yang gagal dimuat.
+            <Petugas peran="Wali Kelas" nama=wali icon="badge" />
 
             // ── Materi yang sedang dibahas per jadwal ──────────────────────
             {(!k.schedules.is_empty())

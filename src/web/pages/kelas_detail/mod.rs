@@ -29,7 +29,7 @@ use leptos_router::hooks::use_params_map;
 use crate::models::KelasDetail;
 use crate::web::api::{
     kelas_detail,
-    set_class_staff_action,
+    set_class_wali_action,
     update_class_action,
 };
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
@@ -352,13 +352,10 @@ fn WaliKelasCard(
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
     let teacher_opts = StoredValue::new(d.teacher_options.clone());
-    let pamong_opts = StoredValue::new(d.pamong_options.clone());
-    // Wali kelas HANYA di KBM (migrasi 65). Di kelas Bacaan/non-KBM bidangnya
-    // tak ditampilkan sama sekali — bukan ditampilkan lalu ditolak server.
+    // Kelas KBM ditandai untuk KALIMATNYA saja (izin lewat wali KBM); bidang
+    // walinya sendiri kini tampil di semua kategori.
     let kbm = d.category == "kbm";
-    let wali = RwSignal::new(if kbm { d.wali_kelas_id } else { 0 });
-    let pamong = RwSignal::new(d.pamong_id);
-    let mode = RwSignal::new(d.verify_mode.clone());
+    let wali = RwSignal::new(d.wali_kelas_id);
     let can_manage = d.can_manage;
     let busy = RwSignal::new(false);
     let msg = RwSignal::new(Option::<(bool, String)>::None);
@@ -369,9 +366,9 @@ fn WaliKelasCard(
         }
         busy.set(true);
         msg.set(None);
-        let (w, pm, rp) = (wali.get_untracked(), pamong.get_untracked(), mode.get_untracked());
+        let w = wali.get_untracked();
         leptos::task::spawn_local(async move {
-            match set_class_staff_action(class_id, w, pm, rp).await {
+            match set_class_wali_action(class_id, w).await {
                 Ok(_) => {
                     msg.set(Some((true, "Tersimpan.".into())));
                     refetch();
@@ -388,9 +385,7 @@ fn WaliKelasCard(
         <div class="ppm-card p-4 space-y-3 anim-in">
             <div class="flex items-center gap-2">
                 <span class="material-symbols-outlined text-primary">"badge"</span>
-                <h3 class="text-body-lg font-bold text-on-background">
-                    {if kbm { "Wali Kelas & Verifikasi" } else { "Pamong & Verifikasi" }}
-                </h3>
+                <h3 class="text-body-lg font-bold text-on-background">"Wali Kelas & Verifikasi"</h3>
                 // Penanda TERKUNCI, bukan tombol yang diam-diam gagal: pemirsa
                 // langsung tahu ini bukan wewenangnya, bukan aplikasi yang rusak.
                 {(!can_manage)
@@ -405,18 +400,19 @@ fn WaliKelasCard(
             </div>
             <p class="text-body-sm text-on-surface-variant">
                 {if !can_manage {
-                    "Hanya admin/ketua yang boleh mengubah bagian ini. Ditampilkan agar Anda tahu siapa petugas kelas dan bagaimana absensinya diverifikasi."
+                    "Hanya admin/ketua yang boleh mengubah bagian ini. Ditampilkan agar Anda tahu siapa wali kelasnya dan bagaimana absensinya diverifikasi."
                 } else if kbm {
-                    "Wali kelas menyetujui izin santri kelas ini — satu santri satu kelas KBM, jadi satu izin cukup. Mode verifikasi menentukan siapa yang mengesahkan absensi."
+                    "Wali kelas memegang kelas ini: menunjuk guru pengisi tiap sesi, mengesahkan absensinya, dan MENYETUJUI IZIN santrinya — satu santri satu kelas KBM, jadi satu izin cukup."
                 } else {
-                    "Kelas ini tak punya wali kelas; petugasnya pamong — ia menunjuk guru tiap sesi dan mengesahkan absensi bila kelasnya dua langkah. Perizinan santri tetap lewat wali kelas KBM-nya."
+                    "Wali kelas memegang kelas ini: menunjuk guru pengisi tiap sesi dan mengesahkan absensinya. Perizinan santri TIDAK lewat sini — itu selalu wali kelas KBM-nya."
                 }}
             </p>
-            // Hanya kelas KBM yang punya wali. Di kelas lain bidang ini tak
-            // dirender sama sekali — menampilkannya lalu ditolak server hanya
-            // membuat orang mengira aplikasinya rusak.
-            {kbm
-                .then(|| {
+            // Wali kelas kini ada di SEMUA kategori (migrasi 84). Dulu bidang
+            // ini disembunyikan di kelas non-KBM karena petugasnya pamong;
+            // setelah peran itu hilang, kelas sholat/apel/piket justru tak
+            // punya penanggung jawab sama sekali kalau bidang ini tak ada.
+            {
+                {
                     view! {
                         <label class="space-y-1 block">
                             <span class="text-[11px] font-bold tracking-wider text-on-surface-variant">
@@ -450,57 +446,16 @@ fn WaliKelasCard(
                             </select>
                         </label>
                     }
-                })}
+                }
+            }
 
-            <label class="space-y-1 block">
-                <span class="text-[11px] font-bold tracking-wider text-on-surface-variant">"PAMONG KELAS"</span>
-                <select
-                    class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface cursor-pointer"
-                    prop:disabled=!can_manage
-                    on:change=move |ev| pamong.set(event_target_value(&ev).parse().unwrap_or(0))
-                >
-                    <option value="0" selected=move || pamong.get() == 0>"— Belum ada pamong"</option>
-                    {pamong_opts
-                        .get_value()
-                        .into_iter()
-                        .map(|t| {
-                            let pid = t.id;
-                            view! {
-                                <option value=t.id.to_string() selected=move || pamong.get() == pid>
-                                    {t.name}
-                                </option>
-                            }
-                        })
-                        .collect_view()}
-                </select>
-            </label>
-            <p class="text-[11px] text-on-surface-variant">
-                "Pamong kelas memverifikasi kehadiran gate santri kelas ini, jadi tahap-1 persetujuan izin, & menerima WA ~1 jam sebelum sesi untuk mengatur dewan guru pengisi."
-            </p>
-
-            // Mode verifikasi absensi kelas (migrasi 62) — tiga pilihan, bukan
-            // lagi centang dua-keadaan: ada kelas yang cukup diverifikasi
-            // pamong saja, dan itu tak bisa diungkapkan sebuah centang.
-            <label class="space-y-1 block">
-                <span class="text-label-md text-on-surface-variant">"Mode verifikasi absensi"</span>
-                <select
-                    class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-60"
-                    prop:disabled=!can_manage
-                    on:change=move |ev| mode.set(event_target_value(&ev))
-                >
-                    <option value="dua_tahap" selected=move || mode.get() == "dua_tahap">
-                        "Dua tahap — pamong dulu, lalu dewan guru"
-                    </option>
-                    <option value="guru" selected=move || mode.get() == "guru">
-                        "Satu tahap — cukup dewan guru"
-                    </option>
-                    <option value="pamong" selected=move || mode.get() == "pamong">
-                        "Satu tahap — cukup pamong"
-                    </option>
-                </select>
-            </label>
-            <p class="text-[11px] text-on-surface-variant">
-                "Mode yang melibatkan pamong membutuhkan pamong kelas terisi — kalau tidak, absensi menggantung di antrean tanpa petugas."
+            // Mode verifikasi absensi TAK LAGI BISA DIPILIH: peran pamong
+            // dihapus (migrasi 84) dan semua kelas dipindah ke satu tahap.
+            // Dropdown-nya dibuang, bukan disisakan dengan satu pilihan — pilihan
+            // tunggal cuma menyuruh orang menebak-nebak apa yang hilang.
+            <p class="text-[11px] text-on-surface-variant flex items-start gap-1.5">
+                <span class="material-symbols-outlined text-[15px] shrink-0">"verified"</span>
+                "Absensi kelas ini disahkan SATU tahap oleh guru pengisi sesi (atau wali kelas bila sesi belum menetapkan pengisi)."
             </p>
 
             <div class="flex items-center gap-3">

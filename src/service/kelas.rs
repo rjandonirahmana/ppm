@@ -1,4 +1,4 @@
-//! service/kelas.rs — Manajemen kelas (admin/guru/dewan guru/pamong): daftar
+//! service/kelas.rs — Manajemen kelas (admin/ketua/dewan guru): daftar
 //! kelas, detail (anggota + jadwal + sesi), buat/ubah kelas, kategori fleksibel,
 //! jadwal (buat/ubah/hapus + generate sesi bulanan), tambah/keluarkan santri,
 //! serta payload halaman Students (daftar santri + antrean verifikasi per-peran).
@@ -635,7 +635,7 @@ pub async fn kelas_detail(
     // kelas) di main.rs. Halaman detail = murni baca (5 query paralel).
     // Sesi yang DITAMPILKAN hanya MULAI hari ini ke depan (yang lewat dibuang).
     let today = Utc::now().with_timezone(&wib()).date_naive();
-    let (members, scheds, sessions, teachers, curriculum, books, rooms, pamongs) = tokio::join!(
+    let (members, scheds, sessions, teachers, curriculum, books, rooms) = tokio::join!(
         repo::class_members(pool, class_id),
         repo::class_schedules(pool, class_id),
         repo::sessions_of_class(pool, class_id, today, 50),
@@ -643,12 +643,7 @@ pub async fn kelas_detail(
         repo::class_curriculum(pool, class_id),
         repo::list_books(pool),
         repo::device_options(pool),
-        repo::pamong_options(pool),
     );
-    let pamong_options: Vec<crate::models::TeacherOption> = pamongs?
-        .into_iter()
-        .map(|(id, name)| crate::models::TeacherOption { id, name })
-        .collect();
 
     let members = members?
         .into_iter()
@@ -759,7 +754,6 @@ pub async fn kelas_detail(
                 status_kind: status_kind.into(),
                 teacher: r.teacher.unwrap_or_else(|| "-".into()),
                 teacher_id: r.teacher_id,
-                pamong_id: r.pamong_id,
                 category: r.category.filter(|c| !c.is_empty()).unwrap_or_else(|| "-".into()),
             }
         })
@@ -860,16 +854,10 @@ pub async fn kelas_detail(
         // menambahkan santri. Padahal menunjuk seseorang jadi wali kelas justru
         // berarti menyerahkan kelas itu kepadanya.
         //
-        // Pamong TETAP di sini selama perannya masih ada. Saat `supervisor`
-        // dilebur ke `dewan_guru` nanti, syarat itu tinggal dibuang — dan
-        // sampai saat itu membuangnya lebih dulu akan mengunci pamong yang
-        // hari ini masih mengurus kelas non-KBM.
+        // Syarat pamong kelas DIBUANG bersama perannya (migrasi 84): yang
+        // tersisa adalah admin/ketua dan wali kelasnya sendiri.
         can_manage_jadwal: crate::models::role_satisfies(role, &["admin"])
-            || ci.wali_kelas_id == Some(user_id)
-            || ci.pamong_id == Some(user_id),
-        pamong_id: ci.pamong_id.unwrap_or(0),
-        pamong_name: ci.pamong_name.unwrap_or_default(),
-        pamong_options,
+            || ci.wali_kelas_id == Some(user_id),
         members,
         schedules,
         schedule_options,
@@ -973,40 +961,24 @@ pub async fn categories(pool: &Pool) -> Result<Vec<String>> {
     repo::distinct_categories(pool).await
 }
 
-/// Tetapkan wali kelas + pamong + rute persetujuan izin (require_pamong) satu
-/// kelas (migrasi 29/30). id 0 = kosongkan.
-/// Setel wali kelas, pamong, dan MODE VERIFIKASI kelas (migrasi 62).
+/// Tetapkan WALI KELAS satu kelas (migrasi 29). id 0 = kosongkan.
 ///
-/// Mode menggantikan boolean `require_pamong` yang lama: ada kelas yang cukup
-/// diverifikasi pamong saja, dan itu tak bisa diungkapkan sebuah boolean.
-/// `require_pamong` di DB dijaga tetap sepadan oleh trigger migrasi 62 — jadi
-/// yang ditulis dari sini HANYA `verify_mode`, sekali jalan.
-pub async fn set_class_staff(
-    pool: &Pool,
-    class_id: i64,
-    wali_kelas_id: i64,
-    pamong_id: i64,
-    verify_mode: &str,
-) -> Result<()> {
-    if !matches!(verify_mode, "dua_tahap" | "guru" | "pamong") {
-        bail_user!("Mode verifikasi tidak dikenal.");
-    }
-    // Mode yang MELIBATKAN pamong mustahil berjalan tanpa pamong ditunjuk —
-    // absensinya akan menggantung di antrean yang tak punya petugas.
-    if matches!(verify_mode, "dua_tahap" | "pamong") && pamong_id <= 0 {
-        bail_user!("Mode ini membutuhkan pamong kelas. Pilih pamongnya dulu.");
-    }
-    // WALI KELAS hanya di KBM (migrasi 65). Di kelas lain petugasnya pamong
-    // saja — dialah yang menunjuk guru tiap sesi dan menyetujui absensi bila
-    // kelasnya dua langkah. Aturan ini yang menjaga perizinan tetap sederhana:
-    // satu santri, satu kelas KBM, satu wali yang perlu menyetujui izinnya.
+/// Dulu fungsi ini juga menulis pamong kelas dan mode verifikasi. Keduanya
+/// hilang bersama peran pamong (migrasi 84): setiap kelas kini satu tahap
+/// (`verify_mode='guru'`), jadi tak ada lagi yang perlu dipilih — dan
+/// `pamong_id` ditulis NULL agar tak ada cabang query pamong yang hidup kembali
+/// diam-diam lewat data lama.
+pub async fn set_class_wali(pool: &Pool, class_id: i64, wali_kelas_id: i64) -> Result<()> {
+    // Wali kelas kini boleh di SEMUA kategori (migrasi 84). Dulu hanya KBM,
+    // karena kelas lain punya PAMONG sebagai petugasnya; setelah peran itu
+    // dihapus, wali kelas adalah satu-satunya jabatan yang tersisa — dan kelas
+    // sholat/apel/piket tetap butuh seseorang yang menunjuk pengisi sesi serta
+    // mengesahkan absensinya.
+    //
+    // Perizinan TIDAK ikut melebar: penyetujunya selalu wali kelas KBM santri
+    // (`kelas_kbm_santri` menyaring `category = 'kbm'`), jadi wali kelas apel
+    // tak menambah satu pun tahap persetujuan.
     let kbm = repo::kelas_adalah_kbm(pool, class_id).await?;
-    if wali_kelas_id > 0 && !kbm {
-        bail_user!(
-            "Wali kelas hanya untuk kelas KBM. Kelas ini cukup punya pamong — \
-             pamonglah yang menunjuk guru tiap sesi."
-        );
-    }
     // Wali KBM tak boleh DIKOSONGKAN, bukan cuma wajib saat dibuat. Tanpa ini
     // aturan "wajib" bisa dilanggar semenit setelah kelasnya jadi, dan izin
     // santrinya langsung kehilangan penyetuju.
@@ -1017,8 +989,7 @@ pub async fn set_class_staff(
         );
     }
     let wali = (wali_kelas_id > 0 && kbm).then_some(wali_kelas_id);
-    let pamong = (pamong_id > 0).then_some(pamong_id);
-    if !repo::set_class_staff(pool, class_id, wali, pamong, verify_mode).await? {
+    if !repo::set_class_staff(pool, class_id, wali, None, "guru").await? {
         bail_user!("Kelas tidak ditemukan.");
     }
     Ok(())
@@ -1517,14 +1488,10 @@ pub async fn set_session_teacher(pool: &Pool, session_id: i64, teacher_id: i64) 
     Ok(())
 }
 
-/// Set pamong bertugas verifikasi satu sesi (migrasi 33). 0 = kosongkan.
-pub async fn set_session_pamong(pool: &Pool, session_id: i64, pamong_id: i64) -> Result<()> {
-    let pid = (pamong_id > 0).then_some(pamong_id);
-    if !repo::set_session_pamong(pool, session_id, pid).await? {
-        bail_user!("Sesi tidak ditemukan.");
-    }
-    Ok(())
-}
+// `set_session_pamong` DIHAPUS bersama peran pamong (migrasi 84). Yang
+// menggantikannya bukan fungsi lain: sesi cukup punya PENGAJAR, dan dialah yang
+// mengesahkan absensinya — dengan wali kelas sebagai penadah bila sesi belum
+// menetapkan pengisi.
 
 /// Tandai sesi libur (cancelled) atau aktifkan kembali (scheduled).
 pub async fn set_session_libur(pool: &Pool, session_id: i64, libur: bool) -> Result<()> {
@@ -1584,14 +1551,6 @@ pub async fn students_data(pool: &Pool, user: &SessionUser) -> Result<StudentsDa
     let (students, total_santri) = students_page(pool, "", None, 0).await?;
 
     let (verify_stage, pending_rows, verified_today) = match user.role.as_str() {
-        // Pamong bertugas → tahap 1 (hanya sesi yang ia tugaskan, migrasi 33).
-        "supervisor" => {
-            let (p, cnt) = tokio::join!(
-                repo::pending_pamong(pool, Some(user.id), 50),
-                repo::approved_today(pool)
-            );
-            ("tahap1", p?, cnt?)
-        }
         // Ustad bertugas → tahap FINAL (hanya sesi yang ia ampu).
         "teacher" => {
             let (p, cnt) = tokio::join!(
@@ -1601,7 +1560,11 @@ pub async fn students_data(pool: &Pool, user: &SessionUser) -> Result<StudentsDa
             ("tahap2", p?, cnt?)
         }
         // Dewan guru/admin → tahap FINAL semua sesi (oversight).
-        "dewan_guru" | "admin" => {
+        // 'supervisor' ikut di sini: perannya dihapus (migrasi 84) dan yang
+        // tersisa cuma klaim JWT lama — antrean tahap-1 pamong tak pernah
+        // terisi lagi, jadi mengarahkannya ke sana berarti tab verifikasi yang
+        // selamanya kosong.
+        "dewan_guru" | "admin" | "supervisor" => {
             let (p, cnt) =
                 tokio::join!(repo::pending_verify(pool, None, 50), repo::verified_today(pool));
             ("tahap2", p?, cnt?)
@@ -1939,12 +1902,9 @@ pub async fn kelas_saya(
             })
             .collect();
 
-        let peran_saya = match (k.saya_wali, k.saya_pamong) {
-            (true, true) => "Wali Kelas & Pamong",
-            (true, false) => "Wali Kelas",
-            (false, true) => "Pamong",
-            _ => "",
-        };
+        // Hanya satu jabatan yang tersisa (migrasi 84). Santri tak berlencana —
+        // ia peserta, bukan petugas.
+        let peran_saya = if k.saya_wali { "Wali Kelas" } else { "" };
 
         items.push(crate::models::KelasSayaItem {
             id: k.id,
@@ -1953,7 +1913,6 @@ pub async fn kelas_saya(
             category: k.category.unwrap_or_default(),
             jenjang: k.jenjang.unwrap_or_default(),
             wali_kelas: k.wali_kelas.unwrap_or_default(),
-            pamong: k.pamong.unwrap_or_default(),
             curriculum,
             schedules,
             members,

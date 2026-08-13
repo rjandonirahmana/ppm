@@ -182,6 +182,23 @@ pub struct AnakOrtu {
     pub terhubung: bool,
 }
 
+/// Satu ORANG TUA seorang santri — cerminan [`AnakOrtu`] dari sisi sebaliknya.
+///
+/// Ada dua layar karena ada dua arah pertanyaan yang sama-sama wajar: "siapa
+/// saja anak akun ortu ini?" (dibuka dari akun ortu) dan "siapa saja orang tua
+/// santri ini?" (dibuka dari akun santri). Keduanya menulis ke junction yang
+/// SAMA (`parent_connections`), jadi menautkan dari sisi mana pun hasilnya
+/// identik — satu santri boleh punya beberapa ortu, satu ortu beberapa anak.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrtuSantri {
+    pub parent_id: i64,
+    pub full_name: String,
+    /// "-" bila akun ortu belum mengisi nomor HP.
+    pub phone: String,
+    pub status_label: String,
+    pub terhubung: bool,
+}
+
 /// Label status kemubalighan (migrasi 73) untuk layar.
 pub fn mubalegh_label(kode: &str) -> &'static str {
     match kode {

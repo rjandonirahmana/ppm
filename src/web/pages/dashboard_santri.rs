@@ -194,7 +194,13 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
             </header>
 
             // ── Kartu Poin ──────────────────────────────────────────────────
-            <div class="spiritual-gradient rounded-2xl p-6 text-on-primary relative overflow-hidden shadow-lg shadow-primary/20">
+            // Kartunya sendiri yang jadi tautan ke riwayat: di sinilah santri
+            // melihat angkanya, dan pertanyaan berikutnya SELALU "kenapa
+            // segini?". Sebelum ini jawabannya cuma ada di layar pengurus.
+            <a
+                href="/poin-saya"
+                class="block spiritual-gradient rounded-2xl p-6 text-on-primary relative overflow-hidden shadow-lg shadow-primary/20 press"
+            >
                 <span class="material-symbols-outlined absolute -right-4 -bottom-4 text-[120px] opacity-10">
                     "qr_code_2"
                 </span>
@@ -211,11 +217,13 @@ fn HomeContent(home: SantriHome) -> impl IntoView {
                         <span class="material-symbols-outlined text-[16px]">"star"</span>
                         {if home.points >= 500 { "Mahasiswa Teladan" } else { "Terus Semangat" }}
                     </span>
-                    <span class="text-body-sm opacity-90">
+                    <span class="text-body-sm opacity-90 inline-flex items-center gap-1">
                         {format!("{month_pts:+} poin bulan ini")}
+                        <span class="material-symbols-outlined text-[16px]">"chevron_right"</span>
                     </span>
                 </div>
-            </div>
+                <p class="text-[11px] opacity-75 mt-2">"Ketuk untuk melihat riwayat poin"</p>
+            </a>
 
             // ── Permintaan koneksi orang tua (setujui/tolak oleh SANTRI) ────
             <ConnRequestsSection />

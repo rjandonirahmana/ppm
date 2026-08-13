@@ -17,7 +17,7 @@ use crate::web::api::{
     log_hafalan_action,
     send_schedule_wa_action, session_detail_data, session_verify_data,
     set_session_actual_detail_action, set_session_book_action, set_session_live,
-    set_session_pamong_action, set_session_target_action, set_session_teacher_action,
+    set_session_target_action, set_session_teacher_action,
 };
 use crate::web::components::{
     DeviceFrame, FetchError, FlashMsg, MobileHeader, SwipeArea,
@@ -92,13 +92,11 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
     let hafalan_students: Vec<(i64, String)> =
         d.attendance.iter().map(|a| (a.user_id, a.name.clone())).collect();
 
-    // ── Kontrol kelola sesi (dewan guru = guru, admin, pamong) ──────────────
+    // ── Kontrol kelola sesi (guru pengisi, wali kelas, admin/ketua) ─────────
     let is_live = d.status_kind == "ongoing";
     let is_finished = d.status_kind == "finished";
     let cur_teacher = d.teacher_id.unwrap_or(0);
     let teacher_options = StoredValue::new(d.teacher_options.clone());
-    let cur_pamong = d.pamong_id.unwrap_or(0);
-    let pamong_options = StoredValue::new(d.pamong_options.clone());
     let busy_ctl = RwSignal::new(false);
     // Nonaktif HANYA untuk aksi MULAI (di luar jendela ±10 menit dari jadwal);
     // akhiri sesi selalu boleh. Alasan dari server (start_blocked_reason) —
@@ -127,17 +125,6 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
         busy_ctl.set(true);
         leptos::task::spawn_local(async move {
             let _ = set_session_teacher_action(session_id, tid).await;
-            busy_ctl.set(false);
-            refetch();
-        });
-    };
-    let set_pamong = move |pid: i64| {
-        if busy_ctl.get_untracked() {
-            return;
-        }
-        busy_ctl.set(true);
-        leptos::task::spawn_local(async move {
-            let _ = set_session_pamong_action(session_id, pid).await;
             busy_ctl.set(false);
             refetch();
         });
@@ -320,7 +307,7 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                         view! {
                             // `.ppm-masonry`: satu kolom di ponsel, DUA kolom
                             // seimbang di desktop. Tab ini berisi empat kartu
-                            // mandiri (pengajar/pamong, materi target, kitab,
+                            // mandiri (pengajar, materi target, kitab,
                             // catatan) yang sebelumnya bertumpuk di kolom
                             // `md:max-w-md` dengan separuh layar kanan kosong.
                             <div class="ppm-masonry">
@@ -353,32 +340,8 @@ fn DetailBody(d: SessionDetailData, refetch: impl Fn() + Copy + Send + 'static) 
                                         })
                                         .collect_view()}
                                 </select>
-                                // ── Pamong bertugas verifikasi (migrasi 33) ──
-                                <label class="mt-3 block text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
-                                    "Pamong bertugas (verifikasi)"
-                                </label>
-                                <select
-                                    class="mt-1 w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-60"
-                                    disabled=move || busy_ctl.get()
-                                    on:change=move |ev| {
-                                        set_pamong(event_target_value(&ev).parse().unwrap_or(0))
-                                    }
-                                >
-                                    <option value="0" selected=cur_pamong == 0>
-                                        "— Pakai pamong kelas —"
-                                    </option>
-                                    {pamong_options
-                                        .get_value()
-                                        .into_iter()
-                                        .map(|o| {
-                                            let val = o.id.to_string();
-                                            let sel = o.id == cur_pamong;
-                                            view! { <option value=val selected=sel>{o.name}</option> }
-                                        })
-                                        .collect_view()}
-                                </select>
                                 <p class="mt-1 text-[11px] text-on-surface-variant">
-                                    "Pamong kelas menugaskan ustad & pamong verifikator sesi ini (±1 jam sebelum mulai)."
+                                    "Ustad pengisi sesi inilah yang mengesahkan absensinya. Dibiarkan kosong = wali kelas yang bertugas."
                                 </p>
                                 {(!is_cancelled)
                                     .then(|| {
@@ -924,7 +887,7 @@ fn HafalanPanel(class_id: i64, students: Vec<(i64, String)>) -> impl IntoView {
     }
 }
 
-/// Panel verifikasi kehadiran PER-SESI (pamong tahap-1 / dewan guru final).
+/// Panel verifikasi kehadiran PER-SESI (satu tahap: guru pengisi/wali kelas).
 /// Centang = setujui (default); hilangkan centang = tolak. Satu klik memproses
 
 /// Panel GABUNGAN absensi + verifikasi satu sesi.
@@ -1138,6 +1101,26 @@ fn AbsensiVerifikasiPanel(
                                             on:change=move |ev| set_status(uid, event_target_value(&ev))
                                             aria-label="Status kehadiran"
                                         >
+                                            // Santri yang BELUM tercatat tak boleh
+                                            // memakai pilihan pertama sebagai nilai
+                                            // bawaan: tanpa baris ini seluruh kelas
+                                            // tampil "Hadir" sebelum siapa pun
+                                            // menyentuhnya, dan yang terlewat absen
+                                            // tak bisa dibedakan dari yang benar-benar
+                                            // hadir. Hilang sendiri begitu statusnya
+                                            // dipilih.
+                                            <option
+                                                value=""
+                                                disabled=true
+                                                selected=move || {
+                                                    !matches!(
+                                                        status_now().as_str(),
+                                                        "present" | "late" | "permit" | "sick" | "absent"
+                                                    )
+                                                }
+                                            >
+                                                "— Pilih —"
+                                            </option>
                                             {[
                                                 ("present", "Hadir"),
                                                 ("late", "Terlambat"),

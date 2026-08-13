@@ -2,11 +2,15 @@
 //!
 //! Migrasi 46 — izin PER-KELAS. Satu pengajuan dipecah jadi beberapa baris
 //! `permit_requests`, satu untuk tiap WALI KELAS yang kelasnya dilewati selama
-//! rentang izin (lihat `split_permit_per_wali`). Tiap baris jalan sendiri:
-//!   * two_stage   → PAMONG kelas (tahap 1) → WALI KELAS (final).
-//!   * direct_guru → WALI KELAS (final, pamong dilewati).
-//! Mode default bisa dikonfigurasi admin (setelan `permit_approval_mode`), tapi
-//! `require_pamong` per-kelas yang menang bila diset.
+//! rentang izin (lihat `split_permit_per_wali`). Tiap baris diputus WALI KELAS
+//! kelas itu — satu tahap.
+//!
+//! Tahap PAMONG (dulu tahap-1) sudah tidak ada: perannya dihapus dan semua
+//! kelas dipindah ke `verify_mode='guru'` (migrasi 84), jadi `require_pamong`
+//! bernilai FALSE di mana-mana. Cabang pamong di query & fungsi di bawah
+//! sengaja dibiarkan — dengan datanya kosong, cabang itu tak pernah terpilih,
+//! dan izin lama yang terlanjur menggantung di tahap-1 tetap bisa difinalkan
+//! wali kelas.
 //!
 //! Orang tua BUKAN penyetuju lagi — mereka hanya dinotifikasi & bisa melihat.
 
@@ -18,8 +22,16 @@ use super::fmt::{fmt_range, fmt_when};
 use crate::models::{permit_kind_label, PermitQueueData, PermitReviewItem};
 use crate::repository as repo;
 
-/// Kunci setelan mode persetujuan izin.
-pub const PERMIT_MODE_KEY: &str = "permit_approval_mode";
+/// Fallback rute izin untuk santri yang tak punya kelas utama: SATU tahap
+/// (langsung wali kelas).
+///
+/// Dulu ini setelan global yang bisa diubah admin di `/setelan`
+/// (`app_settings.permit_approval_mode`). Halaman itu dihapus bersama peran
+/// pamong (migrasi 84): tahap-1 dijalankan pamong, dan tanpa pamong satu-satunya
+/// nilai yang masuk akal adalah "tidak perlu". Dibiarkan sebagai konstanta
+/// bernama — bukan `false` telanjang di tengah query — supaya jelas ini fallback
+/// izin lama yang belum punya `class_id`, bukan kebetulan.
+const FALLBACK_DUA_TAHAP: bool = false;
 
 /// Normalisasi HP untuk chat-ID WAHA — satu aturan bersama
 /// ([`crate::models::normalisasi_hp`]).
@@ -68,29 +80,6 @@ pub async fn notify_permit_splits(
     }
 }
 
-/// Mode persetujuan izin saat ini ("two_stage" | "direct_guru"). Default
-/// "two_stage" bila belum diset.
-pub async fn approval_mode(pool: &Pool) -> String {
-    repo::get_setting(pool, PERMIT_MODE_KEY)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| "two_stage".to_string())
-}
-
-/// true bila mode = two_stage (pamong dulu, baru guru).
-pub async fn is_two_stage(pool: &Pool) -> bool {
-    approval_mode(pool).await == "two_stage"
-}
-
-/// Ubah mode persetujuan izin (admin). Validasi nilai.
-pub async fn set_approval_mode(pool: &Pool, mode: &str) -> Result<()> {
-    if !matches!(mode, "two_stage" | "direct_guru") {
-        bail_user!("Mode persetujuan tidak valid.");
-    }
-    repo::set_setting(pool, PERMIT_MODE_KEY, mode).await
-}
-
 /// Baris antrean + DAMPAKNYA: kelas apa saja yang terlewat bila disetujui.
 ///
 /// Wali kelas memutuskan sambil melihat akibatnya. Rentang tanggal saja tak
@@ -132,30 +121,21 @@ async fn to_review_items(pool: &Pool, rows: Vec<repo::PendingPamongRow>) -> Vec<
 }
 
 /// Payload /izin-staf disesuaikan PERAN peninjau (rute PER-KELAS, migrasi 29):
-/// - supervisor (pamong) → izin kelas yang WAJIB via pamong (require_pamong);
-/// - teacher (wali kelas) → izin santri KELAS-nya (wali_kelas_id = dia);
+/// - teacher/dewan guru (wali kelas) → izin santri KELAS-nya (wali_kelas_id = dia);
 /// - dewan_guru/admin → SEMUA izin tahap final (oversight).
-/// `default_require` (mode global /setelan) = fallback santri tanpa kelas utama.
-pub async fn permit_queue(pool: &Pool, role: &str, user_id: i64) -> Result<PermitQueueData> {
-    let default_require = is_two_stage(pool).await;
+/// `default_require` = fallback santri tanpa kelas utama (lihat
+/// [`FALLBACK_DUA_TAHAP`]).
+/// Parameter `role` DIBUANG (Ags 2026): sejak cabang pamong hilang, antreannya
+/// sama untuk setiap peran yang boleh membuka layar ini — yang membedakan
+/// hanyalah `user_id`, karena wali kelas hanya melihat izin kelasnya sendiri.
+/// Membiarkan parameter yang tak lagi menentukan apa pun mengundang pemanggil
+/// berikutnya mengira ada percabangan yang sebenarnya tidak ada.
+pub async fn permit_queue(pool: &Pool, user_id: i64) -> Result<PermitQueueData> {
+    let default_require = FALLBACK_DUA_TAHAP;
 
-    if role == "supervisor" {
-        // Pamong hanya lihat izin santri KELAS yang ia ampu (pamong_id = dia).
-        let pamong_id = Some(user_id);
-        let (pending, decided_today) = tokio::join!(
-            repo::pending_pamong_permits(pool, default_require, pamong_id, 50),
-            repo::pamong_permits_decided_today(pool, pamong_id),
-        );
-        let items = to_review_items(pool, pending?).await;
-        return Ok(PermitQueueData {
-            pending_count: items.len() as i64,
-            approved_today: decided_today?,
-            items,
-            two_stage: default_require,
-            stage_label: "Persetujuan Pamong".into(),
-        });
-    }
-
+    // Cabang antrean PAMONG dibuang bersama perannya (migrasi 84). Mantan
+    // pamong yang cookie-nya masih menyebut "supervisor" jatuh ke jalur wali
+    // kelas di bawah — dan memang di situlah izin santrinya sekarang.
     // Guru hanya melihat izin santri di KELAS YANG IA AMPU — bukan semua.
     //
     // Dulu `wali_id` hanya diisi untuk role "teacher"; padahal peran itu sudah

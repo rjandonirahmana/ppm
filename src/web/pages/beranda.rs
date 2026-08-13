@@ -325,7 +325,7 @@ pub fn BerandaPage() -> impl IntoView {
                         </div>
                         <h3 class="text-headline-sm text-on-background">"Sudah menjadi bagian PPM AFM?"</h3>
                         <p class="text-body-md text-on-surface-variant mt-2 max-w-sm">
-                            "Santri, dewan guru, pamong, dan orang tua dapat mengakses portal absensi & pembinaan."
+                            "Santri, dewan guru, dan orang tua dapat mengakses portal absensi & pembinaan."
                         </p>
                         <a
                             href="/login"
@@ -699,19 +699,6 @@ fn StrukturSection() -> impl IntoView {
                         .collect_view()}
                 </div>
 
-                <div class="ppm-card p-6 mt-4 flex items-center gap-4">
-                    <span class="w-12 h-12 ppm-tile">
-                        <span class="material-symbols-outlined">"diversity_3"</span>
-                    </span>
-                    <div>
-                        <p class="text-body-lg font-semibold text-on-background">
-                            "Pamong Putra & Putri"
-                        </p>
-                        <p class="text-body-sm text-on-surface-variant mt-0.5">
-                            "Mendampingi santri sehari-hari: kehadiran, perizinan, dan pembinaan akhlak."
-                        </p>
-                    </div>
-                </div>
             </div>
         </section>
     }

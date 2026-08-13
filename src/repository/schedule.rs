@@ -63,7 +63,7 @@ pub struct ActiveSchedule {
 /// Aturan ruang (`class_schedules.room_id`):
 ///   • room_id TERISI → jadwal itu hanya cocok bila di-tap di perangkat itu.
 ///     Santri yang mestinya di masjid lalu menempel kartu di gedung putra TIDAK
-///     terhitung hadir — tapnya jatuh jadi `outside_schedule`.
+///     terhitung hadir — tapnya DITOLAK tanpa dicatat (migrasi 85).
 ///   • room_id NULL   → jadwal bebas di-tap di perangkat mana pun.
 ///
 /// Bila dua jadwal sama-sama cocok, yang TERIKAT ruang ini didahulukan atas

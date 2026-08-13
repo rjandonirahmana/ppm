@@ -17,7 +17,6 @@ pub mod parents;
 pub mod permits;
 pub mod schedule;
 pub mod semester;
-pub mod settings;
 pub mod users;
 
 pub use activity_log::*;
@@ -36,7 +35,6 @@ pub use parents::*;
 pub use permits::*;
 pub use schedule::*;
 pub use semester::*;
-pub use settings::*;
 pub use users::*;
 
 /// Kelas AKADEMIK seorang santri — dipakai di mana pun satu nama kelas perlu

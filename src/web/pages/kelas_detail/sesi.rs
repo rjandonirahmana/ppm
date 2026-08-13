@@ -7,8 +7,7 @@ use crate::models::{
     TeacherOption,
 };
 use crate::web::api::{
-    create_session_action, set_session_libur_action, set_session_pamong_action,
-    set_session_teacher_action,
+    create_session_action, set_session_libur_action, set_session_teacher_action,
 };
 use crate::web::components::AdminOnly;
 use crate::web::components::{
@@ -27,7 +26,6 @@ pub(super) fn SesiTab(
     let sessions = d.sessions.clone();
     let sched_opts = StoredValue::new(d.schedule_options.clone());
     let teacher_opts = StoredValue::new(d.teacher_options.clone());
-    let pamong_opts = StoredValue::new(d.pamong_options.clone());
     let book_opts = StoredValue::new(d.book_options.clone());
 
     view! {
@@ -64,7 +62,7 @@ pub(super) fn SesiTab(
                         sessions
                             .into_iter()
                             .map(|s| {
-                                view! { <SesiCard s=s teacher_options=teacher_opts pamong_options=pamong_opts refetch=refetch /> }
+                                view! { <SesiCard s=s teacher_options=teacher_opts refetch=refetch /> }
                                     .into_any()
                             })
                             .collect(),
@@ -79,13 +77,11 @@ pub(super) fn SesiTab(
 fn SesiCard(
     s: crate::models::SessionItem,
     teacher_options: StoredValue<Vec<TeacherOption>>,
-    pamong_options: StoredValue<Vec<TeacherOption>>,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
     let sid = s.id;
     let is_libur = s.status_kind == "cancelled";
     let cur_teacher = s.teacher_id.unwrap_or(0);
-    let cur_pamong = s.pamong_id.unwrap_or(0);
     let busy = RwSignal::new(false);
 
     let badge = if is_libur {
@@ -108,14 +104,6 @@ fn SesiCard(
         busy.set(true);
         leptos::task::spawn_local(async move {
             let _ = set_session_teacher_action(sid, tid).await;
-            busy.set(false);
-            refetch();
-        });
-    };
-    let set_pamong = move |pid: i64| {
-        busy.set(true);
-        leptos::task::spawn_local(async move {
-            let _ = set_session_pamong_action(sid, pid).await;
             busy.set(false);
             refetch();
         });
@@ -182,30 +170,13 @@ fn SesiCard(
                                     })
                                     .collect_view()}
                             </select>
-                            // ── Pamong bertugas verifikasi (migrasi 33) ──
-                            <label class="mt-2 block text-[11px] font-bold tracking-wider uppercase text-on-surface-variant">
-                                "Pamong Bertugas"
-                            </label>
-                            <select
-                                class="w-full bg-surface-container border-0 rounded-lg px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-60"
-                                disabled=move || busy.get()
-                                on:change=move |ev| set_pamong(
-                                    event_target_value(&ev).parse().unwrap_or(0),
-                                )
-                            >
-                                <option value="0" selected=cur_pamong == 0>
-                                    "— Pakai pamong kelas —"
-                                </option>
-                                {pamong_options
-                                    .get_value()
-                                    .into_iter()
-                                    .map(|o| {
-                                        let val = o.id.to_string();
-                                        let sel = o.id == cur_pamong;
-                                        view! { <option value=val selected=sel>{o.name}</option> }
-                                    })
-                                    .collect_view()}
-                            </select>
+                            // Guru pengisi sesi inilah yang mengesahkan
+                            // absensinya. Bila dibiarkan kosong, yang menutup
+                            // adalah WALI KELAS — jadi tak pernah ada sesi tanpa
+                            // penanggung jawab absensi.
+                            <p class="text-[11px] text-on-surface-variant">
+                                "Kosongkan bila diisi wali kelas sendiri."
+                            </p>
                         </div>
                     }
                 })}

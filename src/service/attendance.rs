@@ -24,12 +24,14 @@ impl From<anyhow::Error> for ScanError {
 /// Proses satu tap kartu. PERANGKAT yang menentukan perilaku (migrasi 49):
 ///   • kategori `gate_utama` → toggle KELUAR/MASUK area pondok. Bukan absensi.
 ///   • kategori lain → absensi kelas: cocokkan jadwal aktif santri →
-///     present/late → simpan (dedup per hari). Tap di luar jadwal tetap
-///     tercatat sbg log gerbang (schedule NULL).
+///     present/late → simpan (dedup per hari).
 ///
-/// Pencocokan jadwal TIDAK terikat perangkat — satu jadwal bisa di-tap di
-/// perangkat mana pun (selain gate_utama). Kolom `class_schedules.room_id`
-/// hanya keterangan ruang, tak dipakai saat scan.
+/// DUA keadaan yang TIDAK menghasilkan catatan apa pun (migrasi 85):
+///   • tap di luar jam kelas (tak ada jadwal aktif);
+///   • tap di perangkat yang bukan ruang kelasnya, untuk jadwal yang memang
+///     terikat ruang (`class_schedules.room_id` terisi).
+/// Keduanya dijawab `ok:false` supaya mesin bisa memberi tahu santrinya, dan
+/// tabel kehadiran kelas tetap berisi kehadiran kelas saja.
 pub async fn record_scan(
     pool: &Pool,
     redis: &mut redis::aio::ConnectionManager,
@@ -83,17 +85,9 @@ pub async fn record_scan(
     // (class_schedules.room_id) hanya sah di-tap di perangkat itu. Tanpa ini,
     // santri yang mestinya di masjid bisa menempel kartu di gedung putra dan
     // tetap terhitung hadir. Jadwal tanpa ruang tetap bebas di-tap di mana pun.
-    let schedule = repo::active_schedule_now(pool, user_id, today, now_time, device.id).await?;
-    let (schedule_id, session_id, status, note) = match &schedule {
-        Some(s) => {
-            let st = if now_time <= s.limit_entry {
-                "present"
-            } else {
-                "late"
-            };
-            (Some(s.id), Some(s.session_id), st, None)
-        }
-        None => {
+    let Some(jadwal) = repo::active_schedule_now(pool, user_id, today, now_time, device.id).await?
+    else {
+        {
             // SALAH RUANG → TOLAK, jangan catat apa pun. Santri yang jadwalnya
             // di masjid lalu menempel kartu di gedung putra tidak boleh
             // meninggalkan jejak absensi apa pun — termasuk baris
@@ -119,13 +113,36 @@ pub async fn record_scan(
                     status: Some("wrong_room".into()),
                 });
             }
-            // Tak ada jadwal aktif sama sekali → tetap dicatat sbg log gerbang
-            // (perilaku lama, disengaja: jejak lalu-lalang tetap berguna).
-            (None, None, "outside_schedule", Some("scan di luar jadwal".to_string()))
+            // DI LUAR JAM KELAS → TOLAK, jangan catat apa pun.
+            //
+            // Dulu tap seperti ini disimpan berstatus `outside_schedule`
+            // dengan alasan "jejak lalu-lalang tetap berguna". Ternyata tidak:
+            // jejak keluar-masuk area SUDAH punya tempatnya sendiri di gerbang
+            // utama (`toggle_gate`, di atas), sementara baris ini menumpang di
+            // tabel KEHADIRAN KELAS — dan di sana ia ikut terhitung sebagai
+            // "telat" pada rekap mingguan, muncul di riwayat santri, serta
+            // menghalangi `run_auto_absent` menandai alfa karena hari itu
+            // "sudah ada catatan". Satu tap iseng di luar jam bisa menutupi
+            // ketidakhadiran yang sesungguhnya.
+            //
+            // Keputusan pengurus (Ags 2026): tap di luar jadwal TIDAK dicatat.
+            tracing::info!(
+                user_id, card = req.card, device = %device_name,
+                "tap DITOLAK: di luar jam kelas"
+            );
+            return Ok(RfidScanResponse {
+                ok: false,
+                message: "Di luar jam kelas — absen tidak dicatat.".into(),
+                student: Some(name),
+                status: Some("no_schedule".into()),
+            });
         }
     };
 
-    // Dedup: satu catatan per jadwal (atau per hari untuk scan bebas).
+    let status = if now_time <= jadwal.limit_entry { "present" } else { "late" };
+    let (schedule_id, session_id) = (Some(jadwal.id), Some(jadwal.session_id));
+
+    // Dedup: satu catatan per jadwal.
     if repo::attendance_exists_today(pool, user_id, schedule_id, today).await? {
         return Ok(RfidScanResponse {
             ok: true,
@@ -150,7 +167,9 @@ pub async fn record_scan(
         device.id,
         &gate,
         status,
-        note.as_deref(),
+        // Tak ada lagi catatan otomatis: satu-satunya baris yang dulu memakainya
+        // ("scan di luar jadwal") sekarang tak pernah dibuat.
+        None,
     )
     .await?
     .is_none()
@@ -422,9 +441,8 @@ pub async fn decide_session(
 
 /// Koreksi status absensi. Hanya guru pengisi / pamong bertugas sesi itu.
 ///
-/// Status yang diizinkan dibatasi ke yang masuk akal dikoreksi manusia —
-/// `outside_schedule` sengaja TIDAK termasuk karena itu hasil pembacaan mesin
-/// (tap di luar jadwal), bukan penilaian.
+/// Status yang diizinkan dibatasi ke lima yang masuk akal dinilai manusia;
+/// daftarnya sama dengan CHECK `attendances_status_check` (migrasi 85).
 pub async fn correct_attendance(
     pool: &Pool,
     att_id: i64,
@@ -447,9 +465,9 @@ pub async fn correct_attendance(
 ///
 /// Dua hal yang dikerjakan server, bukan klien:
 ///
-/// 1. **Kewenangan diperiksa SEKALI** untuk seluruh permintaan (guru pengisi /
-///    pamong sesi, dengan fallback ke wali & pamong kelas bila sesi belum
-///    menetapkan petugasnya) — bukan sekali per santri.
+/// 1. **Kewenangan diperiksa SEKALI** untuk seluruh permintaan (guru pengisi
+///    sesi, dengan fallback ke wali kelas bila sesi belum menetapkan
+///    pengajarnya; admin/ketua selalu boleh) — bukan sekali per santri.
 ///
 /// 2. **Hadir vs terlambat ditentukan dari JAM**, bukan dari tombol yang
 ///    ditekan. Tiap jadwal sudah punya `limit_entery_time`; membiarkan petugas
@@ -463,14 +481,15 @@ pub async fn correct_attendance_bulk(
     session_id: i64,
     items: &[crate::models::KoreksiAbsensi],
     actor_id: i64,
+    is_admin: bool,
 ) -> Result<i64> {
     if items.is_empty() {
         bail_user!("Tak ada perubahan untuk disimpan.");
     }
     let Some((schedule_id, session_date, limit_time)) =
-        repo::session_for_correction(pool, session_id, actor_id).await?
+        repo::session_for_correction(pool, session_id, actor_id, is_admin).await?
     else {
-        bail_user!("Anda bukan guru/pamong yang bertugas di sesi ini.");
+        bail_user!("Anda bukan pengajar sesi ini atau wali kelasnya.");
     };
 
     // Validasi & normalisasi dulu SELURUH baris, baru sekali tulis. Dulu tiap

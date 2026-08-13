@@ -43,6 +43,16 @@ pub struct ServerStatus {
     /// Memori yang dipakai proses aplikasi ini sendiri (RSS).
     pub app_rss: u64,
 
+    // ── Penyimpanan (SSD/NVMe) ───────────────────────────────────────────
+    /// Satu entri per FILESYSTEM yang dipakai aplikasi (biasanya satu: disk
+    /// sistem). Kosong hanya bila pembacaannya gagal total.
+    ///
+    /// `#[serde(default)]`: payload lama (sebelum kartu penyimpanan ada) tak
+    /// punya medan ini, dan tanpa default satu respons basi dari cache akan
+    /// menggagalkan SELURUH halaman alih-alih kehilangan satu kartu.
+    #[serde(default)]
+    pub disk: Vec<DiskInfo>,
+
     // ── Waktu hidup ──────────────────────────────────────────────────────
     /// "3 hari 4 jam" — sejak mesin menyala.
     pub uptime_mesin: String,
@@ -58,6 +68,67 @@ pub struct ServerStatus {
     /// Koneksi menganggur & siap dipakai. Nol terus-menerus = permintaan
     /// sedang antre menunggu koneksi, gejala paling awal dari halaman lambat.
     pub pool_idle: usize,
+}
+
+/// Ruang satu filesystem (SSD/NVMe VPS) — kartu "Penyimpanan" /status-server.
+///
+/// Yang paling penting di halaman ini adalah [`tersedia`](Self::tersedia).
+/// Memori penuh membuat aplikasi dibunuh lalu dihidupkan lagi oleh Docker;
+/// DISK penuh membuat Postgres berhenti menerima tulisan, unggahan gagal
+/// separuh jalan, dan rekaman sesi terpotong — dan tak satu pun dari itu pulih
+/// sendiri setelah restart. Karena itu angka besar di kartunya adalah SISA,
+/// bukan yang terpakai.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiskInfo {
+    /// "Disk sistem", "Rekaman sesi", "Unggahan sementara".
+    pub label: String,
+    /// Jalur yang diperiksa (apa adanya, termasuk bila relatif seperti
+    /// `./recordings`) — supaya admin tahu env mana yang mengarahkannya.
+    pub path: String,
+    pub total: u64,
+    pub terpakai: u64,
+    /// Ruang yang benar-benar bisa dipakai proses biasa. BUKAN `total −
+    /// terpakai`: ext4 menyimpan jatah cadangan untuk root (bawaan 5%), jadi
+    /// dua angka itu memang berbeda dan yang menentukan kapan tulisan mulai
+    /// gagal adalah yang ini.
+    pub tersedia: u64,
+    /// Persen terpakai, dihitung sama dengan `df`: terpakai / (terpakai +
+    /// tersedia) — bukan terhadap total. Kalau tidak, disk yang `df` sebut 100%
+    /// akan tampil 95% di sini dan angkanya jadi tak bisa dibandingkan.
+    pub pct: f32,
+}
+
+/// (terpakai, tersedia) → persen terpakai ala `df`. Dipisah supaya bisa diuji
+/// tanpa menyentuh filesystem.
+pub fn pct_disk(terpakai: u64, tersedia: u64) -> f32 {
+    let dasar = terpakai.saturating_add(tersedia);
+    if dasar == 0 {
+        return 0.0;
+    }
+    (terpakai as f64 / dasar as f64 * 100.0) as f32
+}
+
+/// Peringatan sisa disk, atau None bila masih lapang.
+///
+/// DUA syarat, bukan satu persen saja: 10% dari 500 GB masih 50 GB (lapang),
+/// sementara 10% dari 20 GB tinggal 2 GB (satu malam rekaman sesi). Ambang
+/// mutlaknya yang menangkap VPS kecil — dan VPS kecil justru yang dipakai.
+pub fn peringatan_disk(tersedia: u64, pct: f32) -> Option<&'static str> {
+    const GB: u64 = 1024 * 1024 * 1024;
+    if tersedia < 2 * GB || pct >= 95.0 {
+        Some(
+            "Sisa disk KRITIS. Postgres berhenti menerima tulisan bila disk penuh, dan \
+             unggahan/rekaman akan gagal separuh jalan. Kosongkan sekarang: rekaman lama \
+             di RECORDINGS_DIR, berkas sisa di UPLOAD_TMP_DIR, lalu `docker system prune`.",
+        )
+    } else if tersedia < 5 * GB || pct >= 85.0 {
+        Some(
+            "Sisa disk menipis. Periksa rekaman sesi lama (yang sudah terunggah ke RustFS \
+             boleh dihapus), berkas sementara unggahan, dan image Docker yang tak terpakai.",
+        )
+    } else {
+        None
+    }
 }
 
 /// Ukuran byte → "812 MB" / "3,7 GB". Basis 1024 (yang dipakai `free`, htop,
@@ -142,6 +213,29 @@ mod tests {
         assert_eq!(fmt_durasi(300), "5 menit");
         assert_eq!(fmt_durasi(7_320), "2 jam 2 menit");
         assert_eq!(fmt_durasi(273_600), "3 hari 4 jam");
+    }
+
+    /// Persen disk dihitung ala `df` (terhadap terpakai+tersedia), BUKAN
+    /// terhadap total — kalau tidak, angkanya tak cocok dengan `df -h` di
+    /// terminal karena jatah cadangan root ikut terhitung sebagai "sisa".
+    #[test]
+    fn pct_disk_mengikuti_df() {
+        // 9 GB terpakai, 1 GB tersedia → 90%, meski totalnya 10,5 GB.
+        let gb = 1024 * 1024 * 1024;
+        assert_eq!(pct_disk(9 * gb, gb).round(), 90.0);
+        assert_eq!(pct_disk(0, 0), 0.0);
+        assert_eq!(pct_disk(gb, 0).round(), 100.0);
+    }
+
+    #[test]
+    fn peringatan_disk_bertingkat() {
+        let gb = 1024 * 1024 * 1024;
+        assert!(peringatan_disk(40 * gb, 20.0).is_none());
+        // Persen kecil tapi sisa mutlaknya sedikit — VPS kecil harus tertangkap.
+        assert!(peringatan_disk(3 * gb, 10.0).is_some());
+        assert!(peringatan_disk(gb, 10.0).unwrap().contains("KRITIS"));
+        // Sisa besar tapi persennya ekstrem — disk besar yang hampir penuh.
+        assert!(peringatan_disk(50 * gb, 96.0).unwrap().contains("KRITIS"));
     }
 
     /// Ambangnya harus MENAIK — kalau tidak, memori 95% bisa tampil "Aman".

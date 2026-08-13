@@ -207,6 +207,92 @@ pub async fn children_of_parent(pool: &Pool, parent_id: i64) -> Result<Vec<AnakR
         .collect())
 }
 
+/// Satu ORANG TUA dari sudut pandang santri — cerminan [`AnakRow`].
+pub struct OrtuRow {
+    pub parent_id: i64,
+    pub full_name: String,
+    pub phone_number: Option<String>,
+    /// "pending" | "connected".
+    pub status: String,
+}
+
+/// Orang tua seorang santri untuk layar pengelola (pending + connected).
+///
+/// Relasinya MEMANG banyak-ke-banyak: satu santri bisa punya ayah dan ibu (atau
+/// wali) dengan akun masing-masing, dan satu akun ortu bisa punya beberapa anak
+/// di pondok yang sama. `parent_connections` sejak awal berbentuk junction
+/// dengan UNIQUE(parent_id, student_id) — jadi tak ada satu pun batas yang perlu
+/// dilonggarkan di sini; yang selama ini kurang hanyalah layar dari SISI SANTRI.
+pub async fn parents_of_student(pool: &Pool, student_id: i64) -> Result<Vec<OrtuRow>> {
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT pc.parent_id, u.full_name, u.phone_number, pc.status \
+             FROM parent_connections pc \
+             JOIN users u ON u.id = pc.parent_id \
+             WHERE pc.student_id = $1 AND pc.status IN ('pending','connected') \
+             ORDER BY (pc.status = 'connected') DESC, u.full_name",
+            &[&student_id],
+        )
+        .await
+        .context("parents_of_student")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| OrtuRow {
+            parent_id: r.get(0),
+            full_name: r.get(1),
+            phone_number: r.get(2),
+            status: r.get(3),
+        })
+        .collect())
+}
+
+/// Cari akun ORANG TUA berdasar nama (ILIKE) atau nomor HP.
+///
+/// Nomor dicocokkan dengan `LIKE '%…'` atas digitnya saja: satu nomor yang sama
+/// tersimpan bisa berbentuk `08…`, `62…`, atau `+62…` tergantung siapa yang
+/// mengetiknya, dan pengelola yang menyalin nomor dari WhatsApp tak boleh gagal
+/// menemukan orangnya hanya karena awalannya berbeda.
+pub async fn search_parents(pool: &Pool, q: &str, limit: i64) -> Result<Vec<OrtuRow>> {
+    let c = pool.get().await?;
+    let q = q.trim();
+    let nama = format!("%{q}%");
+    let digit: String = q.chars().filter(|c| c.is_ascii_digit()).collect();
+    // 4 digit terakhir sudah cukup menyaring, dan lebih pendek dari itu akan
+    // mengembalikan hampir semua orang.
+    let ekor = if digit.len() >= 4 {
+        Some(format!("%{}", &digit[digit.len().saturating_sub(8)..]))
+    } else {
+        None
+    };
+    let rows = c
+        .query(
+            // Status 'belum' — BUKAN 'connected'. Hasil pencarian adalah calon
+            // yang belum tertaut apa pun; memberinya label "Terhubung" (yang
+            // dilakukan versi pertama) berarti layar berbohong tentang keadaan
+            // yang justru sedang hendak diubah pengelola.
+            "SELECT u.id, u.full_name, u.phone_number, 'belum' \
+             FROM users u \
+             WHERE u.role = 'parent' AND u.is_active = TRUE \
+               AND (u.full_name ILIKE $1 \
+                    OR ($2::text IS NOT NULL \
+                        AND regexp_replace(COALESCE(u.phone_number,''), '\\D', '', 'g') LIKE $2)) \
+             ORDER BY u.full_name LIMIT $3",
+            &[&nama, &ekor, &limit],
+        )
+        .await
+        .context("search_parents")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| OrtuRow {
+            parent_id: r.get(0),
+            full_name: r.get(1),
+            phone_number: r.get(2),
+            status: r.get(3),
+        })
+        .collect())
+}
+
 /// Sambungkan ortu ↔ santri LANGSUNG (status `connected`) atas nama pengelola.
 ///
 /// Idempotent: permintaan yang sudah ada — termasuk yang pernah `rejected` —
