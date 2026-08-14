@@ -69,7 +69,7 @@ pub struct OutsideRow {
     pub gate_at: Option<DateTime<Utc>>,
 }
 
-/// Santri yang statusnya SEDANG "di luar pondok" (laporan admin/pamong).
+/// Santri yang statusnya SEDANG "di luar pondok" (laporan admin/guru).
 pub async fn students_outside(pool: &Pool, limit: i64) -> Result<Vec<OutsideRow>> {
     let c = pool.get().await?;
     let rows = c

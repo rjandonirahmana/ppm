@@ -82,7 +82,7 @@ fn prestasi_sesuai_ambang() {
 fn pemanggilan_tier_sesuai_net() {
     assert_eq!(pemanggilan_tier(-9).0, "KoorSantri");
     assert_eq!(pemanggilan_tier(-11).0, "KoorSantri");
-    // Jenjangnya digeser sejak peran pamong dihapus (migrasi 84): tingkat
+    // Jenjangnya digeser sejak peran perantara dihapus (migrasi 84): tingkat
     // tengah jadi Wali Kelas, yang terberat naik ke Ketua. Ambangnya tetap.
     assert_eq!(pemanggilan_tier(-12).0, "Wali Kelas");
     assert_eq!(pemanggilan_tier(-17).0, "Wali Kelas");
@@ -115,37 +115,34 @@ fn kind_label_izin() {
     assert_eq!(permit_kind_label("xxx"), "Izin Lainnya");
 }
 
-// ── Rute tahap izin (permit_stage) — per-kelas require_pamong ─────────────────
+// ── Rute tahap izin (permit_stage) ───────────────────────────────────────────
 //
-// Migrasi 46: tahap ORANG TUA dihapus. Satu pengajuan izin dipecah jadi
-// beberapa baris (satu per wali kelas yang kelasnya dilewati); tiap baris
-// jalan sendiri: pamong kelas (bila require_pamong) → wali kelas (FINAL).
+// SATU tahap sejak peran pamong dihapus (migrasi 84/86): wali kelas memutuskan,
+// titik. Dulu rutenya bercabang per kelas (`require_pamong`) dan fungsi ini
+// menimbang tiga masukan; sekarang jawabannya hanya bergantung pada satu kolom.
 
-fn stage_kind(pamong: &str, guru: &str, req: bool) -> &'static str {
-    permit_stage(pamong, guru, req).1
+#[test]
+fn permit_stage_keputusan_wali_terminal() {
+    assert_eq!(permit_stage("approved").1, "approved");
+    assert_eq!(permit_stage("rejected").1, "rejected");
 }
 
 #[test]
-fn permit_stage_final_guru_didahulukan() {
-    // Keputusan final wali kelas terminal walau rute berubah.
-    assert_eq!(stage_kind("approved", "approved", true), "approved");
-    assert_eq!(stage_kind("pending", "approved", false), "approved");
-    assert_eq!(stage_kind("approved", "rejected", true), "rejected");
-    // Guru sudah memutus → pamong yang masih pending tak lagi relevan.
-    assert_eq!(stage_kind("pending", "approved", true), "approved");
+fn permit_stage_belum_diputus_menunggu_wali() {
+    assert_eq!(permit_stage("pending").1, "pending_guru");
+    // Nilai tak dikenal diperlakukan sebagai BELUM diputus — menganggapnya
+    // selesai akan membuat izin lolos tanpa pernah dilihat siapa pun.
+    assert_eq!(permit_stage("").1, "pending_guru");
+    assert_eq!(permit_stage("xxx").1, "pending_guru");
 }
 
+/// Labelnya ikut diuji: ia muncul apa adanya di layar santri, dan "Menunggu
+/// Pamong" sempat bertahan di sana berbulan-bulan setelah perannya dihapus.
 #[test]
-fn permit_stage_dua_tahap_vs_langsung() {
-    // require_pamong=true: menunggu pamong dulu.
-    assert_eq!(stage_kind("pending", "pending", true), "pending_pamong");
-    assert_eq!(stage_kind("rejected", "pending", true), "rejected");
-    // pamong sudah approve → menunggu wali kelas.
-    assert_eq!(stage_kind("approved", "pending", true), "pending_guru");
-
-    // require_pamong=false: langsung menunggu wali kelas (abaikan pamong).
-    assert_eq!(stage_kind("pending", "pending", false), "pending_guru");
-    assert_eq!(stage_kind("rejected", "pending", false), "pending_guru");
+fn permit_stage_label_menyebut_wali_kelas() {
+    assert_eq!(permit_stage("pending").0, "Menunggu Wali Kelas");
+    assert_eq!(permit_stage("rejected").0, "Ditolak Wali Kelas");
+    assert_eq!(permit_stage("approved").0, "Disetujui");
 }
 
 // ── Pemecahan izin per WALI KELAS (migrasi 46) ────────────────────────────────

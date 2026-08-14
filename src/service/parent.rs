@@ -5,7 +5,7 @@ use anyhow::Result;
 use chrono::Utc;
 use deadpool_postgres::Pool;
 
-use super::fmt::{fmt_ago, fmt_range, wib};
+use super::fmt::{fmt_ago, wib};
 use crate::models::{
     permit_kind_label, permit_stage, ChildChip, ChildMonitor, ChildRiwayat, ConnRequest,
     ParentHome, ParentPermitItem, PendingConn, PermitItem,
@@ -92,8 +92,7 @@ async fn monitor_child(pool: &Pool, child_id: i64) -> Result<Option<ChildMonitor
     let permits = permits?
         .into_iter()
         .map(|p| {
-            let (status_label, status_kind) =
-                permit_stage(&p.pamong_status, &p.guru_status, p.require_pamong);
+            let (status_label, status_kind) = permit_stage(&p.guru_status);
             PermitItem {
                 id: p.id,
                 diajukan_oleh: if p.oleh_ortu {
@@ -102,7 +101,7 @@ async fn monitor_child(pool: &Pool, child_id: i64) -> Result<Option<ChildMonitor
                     String::new()
                 },
                 kind_label: permit_kind_label(&p.kind).into(),
-                range_label: fmt_range(p.start_date, p.end_date),
+                range_label: crate::service::fmt::fmt_rentang(p.mulai, p.selesai),
                 class_label: p.class_name.unwrap_or_default(),
                 status_label: status_label.into(),
                 status_kind: status_kind.into(),
@@ -189,8 +188,7 @@ pub async fn children_permits(pool: &Pool, parent_id: i64) -> Result<Vec<ParentP
         .await?
         .into_iter()
         .map(|p| {
-            let (status_label, status_kind) =
-                permit_stage(&p.pamong_status, &p.guru_status, p.require_pamong);
+            let (status_label, status_kind) = permit_stage(&p.guru_status);
             ParentPermitItem {
                 id: p.id,
                 diajukan_oleh: if p.oleh_ortu {
@@ -200,7 +198,7 @@ pub async fn children_permits(pool: &Pool, parent_id: i64) -> Result<Vec<ParentP
                 },
                 child_name: p.child_name,
                 kind_label: permit_kind_label(&p.kind).into(),
-                range_label: fmt_range(p.start_date, p.end_date),
+                range_label: crate::service::fmt::fmt_rentang(p.mulai, p.selesai),
                 reason: p.reason,
                 status_label: status_label.into(),
                 status_kind: status_kind.into(),

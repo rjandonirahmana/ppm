@@ -52,7 +52,6 @@ raw_page!(KoneksiOrtuPage, "koneksi_ortu.html", "Koneksi Orang Tua — AFM SMART
 // portal_santri/riwayat/profil: sudah jadi halaman DINAMIS (izin.rs, riwayat.rs,
 // profil.rs — data DB). Versi embed dihapus.
 // orang_tua: sudah jadi halaman DINAMIS (ortu_beranda.rs dkk, data DB).
-// verifikasi_pamong: sudah jadi halaman DINAMIS (verifikasi_pamong.rs, data DB).
 raw_page_mobile!(HalaqahDaftarPage, "halaqah_daftar.html", "Daftar Halaqah — AFM SMART");
 raw_page_mobile!(HalaqahMulaiPage, "halaqah_mulai.html", "Mulai Sesi Halaqah — AFM SMART");
 raw_page_mobile!(HalaqahLivePage, "halaqah_live.html", "Sesi Halaqah Live — AFM SMART");

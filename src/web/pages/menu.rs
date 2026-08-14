@@ -24,7 +24,6 @@ const LINKS: &[(&str, &str, &str)] = &[
     ("/dewan-guru", "Analisis Dewan Guru", "insights"),
     ("/poin", "Pantauan Poin Santri", "stars"),
     ("/poin-saya", "Riwayat Poin Saya (Santri)", "history"),
-    ("/verifikasi-pamong", "Verifikasi Pamong", "how_to_reg"),
     ("/verifikasi-tahap-2", "Verifikasi Tahap 2", "verified_user"),
     ("/halaqah", "Daftar Halaqah", "groups"),
     ("/halaqah/mulai", "Mulai Sesi Halaqah", "play_circle"),

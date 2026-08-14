@@ -360,8 +360,7 @@ fn nav_visible(path: &str) -> bool {
     const PREFIXES: &[&str] = &[
         "/santri", "/izin", "/riwayat", "/sesi", "/profil", "/ganti-sandi", "/laporan", "/staf", "/guru",
         "/kelas-saya",
-        "/dewan-guru", "/poin", "/poin-saya", "/verifikasi-pamong",
-        "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua", "/kontrol-pengguna",
+        "/dewan-guru", "/poin", "/poin-saya", "/verifikasi-tahap-2", "/students", "/kelas", "/orang-tua", "/kontrol-pengguna",
         "/akademik", "/kalender", "/izin-staf", "/izin-aktif", "/materi", "/rekap-mingguan",
         "/galeri", "/tagihan", "/tagihan-saya", "/kelola-artikel", "/manajemen-user",
         "/status-server",
@@ -618,7 +617,7 @@ pub const NAV_SANTRI: &[NavDef] = &[
 // Administrasi" di dashboard-nya, bukan lewat navbar.
 
 // ── Navbar STAF SERAGAM ──────────────────────────────────────────────────────
-// admin / pamong / guru / dewan-guru memakai item YANG SAMA (Beranda · Students ·
+// admin / guru / dewan-guru memakai item YANG SAMA (Beranda · Students ·
 // Kelas · Laporan · User Control) supaya navbar tak "berubah-ubah" antar
 // halaman. Yang beda HANYA tujuan "Beranda" (dashboard tiap peran, dari
 // models::role_home). Kelas & Sesi DIGABUNG jadi satu halaman/nav (/kelas
@@ -781,14 +780,11 @@ pub const NAV_ORTU: &[NavDef] = &[
 /// (jangan hardcode / duplikat match) agar navbar konsisten saat pindah halaman.
 ///   • santri  → NAV_SANTRI (Beranda·Riwayat·Sesi·Izin·Laporan)
 ///   • parent  → NAV_ORTU   (Beranda·Riwayat·Izin·Laporan)
-///   • STAF (admin/pamong/guru/dewan) → item SAMA (Beranda·Students·Kelas·Sesi·
+///   • STAF (admin/guru/dewan) → item SAMA (Beranda·Students·Kelas·Sesi·
 ///     Laporan); hanya tujuan "Beranda" beda per peran.
 pub fn nav_for(role: &str) -> &'static [NavDef] {
     match role {
         "parent" => NAV_ORTU,
-        // Mantan pamong (klaim JWT lama) memakai navbar dewan guru — lihat
-        // `role_satisfies`.
-        "supervisor" => NAV_DEWAN,
         "teacher" => NAV_DEWAN, // 'teacher' digabung ke dewan_guru (migrasi 36)
         "dewan_guru" => NAV_DEWAN,
         "admin" | "ketua" => NAV_STAF, // ketua = admin + finance
@@ -1383,8 +1379,8 @@ fn ProgressUnitCell(label: i32, status: u8) -> impl IntoView {
 /// Sesi ber-`state == "break"` disaring — sama seperti aturan lama untuk
 /// memilih "jadwal berikutnya" — karena jeda bukan sesuatu yang dibuka.
 ///
-/// Dipakai beranda guru/dewan guru (`analisis`) dan pamong
-/// (`verifikasi_pamong`) supaya keduanya tak punya salinan markup sendiri.
+/// Dipakai beranda guru/dewan guru (`analisis`) supaya tak ada salinan markup
+/// kedua.
 #[component]
 pub fn JadwalDeck(sesi: Vec<crate::models::LiveSesi>) -> impl IntoView {
     // Yang layak ditawarkan di kartu besar hanyalah sesi yang MASIH relevan:
@@ -1509,8 +1505,8 @@ pub fn AdminOnly(
     #[prop(into)]
     apa: String,
     /// Siapa yang sebenarnya boleh — default "admin atau ketua". Jadwal dan
-    /// anggota kelas juga terbuka untuk pamong kelas, dan menyebut "hanya
-    /// admin" di sana membuat pamong mengira aplikasinya rusak.
+    /// anggota kelas juga terbuka untuk wali kelas, dan menyebut "hanya
+    /// admin" di sana membuat wali mengira aplikasinya rusak.
     #[prop(into, default = String::from("admin atau ketua"))]
     siapa: String,
     // `Children` (FnOnce), bukan `ChildrenFn`: isinya dirender paling banyak
@@ -1555,7 +1551,7 @@ pub fn LencanaAdmin() -> impl IntoView {
 // ── Warna status kehadiran ───────────────────────────────────────────────────
 //
 // Pemetaan status → warna dulu disalin di TUJUH halaman (riwayat, ortu_riwayat,
-// dashboard_santri, sesi_detail, staf, verifikasi_pamong, laporan) dengan empat
+// dashboard_santri, sesi_detail, staf, laporan) dengan empat
 // gaya pembungkus berbeda. Warnanya kebetulan sama di semuanya — tapi
 // "kebetulan" itulah masalahnya: tak ada yang menjamin salinan kedelapan ikut
 // sama, dan tiap kali istilah atau paletnya berubah, tujuh berkas harus diedit

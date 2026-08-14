@@ -72,7 +72,7 @@ pub use users::*;
 /// Begitu kolomnya dibungkus fungsi, planner tak bisa lagi memakai btree di
 /// atasnya — dan index ekspresi pun mustahil dibuat karena ekspresinya STABLE,
 /// bukan IMMUTABLE. Hasilnya seq scan atas seluruh tabel, dijalankan setiap
-/// kali dashboard pamong/guru/admin dibuka, pada tabel yang tumbuh ±1 juta
+/// kali dashboard guru/admin dibuka, pada tabel yang tumbuh ±1 juta
 /// baris setahun (proyeksi migrasi 68).
 ///
 /// Di sini kolomnya dibiarkan telanjang di kiri dan yang dihitung adalah BATAS
@@ -83,7 +83,7 @@ pub use users::*;
 /// Batas atasnya `<`, bukan `<=`: satu detik sebelum tengah malam berikutnya
 /// masih hari ini, tengah malamnya sendiri sudah besok.
 ///
-/// Pemakaian: `format!("WHERE ... AND {}", hari_ini_wib("a.pamong_at"))`.
+/// Pemakaian: `format!("WHERE ... AND {}", hari_ini_wib("a.verified_at"))`.
 pub(crate) fn hari_ini_wib(kolom: &str) -> String {
     const AWAL: &str =
         "(date_trunc('day', NOW() AT TIME ZONE 'Asia/Jakarta') AT TIME ZONE 'Asia/Jakarta')";
@@ -94,7 +94,7 @@ pub(crate) fn kelas_utama_lateral(user_col: &str) -> String {
     format!(
         "LEFT JOIN LATERAL ( \
             SELECT c.id, c.name, c.category, c.jenjang, c.description, \
-                   c.wali_kelas_id, c.pamong_id, c.require_pamong, c.verify_mode \
+                   c.wali_kelas_id \
               FROM class_participants cp_ku \
               JOIN classes c ON c.id = cp_ku.class_id \
              WHERE cp_ku.user_id = {user_col} \

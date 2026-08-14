@@ -360,14 +360,14 @@ pub async fn list_users(pool: &Pool, role_filter: Option<&str>, limit: i64) -> R
         .collect())
 }
 
-/// (total, santri, staff [guru+dewan_guru+pamong], nonaktif).
+/// (total, santri, staff [guru+dewan_guru], nonaktif).
 pub async fn user_counts(pool: &Pool) -> Result<(i64, i64, i64, i64)> {
     let c = pool.get().await?;
     let row = c
         .query_one(
             "SELECT COUNT(*), \
                 COUNT(*) FILTER (WHERE role IN ('santri', 'santri_finance')), \
-                COUNT(*) FILTER (WHERE role IN ('teacher','dewan_guru','supervisor')), \
+                COUNT(*) FILTER (WHERE role IN ('teacher','dewan_guru')), \
                 COUNT(*) FILTER (WHERE NOT is_active) \
              FROM users",
             &[],
@@ -434,7 +434,6 @@ const VALID_ROLES: &[&str] = &[
     "admin",
     "ketua",
     "dewan_guru",
-    "supervisor",
     "santri",
     "santri_finance",
     "parent",
@@ -591,7 +590,7 @@ pub struct UserPickRow {
     pub rfid_cards: Option<i64>,
 }
 
-/// Cari pengguna AKTIF untuk pemasangan kartu — semua peran (pamong & dewan
+/// Cari pengguna AKTIF untuk pemasangan kartu — semua peran (dewan
 /// guru juga menempel kartu di gerbang, bukan santri saja). Cocokkan nama, NIS,
 /// atau nomor HP.
 pub async fn search_users_for_card(pool: &Pool, q: &str, limit: i64) -> Result<Vec<UserPickRow>> {

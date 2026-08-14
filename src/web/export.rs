@@ -36,7 +36,7 @@ async fn build_doc(state: &AppState, claims: &Claims) -> Result<ReportDoc, Statu
         claims.role.as_str()
     };
     match role {
-        "admin" | "supervisor" => {
+        "admin" => {
             let (admin, outside) = tokio::join!(
                 crate::service::laporan::laporan_admin(&state.pool),
                 crate::repository::students_outside(&state.pool, 30),

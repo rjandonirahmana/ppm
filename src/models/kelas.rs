@@ -409,12 +409,8 @@ pub struct KelasDetail {
     /// 0 = belum diset; wali_kelas_name utk tampilan.
     pub wali_kelas_id: i64,
     pub wali_kelas_name: String,
-    /// TRUE = izin santri kelas ini lewat Pamong dulu; FALSE = langsung wali kelas.
-    pub require_pamong: bool,
     /// Mode verifikasi absensi kelas (migrasi 62):
-    /// "dua_tahap" | "guru" | "pamong".
-    pub verify_mode: String,
-    /// Pemirsa boleh MENATA kelas ini (buat/ubah, wali & pamong, anggota,
+    /// Pemirsa boleh MENATA kelas ini (buat/ubah, wali kelas, anggota,
     /// jadwal)? Hanya admin/ketua. Dihitung server supaya UI mengunci sendiri
     /// alih-alih menawarkan tombol yang pasti ditolak.
     pub can_manage: bool,
@@ -525,9 +521,8 @@ pub struct StudentsData {
     pub verified_today: i64,
 }
 
-/// Izin menunggu peninjauan pamong/dewan guru (halaman /izin-staf, migrasi 17
-/// dua-tahap Orang Tua → Pamong). Hanya muncul di sini setelah
-/// `parent_status = 'approved'` (lihat repository/permits.rs).
+/// Satu izin yang menunggu keputusan WALI KELAS (halaman /izin-staf).
+/// Satu tahap: pamong dan tahap orang tua sama-sama sudah dihapus.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PermitReviewItem {
     pub id: i64,
@@ -546,27 +541,17 @@ pub struct PermitReviewItem {
     /// Total sesi terlewat lintas kelas.
     #[serde(default)]
     pub total_sesi: i64,
-    /// "09:00 – 11:00 WIB" bila izinnya per jam; kosong = sehari penuh.
+    /// Sisa dari bentuk lama — jam kini sudah termuat di `range_label`.
     #[serde(default)]
     pub jam_label: String,
-    /// Kelas tujuan memakai verifikasi dua langkah (pamong lalu wali kelas).
-    #[serde(default)]
-    pub dua_tahap: bool,
-    /// Tahap pamong sudah disetujui.
-    #[serde(default)]
-    pub pamong_ok: bool,
 }
 
-/// Payload halaman /izin-staf. Antrean disesuaikan peran peninjau (pamong →
-/// tahap 1; guru/dewan guru/admin → tahap final). `stage_label` = nama tahap
-/// yang ditinjau; `two_stage` = mode global saat ini.
+/// Payload halaman /izin-staf — antrean keputusan wali kelas.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PermitQueueData {
     pub pending_count: i64,
     pub approved_today: i64,
     pub items: Vec<PermitReviewItem>,
-    #[serde(default)]
-    pub two_stage: bool,
     #[serde(default)]
     pub stage_label: String,
 }

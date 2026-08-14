@@ -57,29 +57,61 @@ ALTER TABLE users ADD CONSTRAINT users_role_check
     ));
 
 -- ── 2) Semua kelas diverifikasi guru ─────────────────────────────────────────
-UPDATE classes SET verify_mode = 'guru' WHERE verify_mode <> 'guru';
-ALTER TABLE classes ALTER COLUMN verify_mode SET DEFAULT 'guru';
+-- Pagar migrasi 67 dilepas LEBIH DULU: `chk_classes_verify_non_kbm` berbunyi
+-- "kelas non-KBM WAJIB verify_mode = 'pamong'", jadi UPDATE di bawah ini akan
+-- ditolaknya untuk setiap kelas non-KBM — persis kelas yang paling perlu
+-- dipindahkan. Aturannya sendiri sudah kehilangan dasar: ia mengharuskan sebuah
+-- mode yang tak boleh ada lagi.
+ALTER TABLE classes DROP CONSTRAINT IF EXISTS chk_classes_verify_non_kbm;
 
--- CHECK dipersempit: 'dua_tahap' & 'pamong' tak lagi bisa ditulis. Kode sudah
--- menolaknya, tapi pagar di aplikasi hanya menjaga jalur yang lewat aplikasi.
-ALTER TABLE classes DROP CONSTRAINT IF EXISTS chk_classes_verify_mode;
-ALTER TABLE classes ADD CONSTRAINT chk_classes_verify_mode
-    CHECK (verify_mode IN ('guru'));
+-- Seluruhnya dilewati bila `verify_mode` sudah tak ada — migrasi 86 membuang
+-- kolom itu, jadi tanpa penjagaan ini urutan 84→85→86 tak bisa dijalankan ulang
+-- setelah tuntas. `scripts/migrate.sh` memang tak akan mengulanginya, tapi yang
+-- mengulang biasanya TANGAN, saat sesuatu gagal di tengah.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'classes' AND column_name = 'verify_mode') THEN
+        RAISE NOTICE 'verify_mode sudah dibuang (migrasi 86) — bagian 2 dilewati';
+        RETURN;
+    END IF;
+
+    UPDATE classes SET verify_mode = 'guru' WHERE verify_mode <> 'guru';
+    ALTER TABLE classes ALTER COLUMN verify_mode SET DEFAULT 'guru';
+
+    -- CHECK dipersempit: 'dua_tahap' & 'pamong' tak lagi bisa ditulis. Kode
+    -- sudah menolaknya, tapi pagar di aplikasi hanya menjaga jalur yang lewat
+    -- aplikasi.
+    ALTER TABLE classes DROP CONSTRAINT IF EXISTS chk_classes_verify_mode;
+    ALTER TABLE classes ADD CONSTRAINT chk_classes_verify_mode
+        CHECK (verify_mode IN ('guru'));
+END $$;
 
 -- ── 3) Pamong kelas diangkat jadi WALI KELAS ─────────────────────────────────
 -- Pagarnya dilepas dulu: selama CHECK migrasi 65 masih ada, kelas non-KBM tak
 -- boleh punya wali sama sekali.
 ALTER TABLE classes DROP CONSTRAINT IF EXISTS chk_classes_wali_kbm;
 
--- Hanya kelas yang BELUM punya wali. Kelas KBM yang sudah punya wali tetap
--- miliknya — pamong di sana adalah petugas kedua, bukan pengganti.
-UPDATE classes
-   SET wali_kelas_id = pamong_id
- WHERE wali_kelas_id IS NULL AND pamong_id IS NOT NULL;
+-- Dilewati bila kolomnya sudah dibuang migrasi 86 — alasan yang sama dengan
+-- bagian 2: yang menjalankan ulang biasanya tangan, bukan `migrate.sh`.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'classes' AND column_name = 'pamong_id') THEN
+        RAISE NOTICE 'pamong_id sudah dibuang (migrasi 86) — bagian 3 & 4 dilewati';
+        RETURN;
+    END IF;
 
--- ── 4) Penugasan pamong dikosongkan ──────────────────────────────────────────
-UPDATE classes       SET pamong_id = NULL WHERE pamong_id IS NOT NULL;
-UPDATE class_sessions SET pamong_id = NULL WHERE pamong_id IS NOT NULL;
+    -- Hanya kelas yang BELUM punya wali. Kelas KBM yang sudah punya wali tetap
+    -- miliknya — pamong di sana adalah petugas kedua, bukan pengganti.
+    UPDATE classes
+       SET wali_kelas_id = pamong_id
+     WHERE wali_kelas_id IS NULL AND pamong_id IS NOT NULL;
+
+    -- ── 4) Penugasan pamong dikosongkan ──────────────────────────────────────
+    UPDATE classes        SET pamong_id = NULL WHERE pamong_id IS NOT NULL;
+    UPDATE class_sessions SET pamong_id = NULL WHERE pamong_id IS NOT NULL;
+END $$;
 
 ANALYZE users;
 ANALYZE classes;

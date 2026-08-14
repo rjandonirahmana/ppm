@@ -361,12 +361,10 @@ pub struct ParentPermitRow {
     pub requester_name: String,
     pub child_name: String,
     pub kind: String,
-    pub start_date: chrono::NaiveDate,
-    pub end_date: Option<chrono::NaiveDate>,
+    pub mulai: chrono::NaiveDateTime,
+    pub selesai: chrono::NaiveDateTime,
     pub reason: String,
-    pub pamong_status: String,
     pub guru_status: String,
-    pub require_pamong: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -376,9 +374,8 @@ pub async fn permits_of_children(pool: &Pool, parent_id: i64, limit: i64) -> Res
     let rows = c
         .query(
             &format!(
-                "SELECT u.full_name, p.type, p.start_date, p.end_date, p.reason, \
-                        p.pamong_status, p.guru_status, \
-                        COALESCE(tc.require_pamong, cl.require_pamong, TRUE), p.created_at, \
+                "SELECT u.full_name, p.type, p.start_time, p.end_time, p.reason, \
+                        p.guru_status, p.created_at, \
                         p.id, (p.requested_by <> p.user_id AND rb.role = 'parent'), \
                         COALESCE(rb.full_name, '') \
                  FROM permit_requests p \
@@ -400,13 +397,11 @@ pub async fn permits_of_children(pool: &Pool, parent_id: i64, limit: i64) -> Res
         .map(|r| ParentPermitRow {
             child_name: r.get(0),
             kind: r.get(1),
-            start_date: r.get(2),
-            end_date: r.get(3),
+            mulai: r.get(2),
+            selesai: r.get(3),
             reason: r.get(4),
-            pamong_status: r.get(5),
-            guru_status: r.get(6),
-            require_pamong: r.get(7),
-            created_at: r.get(8),
+            guru_status: r.get(5),
+            created_at: r.get(6),
             id: r.get(9),
             oleh_ortu: r.get(10),
             requester_name: r.get(11),

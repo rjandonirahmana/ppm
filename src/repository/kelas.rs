@@ -31,10 +31,7 @@ LEFT JOIN LATERAL ( \
                          ORDER BY (c.category = 'kbm') DESC, c.id \
                          LIMIT 1 \
                     ) cl ON TRUE \
-                    WHERE p.guru_status = 'pending' AND p.pamong_status <> 'rejected' \
-                      AND CASE WHEN COALESCE(tc.require_pamong, cl.require_pamong, TRUE) \
-                                    AND COALESCE(tc.pamong_id, cl.pamong_id) IS NOT NULL \
-                               THEN p.pamong_status = 'approved' ELSE TRUE END)",
+                    WHERE p.guru_status = 'pending')",
             &[],
         )
         .await
@@ -158,8 +155,8 @@ pub async fn analisis_summary(pool: &Pool, teacher_id: Option<i64>) -> Result<(i
                     COALESCE(ROUND(100.0 * COUNT(*) FILTER (WHERE a.status IN ('present','late')) \
                         / NULLIF(COUNT(*), 0)), 0)::INT, \
                     COALESCE((SELECT ROUND(AVG(points)) FROM users WHERE role IN ('santri', 'santri_finance')), 0)::INT, \
-                    (SELECT COUNT(*) FROM attendances WHERE pamong_status = 'approved' \
-                        AND pamong_at >= NOW() - INTERVAL '30 days') \
+                    (SELECT COUNT(*) FROM attendances WHERE verify_status = 'approved' \
+                        AND verified_at >= NOW() - INTERVAL '30 days') \
                  FROM attendances a JOIN users u ON u.id = a.user_id \
                  WHERE u.role IN ('santri', 'santri_finance') AND a.scanned_at >= NOW() - INTERVAL '30 days'",
                 &[],
@@ -177,8 +174,8 @@ pub async fn analisis_summary(pool: &Pool, teacher_id: Option<i64>) -> Result<(i
                             (SELECT DISTINCT class_id FROM class_sessions WHERE teacher_id = $1)), 0)::INT, \
                     (SELECT COUNT(*) FROM attendances a2 \
                         JOIN class_sessions s2 ON s2.id = a2.class_session_id \
-                        WHERE s2.teacher_id = $1 AND a2.pamong_status = 'approved' \
-                        AND a2.pamong_at >= NOW() - INTERVAL '30 days') \
+                        WHERE s2.teacher_id = $1 AND a2.verify_status = 'approved' \
+                        AND a2.verified_at >= NOW() - INTERVAL '30 days') \
                  FROM attendances a \
                  JOIN class_sessions s ON s.id = a.class_session_id \
                  WHERE s.teacher_id = $1 AND a.scanned_at >= NOW() - INTERVAL '30 days'",
@@ -771,7 +768,7 @@ pub async fn adjust_points(
     Ok(())
 }
 
-// ── Manajemen Kelas (admin/dewan guru/pamong) ────────────────────────────────────
+// ── Manajemen Kelas (admin/ketua/wali kelas) ─────────────────────────────────────
 
 pub struct ClassListRow {
     pub id: i64,
@@ -922,7 +919,7 @@ pub async fn create_class(
     Ok(row.get(0))
 }
 
-/// Info dasar kelas + staf (wali kelas, pamong, rute izin).
+/// Info dasar kelas + wali kelasnya.
 pub struct ClassInfo {
     pub name: String,
     pub description: String,
@@ -930,11 +927,6 @@ pub struct ClassInfo {
     pub jenjang: Option<String>,
     pub wali_kelas_id: Option<i64>,
     pub wali_kelas_name: Option<String>,
-    pub require_pamong: bool,
-    /// Mode verifikasi absensi kelas (migrasi 62).
-    pub verify_mode: String,
-    pub pamong_id: Option<i64>,
-    pub pamong_name: Option<String>,
 }
 
 pub async fn class_info(pool: &Pool, class_id: i64) -> Result<Option<ClassInfo>> {
@@ -942,11 +934,9 @@ pub async fn class_info(pool: &Pool, class_id: i64) -> Result<Option<ClassInfo>>
     let row = c
         .query_opt(
             "SELECT cl.name, COALESCE(cl.description, ''), cl.category, cl.jenjang, \
-                    cl.wali_kelas_id, w.full_name, cl.require_pamong, cl.verify_mode, \
-                    cl.pamong_id, pm.full_name \
+                    cl.wali_kelas_id, w.full_name \
              FROM classes cl \
              LEFT JOIN users w ON w.id = cl.wali_kelas_id \
-             LEFT JOIN users pm ON pm.id = cl.pamong_id \
              WHERE cl.id = $1",
             &[&class_id],
         )
@@ -958,62 +948,41 @@ pub async fn class_info(pool: &Pool, class_id: i64) -> Result<Option<ClassInfo>>
         jenjang: r.get(3),
         wali_kelas_id: r.get(4),
         wali_kelas_name: r.get(5),
-        require_pamong: r.get(6),
-        verify_mode: r.get(7),
-        pamong_id: r.get(8),
-        pamong_name: r.get(9),
     }))
 }
 
-/// Set wali kelas + pamong + mode verifikasi satu kelas (migrasi 29/30/62).
+/// Set WALI KELAS satu kelas (migrasi 29). None = kosongkan.
 ///
-/// SATU pernyataan, dan `require_pamong` sengaja TIDAK ditulis di sini:
-/// trigger `trg_sync_require_pamong` (migrasi 62) menurunkannya dari
-/// `verify_mode`. Sebelumnya fungsi ini menulis `require_pamong` sendiri lalu
-/// pemanggilnya menulis `verify_mode` lewat pernyataan KEDUA — dua sumber
-/// kebenaran pada dua sambungan berbeda, jadi kegagalan di antara keduanya
-/// meninggalkan kelas yang rute verifikasinya bertentangan dengan yang
-/// tertulis di layar.
+/// Petugas kedua & mode verifikasi ikut dihapus (migrasi 84/86) —
+/// yang tersisa satu jabatan, jadi satu kolom.
 pub async fn set_class_staff(
     pool: &Pool,
     class_id: i64,
     wali_kelas_id: Option<i64>,
-    pamong_id: Option<i64>,
-    verify_mode: &str,
 ) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
         .execute(
-            // Peran kedua petugas diuji di sini juga — lihat set_session_teacher.
-            // Syarat tambahan pada wali: kelasnya WAJIB KBM (migrasi 65).
-            "UPDATE classes SET wali_kelas_id = $2, pamong_id = $3, verify_mode = $4 \
+            // Peran wali diuji di sini juga — lihat set_session_teacher.
+            //
+            // Syarat "kelasnya WAJIB KBM" (migrasi 65) DIBUANG bersama peran
+            // pamong: dulu kelas non-KBM diurus pamongnya, jadi wali memang tak
+            // relevan di sana. Sekarang wali kelas satu-satunya petugas yang
+            // tersisa, dan menolaknya untuk kelas non-KBM berarti kelas itu tak
+            // pernah bisa mendapat pengurus baru ketika walinya berhenti —
+            // padahal migrasi 84 justru memindahkan bekas pamong ke kolom ini.
+            "UPDATE classes SET wali_kelas_id = $2 \
              WHERE id = $1 \
-               AND ($2::bigint IS NULL OR (category = 'kbm' AND EXISTS ( \
+               AND ($2::bigint IS NULL OR EXISTS ( \
                      SELECT 1 FROM users u WHERE u.id = $2 \
-                       AND u.role IN ('teacher', 'dewan_guru') AND u.is_active))) \
-               AND ($3::bigint IS NULL OR EXISTS ( \
-                     SELECT 1 FROM users u WHERE u.id = $3 \
-                       AND u.role = 'supervisor' AND u.is_active))",
-            &[&class_id, &wali_kelas_id, &pamong_id, &verify_mode],
+                       AND u.role IN ('teacher', 'dewan_guru') AND u.is_active))",
+            &[&class_id, &wali_kelas_id],
         )
         .await
         .context("set_class_staff")?;
     Ok(n > 0)
 }
 
-/// Opsi pamong (role supervisor) untuk dropdown wali/pamong kelas.
-pub async fn pamong_options(pool: &Pool) -> Result<Vec<(i64, String)>> {
-    let c = pool.get().await?;
-    let rows = c
-        .query(
-            "SELECT id, full_name FROM users \
-             WHERE role = 'supervisor' AND is_active = TRUE ORDER BY full_name",
-            &[],
-        )
-        .await
-        .context("pamong_options")?;
-    Ok(rows.into_iter().map(|r| (r.get(0), r.get(1))).collect())
-}
 
 /// Santri anggota kelas (unik).
 /// Anggota kelas: (id, nama, NIS, tahun angkatan).
@@ -1390,13 +1359,13 @@ pub async fn add_members(
     Ok(n as i64)
 }
 
-/// Opsi pengajar (teacher/dewan_guru/supervisor) untuk dropdown buat sesi.
+/// Opsi pengajar (teacher/dewan_guru) untuk dropdown buat sesi.
 pub async fn teacher_options(pool: &Pool) -> Result<Vec<(i64, String)>> {
     let c = pool.get().await?;
     let rows = c
         .query(
             "SELECT id, full_name FROM users \
-             WHERE role IN ('teacher','dewan_guru','supervisor') AND is_active = TRUE \
+             WHERE role IN ('teacher','dewan_guru') AND is_active = TRUE \
              ORDER BY full_name",
             &[],
         )
@@ -1586,19 +1555,19 @@ pub async fn kelas_adalah_kbm(pool: &Pool, class_id: i64) -> Result<bool> {
     Ok(row.get(0))
 }
 
-/// Apakah `user_id` PETUGAS kelas ini — wali kelasnya atau pamongnya?
+/// Apakah `user_id` PETUGAS kelas ini — wali kelasnya?
 ///
 /// Batas wewenang untuk hal-hal yang menyangkut isi kelas: mengisi kurikulum,
-/// menandai materi yang sedang berjalan, dan menunjuk guru/pamong tiap sesi.
+/// menandai materi yang sedang berjalan, dan menunjuk guru tiap sesi.
 /// Bukan "peran guru" secara umum: guru kelas lain tak berkepentingan di sini,
-/// dan sebelum ini siapa pun ber-peran guru/pamong bisa menyunting kurikulum
+/// dan sebelum ini siapa pun ber-peran guru bisa menyunting kurikulum
 /// kelas mana pun.
 pub async fn petugas_kelas(pool: &Pool, class_id: i64, user_id: i64) -> Result<bool> {
     let c = pool.get().await?;
     let row = c
         .query_one(
             "SELECT EXISTS (SELECT 1 FROM classes \
-                             WHERE id = $1 AND (wali_kelas_id = $2 OR pamong_id = $2))",
+                             WHERE id = $1 AND wali_kelas_id = $2)",
             &[&class_id, &user_id],
         )
         .await
@@ -1617,19 +1586,6 @@ pub async fn kelas_dari_kurikulum(pool: &Pool, curriculum_id: i64) -> Result<Opt
     Ok(row.map(|r| r.get(0)))
 }
 
-/// Apakah `user_id` PAMONG kelas ini? Lebih sempit dari [`petugas_kelas`] —
-/// wali kelas sengaja tidak termasuk. Dipakai untuk menata jadwal & anggota.
-pub async fn pamong_kelas(pool: &Pool, class_id: i64, user_id: i64) -> Result<bool> {
-    let c = pool.get().await?;
-    let row = c
-        .query_one(
-            "SELECT EXISTS (SELECT 1 FROM classes WHERE id = $1 AND pamong_id = $2)",
-            &[&class_id, &user_id],
-        )
-        .await
-        .context("pamong_kelas")?;
-    Ok(row.get(0))
-}
 
 /// Kelas pemilik sebuah jadwal — untuk menguji wewenang dari id jadwal saja.
 pub async fn kelas_dari_jadwal(pool: &Pool, schedule_id: i64) -> Result<Option<i64>> {
@@ -1775,28 +1731,6 @@ pub async fn set_session_teacher(
     Ok(n > 0)
 }
 
-/// Set pamong bertugas verifikasi untuk satu sesi (migrasi 33). None = kosongkan
-/// (fallback ke pamong kelas).
-pub async fn set_session_pamong(
-    pool: &Pool,
-    session_id: i64,
-    pamong_id: Option<i64>,
-) -> Result<bool> {
-    let c = pool.get().await?;
-    let n = c
-        .execute(
-            // Alasan sama dengan set_session_teacher: pamong sesi menentukan
-            // siapa yang berhak memverifikasi absensinya.
-            "UPDATE class_sessions SET pamong_id = $2 WHERE id = $1 \
-               AND ($2::bigint IS NULL OR EXISTS ( \
-                     SELECT 1 FROM users u WHERE u.id = $2 \
-                       AND u.role = 'supervisor' AND u.is_active))",
-            &[&session_id, &pamong_id],
-        )
-        .await
-        .context("set_session_pamong")?;
-    Ok(n > 0)
-}
 
 /// Set/ubah materi buku sesi (book_id NULL bila 0/None; migrasi 20).
 pub async fn set_session_book(
@@ -2349,7 +2283,7 @@ pub async fn session_book_in_curriculum(
     Ok(row.is_some())
 }
 
-/// Kelas tempat `user_id` BERTUGAS — sebagai wali kelas, pamong, atau keduanya.
+/// Kelas tempat `user_id` BERTUGAS — sebagai wali kelasnya.
 ///
 /// Pasangan [`classes_of_student`] untuk sisi staf. Satu query, bukan dua yang
 /// digabung di Rust, supaya kelas yang ia pegang DUA peran sekaligus muncul
@@ -2358,7 +2292,7 @@ pub async fn classes_of_staff(pool: &Pool, user_id: i64) -> Result<Vec<SantriKel
     let c = pool.get().await?;
     let rows = c
         .query(
-            // Sejak peran pamong dihapus (migrasi 84), satu-satunya jalan
+            // Sejak peran petugas kedua dihapus (migrasi 84), satu-satunya jalan
             // seseorang "punya" kelas adalah menjadi WALI KELAS-nya — dan itu
             // kini berlaku untuk semua kategori, termasuk sholat/apel/piket.
             "SELECT cl.id, cl.name, cl.category, cl.jenjang, w.full_name, TRUE AS saya_wali \
@@ -2383,23 +2317,5 @@ pub async fn classes_of_staff(pool: &Pool, user_id: i64) -> Result<Vec<SantriKel
         .collect())
 }
 
-/// Mode verifikasi kelas pemilik sebuah SESI (migrasi 62):
-/// "dua_tahap" | "guru" | "pamong". None = sesi tak ditemukan.
-pub async fn session_verify_mode(pool: &Pool, session_id: i64) -> Result<Option<String>> {
-    let c = pool.get().await?;
-    let row = c
-        .query_opt(
-            "SELECT cl.verify_mode FROM class_sessions cs \
-               JOIN classes cl ON cl.id = cs.class_id WHERE cs.id = $1",
-            &[&session_id],
-        )
-        .await
-        .context("session_verify_mode")?;
-    Ok(row.map(|r| r.get(0)))
-}
-
-// `set_class_verify_mode` dihapus: mode verifikasi kini ditulis bersama wali
-// dan pamong dalam satu pernyataan di `set_class_staff`. Menyisakannya berarti
-// menyediakan jalan kedua untuk mengubah rute verifikasi tanpa memeriksa
-// syaratnya (mode ber-pamong wajib punya pamong) — dan syarat itu hanya ada di
-// service::kelas::set_class_staff.
+// `set_class_verify_mode` dihapus bersama kolomnya (migrasi 86): sejak peran
+// petugas kedua tak ada, setiap kelas diverifikasi satu tahap oleh gurunya.

@@ -44,7 +44,6 @@ mod students;
 // riwayatnya — satu komponen untuk kedua layar (lihat ortu_pembayaran.rs).
 pub mod tagihan;
 mod tamu;
-mod verifikasi_pamong;
 mod verifikasi_tahap2;
 
 pub use akademik::AkademikSantriPage;
@@ -88,5 +87,4 @@ pub use students::{StudentBookPanel, StudentsPage};
 pub use staf::StafDashboardPage;
 pub use tagihan::{FinancePage, MyBillsPage};
 pub use tamu::TamuPage;
-pub use verifikasi_pamong::VerifikasiPamongPage;
 pub use verifikasi_tahap2::VerifikasiTahap2Page;

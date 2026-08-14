@@ -68,7 +68,7 @@ pub fn KelasPage() -> impl IntoView {
                                     .map(|u| {
                                         matches!(
                                             u.role.as_str(),
-                                            "admin" | "ketua" | "supervisor" | "teacher" | "dewan_guru"
+                                            "admin" | "ketua" | "teacher" | "dewan_guru"
                                         )
                                     })
                                     .unwrap_or(false);
@@ -97,7 +97,7 @@ pub fn KelasPage() -> impl IntoView {
                                                 .map(|u| {
                                                     matches!(
                                                         u.role.as_str(),
-                                                        "admin" | "ketua" | "supervisor" | "teacher" | "dewan_guru"
+                                                        "admin" | "ketua" | "teacher" | "dewan_guru"
                                                     )
                                                 })
                                                 .unwrap_or(false);
@@ -351,28 +351,40 @@ fn TambahKelas(
                                     .map(|(k, l)| view! { <option value=*k>{*l}</option> })
                                     .collect_view()}
                             </select>
-                            // WALI KELAS wajib sejak kelas KBM dibuat: dialah
-                            // satu-satunya penyetuju izin santri kelas itu, jadi
-                            // kelas KBM tanpa wali berarti izin santrinya
-                            // menggantung tanpa tujuan.
-                            <select
-                                class="w-full bg-surface-container border-0 rounded-xl px-4 py-3 text-body-md text-on-surface"
-                                on:change=move |ev| {
-                                    wali.set(event_target_value(&ev).parse().unwrap_or(0))
-                                }
-                                required=true
-                            >
-                                <option value="">"— pilih wali kelas (wajib) —"</option>
-                                {guru
-                                    .get_value()
-                                    .into_iter()
-                                    .map(|t| view! { <option value=t.id.to_string()>{t.name}</option> })
-                                    .collect_view()}
-                            </select>
-                            <p class="text-[11px] text-on-surface-variant -mt-1">
-                                "Wali kelas menyetujui izin santri kelas ini."
-                            </p>
                         </Show>
+
+                        // WALI KELAS wajib di SEMUA kategori, bukan hanya KBM.
+                        //
+                        // Dulu bidang ini ikut disembunyikan bersama jenjang,
+                        // karena kelas non-KBM punya PAMONG sebagai petugasnya.
+                        // Setelah peran itu dihapus (migrasi 84), kelas piket &
+                        // sholat yang lahir tanpa wali tak punya siapa pun yang
+                        // menunjuk pengisi sesi atau mengesahkan absensinya —
+                        // absensinya hanya lolos lewat verifikasi otomatis
+                        // sehari kemudian, tanpa seorang pun menengoknya.
+                        <select
+                            class="w-full bg-surface-container border-0 rounded-xl px-4 py-3 text-body-md text-on-surface"
+                            on:change=move |ev| {
+                                wali.set(event_target_value(&ev).parse().unwrap_or(0))
+                            }
+                            required=true
+                        >
+                            <option value="">"— pilih wali kelas (wajib) —"</option>
+                            {guru
+                                .get_value()
+                                .into_iter()
+                                .map(|t| view! { <option value=t.id.to_string()>{t.name}</option> })
+                                .collect_view()}
+                        </select>
+                        <p class="text-[11px] text-on-surface-variant -mt-1">
+                            {move || {
+                                if category.get() == "kbm" {
+                                    "Wali kelas menunjuk pengisi sesi, mengesahkan absensinya, dan menyetujui izin santri kelas ini."
+                                } else {
+                                    "Wali kelas menunjuk pengisi sesi dan mengesahkan absensinya. Izin santri tetap ke wali kelas KBM-nya."
+                                }
+                            }}
+                        </p>
                         <textarea
                             rows="2"
                             class="w-full bg-surface-container border-0 rounded-xl px-4 py-3 text-body-md text-on-surface resize-none"
@@ -424,10 +436,11 @@ fn TambahKelas(
 #[component]
 fn KelasCard(k: KelasItem) -> impl IntoView {
     let href = format!("/kelas/{}", k.id);
-    // Kelas KBM WAJIB punya wali (dialah penyetuju izin santrinya). Aturannya
+    // SEMUA kelas wajib punya wali: dialah yang menunjuk pengisi sesi dan
+    // mengesahkan absensinya (di KBM sekalian menyetujui izin). Aturannya
     // ditegakkan di jalur tulis, tapi baris lama bisa lolos dari sebelum aturan
     // ini ada — ditandai di sini supaya diperbaiki, bukan didiamkan.
-    let wali_kosong = k.category == "kbm" && k.wali_kelas.trim().is_empty();
+    let wali_kosong = k.wali_kelas.trim().is_empty();
     view! {
         <div class="ppm-card p-4 card-hover anim-in ppm-accent">
             <div class="flex flex-wrap gap-1.5 mb-1.5">

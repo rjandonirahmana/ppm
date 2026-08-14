@@ -30,7 +30,6 @@ use crate::repository as repo;
 // 'teacher' dihapus (digabung ke dewan_guru, migrasi 36). Peran finance baru
 // (ketua, santri_finance) TIDAK di sini — dibuat admin lewat kontrol pengguna,
 // bukan via link undangan publik.
-// 'supervisor' (pamong) juga dihapus — perannya sudah tak ada (migrasi 84).
 pub const INVITABLE_ROLES: &[&str] = &["dewan_guru", "santri", "parent", "penjaga"];
 
 // Kebijakan siapa-boleh-mengundang-siapa ada di models::can_invite —
@@ -170,7 +169,6 @@ fn role_label(role: &str) -> &'static str {
     match role {
         "teacher" => "Guru",
         "dewan_guru" => "Dewan Guru",
-        "supervisor" => "Pamong",
         "santri" => "Santri",
         "parent" => "Orang Tua",
         _ => "Pengguna",

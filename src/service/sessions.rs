@@ -65,7 +65,7 @@ pub async fn list_for(pool: &Pool, user: &SessionUser) -> Result<SessionsData> {
     let until = today + Duration::days(7);
     let yesterday = today - Duration::days(1);
     // Guru & dewan guru = SATU entitas: sama-sama lihat & kelola SEMUA sesi.
-    let all_scope = crate::models::role_satisfies(&user.role, &["admin", "supervisor", "dewan_guru", "teacher"]);
+    let all_scope = crate::models::role_satisfies(&user.role, &["admin", "dewan_guru", "teacher"]);
     let (upcoming_rows, past_rows) = if all_scope {
         tokio::join!(
             repo::all_sessions(pool, today, until, 100),
@@ -139,7 +139,7 @@ pub async fn detail_for(
     user: &SessionUser,
     session_id: i64,
 ) -> Result<crate::models::SessionDetailData> {
-    if !crate::models::role_satisfies(&user.role, &["admin", "supervisor", "dewan_guru", "teacher"]) {
+    if !crate::models::role_satisfies(&user.role, &["admin", "dewan_guru", "teacher"]) {
         bail_user!("forbidden");
     }
     let Some(d) = repo::session_detail(pool, session_id).await? else {
@@ -269,7 +269,7 @@ pub async fn mark_present(
     session_id: i64,
     student_id: i64,
 ) -> Result<()> {
-    if !crate::models::role_satisfies(&user.role, &["admin", "supervisor", "dewan_guru", "teacher"]) {
+    if !crate::models::role_satisfies(&user.role, &["admin", "dewan_guru", "teacher"]) {
         bail_user!("forbidden");
     }
     if !repo::mark_manual_present(pool, student_id, session_id).await? {
@@ -288,7 +288,7 @@ pub async fn mark_bulk(
     student_ids: Vec<i64>,
     status: &str,
 ) -> Result<i64> {
-    if !crate::models::role_satisfies(&user.role, &["admin", "supervisor", "dewan_guru", "teacher"]) {
+    if !crate::models::role_satisfies(&user.role, &["admin", "dewan_guru", "teacher"]) {
         bail_user!("forbidden");
     }
     if !matches!(status, "present" | "absent") {
@@ -308,7 +308,7 @@ pub async fn mark_bulk(
 // (status live + chat); audio dicolok menyusul (butuh subsistem WS+SFU).
 
 fn is_staff(role: &str) -> bool {
-    matches!(role, "admin" | "supervisor" | "dewan_guru" | "teacher")
+    matches!(role, "admin" | "dewan_guru" | "teacher")
 }
 
 /// Akses ruang live: staf ATAU santri peserta kelas sesi tsb.

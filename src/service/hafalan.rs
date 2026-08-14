@@ -9,7 +9,7 @@ use crate::models::{HafalanItem, SessionUser};
 use crate::repository as repo;
 
 fn is_staff(role: &str) -> bool {
-    matches!(role, "admin" | "supervisor" | "dewan_guru" | "teacher")
+    matches!(role, "admin" | "dewan_guru" | "teacher")
 }
 
 /// Catat satu setoran hafalan santri — staf saja.

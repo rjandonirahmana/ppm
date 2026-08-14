@@ -191,7 +191,7 @@ async fn main() -> Result<()> {
     // ketelitiannya beda: yang ini harus menyapa jendela "satu jam sebelum
     // mulai", jadi ticknya menit-menitan. Jendela pencariannya (50–70 menit)
     // sengaja lebih lebar dari jarak antar-tick supaya tak ada sesi yang jatuh
-    // di celah; `class_sessions.pamong_reminded_at` (migrasi 67) yang menjaga
+    // di celah; `class_sessions.reminded_at` (migrasi 67) yang menjaga
     // satu sesi hanya dikirimi sekali.
     {
         let pool = state.pool.clone();
@@ -201,9 +201,11 @@ async fn main() -> Result<()> {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
             loop {
                 tick.tick().await;
-                match ppm::service::permits::ingatkan_pamong_sesi(&http, &waha, &pool, 50, 70).await
+                match ppm::service::permits::ingatkan_wali_sesi(&http, &waha, &pool, 50, 70).await
                 {
-                    Ok(n) if n > 0 => tracing::info!("Pengingat sesi: {n} pesan terkirim ke pamong"),
+                    Ok(n) if n > 0 => {
+                        tracing::info!("Pengingat sesi: {n} pesan terkirim ke wali kelas")
+                    }
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Pengingat sesi gagal: {e}"),
                 }
@@ -234,21 +236,13 @@ async fn main() -> Result<()> {
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Materialisasi sesi gagal: {e}"),
                 }
-                // Auto-verify: antrean pamong/dewan guru yang >1 hari tak disentuh
-                // manusia disetujui otomatis oleh sistem (lihat
-                // repository::run_auto_verify_pamong/_final) — poin tetap diberikan
+                // Auto-verify: antrean yang >1 hari tak disentuh manusia
+                // disetujui otomatis oleh sistem (lihat
+                // repository::run_auto_verify_final) — poin tetap diberikan
                 // sesuai aturan (termasuk override late_points per jadwal), sama
                 // seperti approve manual, agar antrean tak menumpuk selamanya.
-                match ppm::repository::run_auto_verify_pamong(&pool).await {
-                    Ok(n) if n > 0 => tracing::info!("Auto-verify pamong: {n} absensi disetujui"),
-                    Ok(_) => {}
-                    Err(e) => {
-                        tracing::warn!("Auto-verify pamong gagal: {e}");
-                        ppm::service::telegram::report_background_error("Auto-verify pamong", e.to_string());
-                    }
-                }
                 match ppm::repository::run_auto_verify_final(&pool).await {
-                    Ok(n) if n > 0 => tracing::info!("Auto-verify dewan guru: {n} absensi diverifikasi final"),
+                    Ok(n) if n > 0 => tracing::info!("Auto-verify: {n} absensi diverifikasi"),
                     Ok(_) => {}
                     Err(e) => {
                         tracing::warn!("Auto-verify dewan guru gagal: {e}");
@@ -292,19 +286,18 @@ async fn main() -> Result<()> {
         });
     }
 
-    // ── DIHAPUS: job pengingat sesi ke PAMONG versi lama (migrasi 30) ────────
-    // Dulu di sini ada task kedua tiap 5 menit yang memanggil
-    // `send_pamong_session_reminders` — mengirim WA ke pamong untuk sesi yang
-    // mulai ≤60 menit lagi, ditandai lewat `class_sessions.pamong_notified_at`.
+    // ── DIHAPUS: job pengingat sesi versi lama (migrasi 30) ─────────────────
+    // Dulu di sini ada task kedua tiap 5 menit yang mengirim WA untuk sesi yang
+    // mulai ≤60 menit lagi, ditandai lewat kolom penanda yang BERBEDA.
     //
-    // Isinya SAMA dengan `ingatkan_pamong_sesi` di atas (migrasi 67), dan
+    // Isinya SAMA dengan `ingatkan_wali_sesi` di atas (migrasi 67), dan
     // keduanya berjalan bersamaan tanpa saling tahu: dua penanda berbeda, dua
-    // interval berbeda, satu pamong menerima DUA WhatsApp untuk satu sesi.
+    // interval berbeda, satu orang menerima DUA WhatsApp untuk satu sesi.
     // Yang bertahan adalah yang baru — ia menyaring kelas KBM, memeriksa apa
-    // yang sebenarnya belum ditunjuk (guru / pamong / keduanya), dan berhenti
-    // mengganggu begitu penugasannya lengkap.
+    // yang sebenarnya belum ditunjuk, dan berhenti mengganggu begitu
+    // penugasannya lengkap.
     //
-    // Kolom `pamong_notified_at` dibuang di migrasi 70.
+    // Kolom penanda lamanya dibuang di migrasi 70.
 
     let leptos_conf = get_configuration(Some("Cargo.toml"))
         .map_err(|e| anyhow::anyhow!("gagal load config leptos: {e}"))?;

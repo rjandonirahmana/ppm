@@ -4,7 +4,7 @@ use anyhow::Result;
 use chrono::{Datelike, NaiveDate, TimeZone, Utc};
 use deadpool_postgres::Pool;
 
-use super::fmt::{fmt_dt_full, fmt_month, fmt_range, wib};
+use super::fmt::{fmt_dt_full, fmt_month, wib};
 use crate::models::{
     permit_kind_label, permit_stage, point_rule, IzinData, PermitItem, ProfilData, RiwayatData,
     RiwayatItem,
@@ -137,8 +137,7 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
     let permits = permits?
         .into_iter()
         .map(|p| {
-            let (status_label, status_kind) =
-                permit_stage(&p.pamong_status, &p.guru_status, p.require_pamong);
+            let (status_label, status_kind) = permit_stage(&p.guru_status);
             PermitItem {
                 id: p.id,
                 diajukan_oleh: if p.oleh_ortu {
@@ -147,7 +146,7 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
                     String::new()
                 },
                 kind_label: permit_kind_label(&p.kind).into(),
-                range_label: fmt_range(p.start_date, p.end_date),
+                range_label: super::fmt::fmt_rentang(p.mulai, p.selesai),
                 class_label: p.class_name.unwrap_or_default(),
                 status_label: status_label.into(),
                 status_kind: status_kind.into(),
@@ -184,7 +183,15 @@ pub async fn izin_data(pool: &Pool, user_id: i64) -> Result<IzinData> {
 /// akan pernah lolos bila diajukan dari awal.
 ///
 /// Return `(kind, start, end, jam, reason)` yang sudah bersih.
-#[allow(clippy::type_complexity)]
+/// Validasi pengajuan izin → satu RENTANG WAKTU.
+///
+/// Masukan dari layar tetap empat kotak (tanggal mulai, tanggal selesai, jam
+/// keluar, jam pulang) karena itulah cara orang mengisinya. Yang keluar dari
+/// sini SATU rentang — `mulai` sampai `selesai` — dan itulah acuan tunggal
+/// berapa kelas yang terlewat (migrasi 86).
+///
+/// Jam dikosongkan = IZIN SEHARI PENUH → 00:00 sampai 23:59:59. Bukan keadaan
+/// khusus yang perlu diingat pembaca berikutnya, cuma rentang selebar satu hari.
 pub(crate) fn validasi_izin<'a>(
     kind: &'a str,
     start: &str,
@@ -192,13 +199,7 @@ pub(crate) fn validasi_izin<'a>(
     jam_mulai: &str,
     jam_selesai: &str,
     reason: &str,
-) -> Result<(
-    &'a str,
-    NaiveDate,
-    Option<NaiveDate>,
-    Option<(chrono::NaiveTime, chrono::NaiveTime)>,
-    String,
-)> {
+) -> Result<(&'a str, chrono::NaiveDateTime, chrono::NaiveDateTime, String)> {
     if !matches!(kind, "sick" | "leave" | "keperluan") {
         bail_user!("Jenis izin tidak valid.");
     }
@@ -206,26 +207,17 @@ pub(crate) fn validasi_izin<'a>(
         bail_user!("Tanggal mulai wajib diisi.");
     };
     let end_date = match end.trim() {
-        "" => None,
+        "" => start_date,
         s => match NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-            Ok(d) if d >= start_date => Some(d),
+            Ok(d) if d >= start_date => d,
             Ok(_) => bail_user!("Tanggal selesai tidak boleh sebelum tanggal mulai."),
             Err(_) => bail_user!("Tanggal selesai tidak valid."),
         },
     };
-    // JAM KELUAR (pada tanggal mulai) & JAM PULANG (pada tanggal selesai).
-    // Keduanya diisi atau keduanya kosong — satu ujung saja tak membentuk
-    // rentang waktu apa pun.
-    //
-    // Sebelumnya kedua angka ini berarti "jam berlakunya izin PADA SETIAP HARI"
-    // dalam rentang. Untuk izin sehari keduanya sama saja, tapi untuk izin
-    // berhari-hari maknanya keliru: santri yang pulang Jumat sore dan kembali
-    // Minggu pagi bukan berarti ia izin "sore sampai pagi" tiap hari — ia
-    // PERGI, dan seluruh hari di antaranya ikut terlewat. Sekarang keduanya
-    // dibaca sebagai satu rentang waktu: dari (tanggal mulai + jam keluar)
-    // sampai (tanggal selesai + jam pulang).
-    let jam = match (jam_mulai.trim(), jam_selesai.trim()) {
-        ("", "") => None,
+    // Keduanya diisi atau keduanya kosong: satu ujung saja tak membentuk
+    // rentang, dan menebak ujung yang lain berarti mengarang izin.
+    let (jm, js) = match (jam_mulai.trim(), jam_selesai.trim()) {
+        ("", "") => (None, None),
         (a, b) if a.is_empty() || b.is_empty() => {
             bail_user!("Isi jam keluar DAN jam pulang, atau kosongkan keduanya untuk izin sehari penuh.")
         }
@@ -236,20 +228,23 @@ pub(crate) fn validasi_izin<'a>(
             ) else {
                 bail_user!("Jam izin tidak valid (format 24 jam, mis. 09:00).");
             };
-            // Urutan jam hanya bermakna bila keluar & pulang di HARI YANG SAMA.
-            // Pada izin berhari-hari, pulang pukul 08:00 setelah keluar pukul
-            // 14:00 dua hari sebelumnya jelas sah — dan aturan lama menolaknya.
-            if end_date.is_none_or(|e| e == start_date) && jb <= ja {
-                bail_user!("Jam pulang harus setelah jam keluar bila izinnya sehari.");
-            }
-            Some((ja, jb))
+            (Some(ja), Some(jb))
         }
     };
+    let akhir_hari = chrono::NaiveTime::from_hms_opt(23, 59, 59).expect("23:59:59 valid");
+    let mulai = start_date.and_time(jm.unwrap_or(chrono::NaiveTime::MIN));
+    let selesai = end_date.and_time(js.unwrap_or(akhir_hari));
+    // Urutan diperiksa pada RENTANGNYA, bukan pada jamnya. Pulang pukul 08:00
+    // setelah keluar pukul 14:00 dua hari sebelumnya jelas sah — aturan lama
+    // yang cuma membandingkan jam menolaknya.
+    if selesai <= mulai {
+        bail_user!("Waktu pulang harus setelah waktu keluar.");
+    }
     let reason = reason.trim();
     if reason.chars().count() < 5 {
         bail_user!("Tuliskan alasan izin (minimal 5 karakter).");
     }
-    Ok((kind, start_date, end_date, jam, reason.chars().take(500).collect()))
+    Ok((kind, mulai, selesai, reason.chars().take(500).collect()))
 }
 
 pub async fn submit_permit(
@@ -264,12 +259,10 @@ pub async fn submit_permit(
     jam_selesai: &str,
     reason: &str,
 ) -> Result<Vec<super::permits::PermitSplit>> {
-    let (kind, start_date, end_date, jam, reason) =
+    let (kind, mulai, selesai, reason) =
         validasi_izin(kind, start, end, jam_mulai, jam_selesai, reason)?;
 
-    super::permits::split_permit_per_wali(
-        pool, user_id, requested_by, kind, start_date, end_date, jam, &reason,
-    )
+    super::permits::split_permit_per_wali(pool, user_id, requested_by, kind, mulai, selesai, &reason)
     .await
 }
 
@@ -289,33 +282,18 @@ pub async fn pratinjau_izin(
     jam_selesai: &str,
 ) -> Result<crate::models::PratinjauIzin> {
     let kosong = crate::models::PratinjauIzin::default();
-    let Ok(start_date) = NaiveDate::parse_from_str(start.trim(), "%Y-%m-%d") else {
+    // Dipanggil SAMBIL ORANG MENGETIK: masukan setengah jadi menghasilkan
+    // pratinjau kosong, bukan galat. Aturan rentangnya sendiri sama persis
+    // dengan pengajuan sungguhan — dipinjam dari `validasi_izin` supaya angka
+    // yang dilihat santri mustahil berbeda dari yang nanti terjadi.
+    let Ok((_, mulai, selesai, _)) =
+        validasi_izin("leave", start, end, jam_mulai, jam_selesai, "pratinjau")
+    else {
         return Ok(kosong);
     };
-    let range_end = match end.trim() {
-        "" => start_date,
-        s => match NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-            Ok(d) if d >= start_date => d,
-            _ => return Ok(kosong),
-        },
-    };
-    let jam = match (jam_mulai.trim(), jam_selesai.trim()) {
-        ("", "") => None,
-        (a, b) => {
-            let (Ok(ja), Ok(jb)) = (
-                chrono::NaiveTime::parse_from_str(a, "%H:%M"),
-                chrono::NaiveTime::parse_from_str(b, "%H:%M"),
-            ) else {
-                return Ok(kosong);
-            };
-            if jb <= ja {
-                return Ok(kosong);
-            }
-            Some((ja, jb))
-        }
-    };
 
-    let affected = repo::affected_classes(pool, user_id, start_date, range_end).await?;
+    let affected =
+        repo::affected_classes(pool, user_id, mulai.date(), selesai.date()).await?;
 
     // Satu kelas bisa punya beberapa jadwal; sesinya dijumlahkan, kelasnya
     // tetap satu baris. Urutan kemunculan pertama dipertahankan supaya daftar
@@ -329,7 +307,7 @@ pub async fn pratinjau_izin(
     for c in &affected {
         // Aturan yang SAMA dengan pengajuan sungguhan (`tanggal_izin`) — angka
         // di pratinjau tak boleh berbeda dari yang nanti benar-benar terjadi.
-        let n = super::permits::tanggal_izin(c, start_date, range_end, jam).len() as i64;
+        let n = super::permits::tanggal_izin(c, mulai, selesai).len() as i64;
         if n == 0 {
             continue;
         }
@@ -376,8 +354,7 @@ pub async fn profil(pool: &Pool, user_id: i64) -> Result<ProfilData> {
     };
     let role_label = match p.role.as_str() {
         "admin" => "ADMIN",
-        "teacher" => "DEWAN GURU",
-        "supervisor" => "PAMONG",
+        "teacher" | "dewan_guru" => "DEWAN GURU",
         "santri" => "SANTRI",
         "parent" => "ORANG TUA",
         _ => "PENGGUNA",
@@ -484,4 +461,85 @@ pub async fn delete_ipk(pool: &Pool, user_id: i64, id: i64) -> Result<()> {
         bail_user!("Entri IPK tidak ditemukan.");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests_izin {
+    use super::validasi_izin;
+
+    fn ok(kind: &str, s: &str, e: &str, jm: &str, js: &str) -> (String, String) {
+        let (_, mulai, selesai) = match validasi_izin(kind, s, e, jm, js, "sakit demam") {
+            Ok((k, m, sl, _)) => (k, m, sl),
+            Err(err) => panic!("harusnya sah: {err}"),
+        };
+        (mulai.to_string(), selesai.to_string())
+    }
+    fn gagal(kind: &str, s: &str, e: &str, jm: &str, js: &str, alasan: &str) -> String {
+        validasi_izin(kind, s, e, jm, js, alasan)
+            .err()
+            .expect("harusnya ditolak")
+            .to_string()
+    }
+
+    /// Tanggal + jam dirakit jadi SATU rentang — inilah acuan kelas terlewat.
+    #[test]
+    fn tanggal_dan_jam_jadi_satu_rentang() {
+        let (m, s) = ok("leave", "2026-08-07", "2026-08-09", "14:00", "08:30");
+        assert_eq!(m, "2026-08-07 14:00:00");
+        assert_eq!(s, "2026-08-09 08:30:00");
+    }
+
+    /// Jam kosong = sehari penuh: 00:00 → 23:59:59, bukan NULL.
+    #[test]
+    fn jam_kosong_jadi_sehari_penuh() {
+        let (m, s) = ok("sick", "2026-08-07", "", "", "");
+        assert_eq!(m, "2026-08-07 00:00:00");
+        assert_eq!(s, "2026-08-07 23:59:59");
+    }
+
+    /// Tanggal selesai kosong = pulang di hari yang sama.
+    #[test]
+    fn tanggal_selesai_kosong_berarti_hari_yang_sama() {
+        let (m, s) = ok("keperluan", "2026-08-07", "", "09:00", "12:00");
+        assert_eq!(m, "2026-08-07 09:00:00");
+        assert_eq!(s, "2026-08-07 12:00:00");
+    }
+
+    /// REGRESI: urutan diperiksa pada RENTANGNYA, bukan pada jamnya. Keluar
+    /// Jumat 14:00 dan kembali Minggu 08:00 jelas sah — aturan lama yang cuma
+    /// membandingkan 08:00 < 14:00 menolaknya.
+    #[test]
+    fn pulang_pagi_di_hari_lain_tetap_sah() {
+        let (m, s) = ok("leave", "2026-08-07", "2026-08-09", "14:00", "08:00");
+        assert_eq!(m, "2026-08-07 14:00:00");
+        assert_eq!(s, "2026-08-09 08:00:00");
+    }
+
+    /// Rentang nol/terbalik di hari yang SAMA tetap ditolak.
+    #[test]
+    fn rentang_terbalik_ditolak() {
+        for (jm, js) in [("14:00", "09:00"), ("09:00", "09:00")] {
+            let e = gagal("leave", "2026-08-07", "2026-08-07", jm, js, "keperluan keluarga");
+            assert!(e.contains("setelah waktu keluar"), "pesan: {e}");
+        }
+        let e = gagal("leave", "2026-08-09", "2026-08-07", "", "", "keperluan keluarga");
+        assert!(e.contains("sebelum tanggal mulai"), "pesan: {e}");
+    }
+
+    /// Satu ujung jam saja tak membentuk rentang — menebak ujung lainnya
+    /// berarti mengarang izin atas nama santri.
+    #[test]
+    fn jam_setengah_terisi_ditolak() {
+        for (jm, js) in [("14:00", ""), ("", "08:00")] {
+            let e = gagal("leave", "2026-08-07", "", jm, js, "keperluan keluarga");
+            assert!(e.contains("kosongkan keduanya"), "pesan: {e}");
+        }
+    }
+
+    #[test]
+    fn jenis_dan_alasan_divalidasi() {
+        assert!(gagal("bolos", "2026-08-07", "", "", "", "alasan cukup").contains("tidak valid"));
+        assert!(gagal("sick", "2026-08-07", "", "", "", "flu").contains("minimal 5 karakter"));
+        assert!(gagal("sick", "", "", "", "", "alasan cukup").contains("Tanggal mulai"));
+    }
 }

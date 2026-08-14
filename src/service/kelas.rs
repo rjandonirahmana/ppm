@@ -845,10 +845,8 @@ pub async fn kelas_detail(
         jenjang: ci.jenjang.unwrap_or_default(),
         wali_kelas_id: ci.wali_kelas_id.unwrap_or(0),
         wali_kelas_name: ci.wali_kelas_name.unwrap_or_default(),
-        require_pamong: ci.require_pamong,
-        verify_mode: ci.verify_mode.clone(),
         can_manage: crate::models::role_satisfies(role, &["admin"]),
-        // WALI KELAS ikut. Sebelumnya hanya admin dan pamong — jadi guru yang
+        // WALI KELAS ikut. Sebelumnya hanya admin — jadi guru yang
         // baru saja ditunjuk jadi wali kelas mendapati kelasnya sendiri
         // terkunci: tak bisa membuat jadwal, tak bisa membuat sesi, tak bisa
         // menambahkan santri. Padahal menunjuk seseorang jadi wali kelas justru
@@ -918,15 +916,21 @@ pub async fn create_class(
     // wali kelas KBM adalah satu-satunya penyetuju izin santrinya, jadi kelas
     // KBM tanpa wali berarti izin santrinya menggantung tanpa tujuan sampai
     // ada yang sadar dan mengisinya belakangan.
-    let wali = if cat == "kbm" {
-        if wali_kelas_id <= 0 {
-            bail_user!("Kelas KBM wajib punya wali kelas — pilih gurunya dulu.");
-        }
-        Some(wali_kelas_id)
-    } else {
-        // Wali hanya ada di KBM (migrasi 65); yang terlanjur terpilih diabaikan.
-        None
-    };
+    // WAJIB di SEMUA kategori, bukan cuma KBM. Wali kelas adalah satu-satunya
+    // jabatan yang tersisa setelah pamong dihapus (migrasi 84): dialah yang
+    // menunjuk guru pengisi tiap sesi, dan yang memverifikasi kehadiran sendiri
+    // ketika sesi itu belum punya pengisi. Kelas piket/sholat tanpa wali berarti
+    // absensinya tak pernah ada yang mengesahkan — ia hanya lolos lewat
+    // verifikasi otomatis sehari kemudian, tanpa seorang pun menengoknya.
+    if wali_kelas_id <= 0 {
+        bail_user!(if cat == "kbm" {
+            "Kelas KBM wajib punya wali kelas — dialah penyetuju izin santrinya."
+        } else {
+            "Kelas wajib punya wali kelas — dialah yang menunjuk guru pengisi sesi \
+             dan mengesahkan absensinya."
+        });
+    }
+    let wali = Some(wali_kelas_id);
     repo::create_class(pool, name, Some(&cat), jen.as_deref(), wali, description.trim()).await
 }
 
@@ -942,13 +946,13 @@ pub async fn update_class(
         bail_user!("Nama kelas wajib diisi.");
     }
     let (cat, jen) = norm_kelas(category, jenjang)?;
-    // Berpindah JADI kelas KBM sementara walinya kosong sama saja dengan
-    // membuat kelas KBM tanpa wali lewat pintu belakang — izin santrinya
-    // langsung tak punya penyetuju. Suruh isi walinya dulu.
-    if cat == "kbm" && !repo::kelas_punya_wali(pool, class_id).await? {
+    // Kelas lama yang walinya kosong (dibuat sebelum aturan ini, atau sisa era
+    // pamong) tak dipaksa diperbaiki di sini — hanya dihalangi bila SEDANG
+    // disunting, supaya perbaikannya tak bisa terus ditunda tanpa disadari.
+    if !repo::kelas_punya_wali(pool, class_id).await? {
         bail_user!(
-            "Kelas KBM wajib punya wali kelas. Tetapkan wali kelasnya dulu di panel \
-             \"Wali Kelas & Verifikasi\", baru ubah jenisnya jadi KBM."
+            "Kelas ini belum punya wali kelas. Tetapkan dulu di panel \
+             \"Wali Kelas & Verifikasi\", baru simpan perubahannya."
         );
     }
     if !repo::update_class(pool, class_id, name, Some(&cat), jen.as_deref()).await? {
@@ -979,17 +983,24 @@ pub async fn set_class_wali(pool: &Pool, class_id: i64, wali_kelas_id: i64) -> R
     // (`kelas_kbm_santri` menyaring `category = 'kbm'`), jadi wali kelas apel
     // tak menambah satu pun tahap persetujuan.
     let kbm = repo::kelas_adalah_kbm(pool, class_id).await?;
-    // Wali KBM tak boleh DIKOSONGKAN, bukan cuma wajib saat dibuat. Tanpa ini
-    // aturan "wajib" bisa dilanggar semenit setelah kelasnya jadi, dan izin
-    // santrinya langsung kehilangan penyetuju.
-    if kbm && wali_kelas_id <= 0 {
-        bail_user!(
-            "Kelas KBM wajib punya wali kelas. Pilih guru penggantinya — \
-             wali kelas inilah yang menyetujui izin santri kelas ini."
-        );
+    // Wali tak boleh DIKOSONGKAN, bukan cuma wajib saat kelas dibuat. Tanpa ini
+    // aturan "wajib" bisa dilanggar semenit setelah kelasnya jadi.
+    if wali_kelas_id <= 0 {
+        bail_user!(if kbm {
+            "Kelas KBM wajib punya wali kelas. Pilih guru penggantinya — wali \
+             kelas inilah yang menyetujui izin santri kelas ini."
+        } else {
+            "Kelas wajib punya wali kelas. Pilih guru penggantinya — dialah yang \
+             menunjuk pengisi sesi dan mengesahkan absensi kelas ini."
+        });
     }
-    let wali = (wali_kelas_id > 0 && kbm).then_some(wali_kelas_id);
-    if !repo::set_class_staff(pool, class_id, wali, None, "guru").await? {
+    // Syarat `&& kbm` DIBUANG. Ia sisa aturan lama, dan efeknya diam-diam
+    // merusak: admin memilih wali untuk kelas piket/sholat, formulirnya
+    // melapor BERHASIL, tapi yang tertulis ke database NULL. Kelas itu lalu
+    // tak punya siapa pun yang mengesahkan absensinya — persis keadaan yang
+    // migrasi 84 coba hindari ketika mengangkat bekas pamong jadi wali.
+    let wali = (wali_kelas_id > 0).then_some(wali_kelas_id);
+    if !repo::set_class_staff(pool, class_id, wali).await? {
         bail_user!("Kelas tidak ditemukan.");
     }
     Ok(())
@@ -1560,11 +1571,7 @@ pub async fn students_data(pool: &Pool, user: &SessionUser) -> Result<StudentsDa
             ("tahap2", p?, cnt?)
         }
         // Dewan guru/admin → tahap FINAL semua sesi (oversight).
-        // 'supervisor' ikut di sini: perannya dihapus (migrasi 84) dan yang
-        // tersisa cuma klaim JWT lama — antrean tahap-1 pamong tak pernah
-        // terisi lagi, jadi mengarahkannya ke sana berarti tab verifikasi yang
-        // selamanya kosong.
-        "dewan_guru" | "admin" | "supervisor" => {
+        "dewan_guru" | "admin" => {
             let (p, cnt) =
                 tokio::join!(repo::pending_verify(pool, None, 50), repo::verified_today(pool));
             ("tahap2", p?, cnt?)

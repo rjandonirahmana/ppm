@@ -87,26 +87,15 @@ pub fn permit_kind_label(kind: &str) -> &'static str {
 ///
 /// `require_pamong` diturunkan per-permit dari KELAS yang izin ini tujukan
 /// (kolom `class_id`), bukan lagi dari kelas utama santri.
-pub fn permit_stage(
-    pamong_status: &str,
-    guru_status: &str,
-    require_pamong: bool,
-) -> (&'static str, &'static str) {
-    // Keputusan final wali kelas (terminal — didahulukan agar aman saat rute berubah).
+pub fn permit_stage(guru_status: &str) -> (&'static str, &'static str) {
+    // SATU tahap sejak pamong dihapus (migrasi 84/86): wali kelas memutuskan,
+    // titik. Dulu fungsi ini menimbang `pamong_status` + `require_pamong` lebih
+    // dulu — tiga masukan untuk satu jawaban yang kini hanya bergantung pada
+    // satu kolom.
     match guru_status {
-        "approved" => return ("Disetujui", "approved"),
-        "rejected" => return ("Ditolak Wali Kelas", "rejected"),
-        _ => {}
-    }
-    // Belum diputus wali kelas.
-    if require_pamong {
-        match pamong_status {
-            "rejected" => ("Ditolak Pamong", "rejected"),
-            "pending" => ("Menunggu Pamong", "pending_pamong"),
-            _ => ("Menunggu Wali Kelas", "pending_guru"),
-        }
-    } else {
-        ("Menunggu Wali Kelas", "pending_guru")
+        "approved" => ("Disetujui", "approved"),
+        "rejected" => ("Ditolak Wali Kelas", "rejected"),
+        _ => ("Menunggu Wali Kelas", "pending_guru"),
     }
 }
 
@@ -192,7 +181,7 @@ pub struct PratinjauIzin {
 pub struct ProfilData {
     pub name: String,
     pub username: String,
-    /// Peran mentah (santri/parent/teacher/dewan_guru/supervisor/admin) — utk memilih nav.
+    /// Peran mentah (santri/parent/teacher/dewan_guru/admin) — utk memilih nav.
     pub role: String,
     /// Label peran tampilan, mis. "SANTRI".
     pub role_label: String,

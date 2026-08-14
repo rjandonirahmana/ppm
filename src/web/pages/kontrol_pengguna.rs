@@ -214,7 +214,6 @@ fn InvitePanel() -> impl IntoView {
     // setara, jadi dewan guru tak boleh mencetaknya sendiri (server menolaknya
     // lewat service::registration::can_invite — dropdown ini hanya
     // menyembunyikan pilihan yang pasti ditolak).
-    // 'supervisor' (pamong) DIBUANG: perannya dihapus (migrasi 84).
     const ROLES: &[(&str, &str)] = &[
         ("santri", "Santri"),
         ("parent", "Orang Tua"),

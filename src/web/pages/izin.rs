@@ -238,52 +238,62 @@ pub fn IzinPage() -> impl IntoView {
                             </div>
                         </div>
 
-                        // Tanggal
-                        <div class="space-y-2">
-                            <label class="text-label-md text-on-surface-variant">"Mulai Tanggal"</label>
-                            <input
-                                type="date"
-                                class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-body-md text-on-surface"
-                                prop:value=move || start.get()
-                                on:input=move |ev| start.set(event_target_value(&ev))
-                                required=true
-                            />
-                        </div>
-                        <div class="space-y-2">
-                            <label class="text-label-md text-on-surface-variant">"Sampai Tanggal"</label>
-                            <input
-                                type="date"
-                                class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-body-md text-on-surface"
-                                prop:value=move || end.get()
-                                on:input=move |ev| end.set(event_target_value(&ev))
-                            />
-                        </div>
-
-                        // JAM KELUAR & JAM PULANG — opsional. Dikosongkan =
-                        // izin sehari penuh. Diisi = izin dihitung sebagai satu
-                        // rentang waktu: dari (tanggal mulai + jam keluar)
-                        // sampai (tanggal selesai + jam pulang), jadi kelas di
-                        // luar rentang itu TIDAK ikut terlewat.
-                        <div class="space-y-2">
-                            <label class="text-label-md text-on-surface-variant">
-                                "Jam keluar & jam pulang (kosongkan bila izin sehari penuh)"
-                            </label>
-                            <div class="grid grid-cols-2 gap-3">
-                                <input
-                                    type="time"
-                                    aria-label="Jam keluar"
-                                    class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-body-md text-on-surface"
-                                    prop:value=move || jam_mulai.get()
-                                    on:input=move |ev| jam_mulai.set(event_target_value(&ev))
-                                />
-                                <input
-                                    type="time"
-                                    aria-label="Jam pulang"
-                                    class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-body-md text-on-surface"
-                                    prop:value=move || jam_selesai.get()
-                                    on:input=move |ev| jam_selesai.set(event_target_value(&ev))
-                                />
+                        // KELUAR → KEMBALI, dua baris tanggal+jam yang sejajar.
+                        //
+                        // Bentuknya sengaja mengikuti apa yang disimpan: SATU
+                        // rentang waktu, dari (tanggal keluar + jam keluar)
+                        // sampai (tanggal kembali + jam kembali). Sebelumnya
+                        // dua tanggal berdiri sendiri di atas dan dua jam
+                        // berdiri sendiri di bawah, dan santri membacanya
+                        // sebagai "jam berlakunya izin SETIAP hari" — padahal
+                        // jam keluar itu milik tanggal keluar saja.
+                        //
+                        // Rentang inilah acuan kelas mana yang terhitung
+                        // terlewat: sebuah kelas terlewat bila jamnya beririsan
+                        // dengannya, tak peduli hari keberapa.
+                        <div class="space-y-3">
+                            <div class="space-y-2">
+                                <label class="text-label-md text-on-surface-variant">"Keluar"</label>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <input
+                                        type="date"
+                                        aria-label="Tanggal keluar"
+                                        class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-body-md text-on-surface"
+                                        prop:value=move || start.get()
+                                        on:input=move |ev| start.set(event_target_value(&ev))
+                                        required=true
+                                    />
+                                    <input
+                                        type="time"
+                                        aria-label="Jam keluar"
+                                        class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-body-md text-on-surface"
+                                        prop:value=move || jam_mulai.get()
+                                        on:input=move |ev| jam_mulai.set(event_target_value(&ev))
+                                    />
+                                </div>
                             </div>
+                            <div class="space-y-2">
+                                <label class="text-label-md text-on-surface-variant">"Kembali"</label>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <input
+                                        type="date"
+                                        aria-label="Tanggal kembali"
+                                        class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-body-md text-on-surface"
+                                        prop:value=move || end.get()
+                                        on:input=move |ev| end.set(event_target_value(&ev))
+                                    />
+                                    <input
+                                        type="time"
+                                        aria-label="Jam kembali"
+                                        class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-body-md text-on-surface"
+                                        prop:value=move || jam_selesai.get()
+                                        on:input=move |ev| jam_selesai.set(event_target_value(&ev))
+                                    />
+                                </div>
+                            </div>
+                            <p class="text-[11px] text-on-surface-variant">
+                                "Tanggal kembali kosong = pulang di hari yang sama. Jam kosong = izin sehari penuh."
+                            </p>
                         </div>
 
                         <PratinjauDampak
@@ -381,12 +391,22 @@ fn IzinStats(d: IzinData) -> impl IntoView {
                                 {a.sampai_label} " · " {sisa}
                                 {(!a.jam_label.is_empty()).then(|| format!(" · {}", a.jam_label))}
                             </p>
-                            // Kalimat ini yang penting: banyak santri mengira
-                            // satu izin sudah menutup seluruh masa sakitnya,
-                            // lalu tercatat ALFA begitu tanggalnya lewat.
-                            <p class="text-[11px] text-warning font-semibold mt-1">
-                                "Masih sakit setelah tanggal itu? Ajukan lagi di bawah sebelum masa izinmu habis — hari yang tak tertutup izin dihitung alfa."
-                            </p>
+                            // HANYA untuk SAKIT: itu satu-satunya jenis yang
+                            // benar-benar bisa memanjang di luar rencana, dan
+                            // banyak santri mengira satu izin sudah menutup
+                            // seluruh masa sakitnya lalu tercatat ALFA begitu
+                            // tanggalnya lewat. Pulang & keperluan sudah punya
+                            // tanggal kembali yang disepakati sejak awal —
+                            // mengajak mereka "ajukan lagi" hanya mengundang
+                            // pengajuan yang tak perlu.
+                            {(a.kind == "sick")
+                                .then(|| {
+                                    view! {
+                                        <p class="text-[11px] text-warning font-semibold mt-1">
+                                            "Masih sakit setelah tanggal itu? Ajukan lagi di bawah sebelum masa izinmu habis — hari yang tak tertutup izin dihitung alfa."
+                                        </p>
+                                    }
+                                })}
                         </div>
                     </div>
                 }

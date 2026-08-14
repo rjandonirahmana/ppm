@@ -1188,7 +1188,9 @@ fn AbsensiVerifikasiPanel(
                             view! {
                                 <div class="pt-3 border-t border-outline-variant/50 space-y-2">
                                     <div class="flex items-center justify-between">
-                                        <p class="text-body-sm font-bold text-on-background">{v.stage_label}</p>
+                                        <p class="text-body-sm font-bold text-on-background">
+                                            "Verifikasi Kehadiran"
+                                        </p>
                                         <span class="text-[11px] text-on-surface-variant">
                                             {format!("{total} menunggu")}
                                         </span>

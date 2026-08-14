@@ -15,7 +15,7 @@ use leptos_router::hooks::use_query_map;
 use crate::models::{BookProgressItem, PendingAtt, StudentRowItem};
 use crate::web::api::{
     angkatan_tersedia_data, students_page_data,
-    decide_pamong, decide_verify, student_book_progress_data,
+    decide_verify, student_book_progress_data,
     student_book_progress_for_viewer, students_data,
 };
 use crate::web::components::{
@@ -152,21 +152,14 @@ pub fn StudentsPage() -> impl IntoView {
                                         let total = d.total_santri.max(0) as usize;
                                         let pending = StoredValue::new(d.pending.clone());
                                         let verified_today = d.verified_today;
-
-                                        // Aksi verifikasi: cabang sesuai tahap peran.
-                                        // `is_t1` bool (Copy) agar closure tetap Copy.
-                                        let is_t1 = stage == "tahap1";
+                                        // SATU tahap verifikasi (migrasi 84/86).
                                         let decide = move |id: i64, approve: bool| {
                                             if busy_id.get_untracked().is_some() {
                                                 return;
                                             }
                                             busy_id.set(Some(id));
                                             leptos::task::spawn_local(async move {
-                                                let _ = if is_t1 {
-                                                    decide_pamong(id, approve).await
-                                                } else {
-                                                    decide_verify(id, approve).await
-                                                };
+                                                let _ = decide_verify(id, approve).await;
                                                 busy_id.set(None);
                                                 data.refetch();
                                             });

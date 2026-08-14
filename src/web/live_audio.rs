@@ -51,7 +51,7 @@ pub(crate) fn auth(state: &AppState, headers: &HeaderMap) -> Result<Claims, Stat
 }
 
 fn is_staff(role: &str) -> bool {
-    matches!(role, "admin" | "supervisor" | "dewan_guru" | "teacher")
+    matches!(role, "admin" | "dewan_guru" | "teacher")
 }
 
 /// Peran yang memang mengawasi SELURUH kelas — tak perlu keterkaitan data.
@@ -347,7 +347,7 @@ pub async fn post_chunk(
         // ada gantinya. Cek hanya di seq=0, jadi potongan susulan tetap tak
         // menyentuh DB (filosofi modul ini dipertahankan).
         match crate::repository::session_broadcasters(&state.pool, session_id).await {
-            Ok(Some((teacher, pamong, wali, status))) => {
+            Ok(Some((teacher, wali, status))) => {
                 // Sesi yang sudah selesai/batal tak menerima siaran lagi —
                 // rekamannya sudah dipindah dan berkas lokalnya dihapus, jadi
                 // potongan susulan hanya melahirkan berkas yatim yang isinya
@@ -358,10 +358,10 @@ pub async fn post_chunk(
                 }
                 if !is_pengawas(&claims.role) {
                     let me = Some(claims.user_id);
-                    if teacher != me && pamong != me && wali != me {
+                    if teacher != me && wali != me {
                         tracing::warn!(
                             session_id, user_id = claims.user_id,
-                            "tolak siaran: bukan pengisi/pamong/wali sesi ini"
+                            "tolak siaran: bukan guru pengisi / wali sesi ini"
                         );
                         return StatusCode::FORBIDDEN.into_response();
                     }

@@ -51,7 +51,7 @@ fn warna_kategori(kategori: &str) -> &'static str {
 #[component]
 pub fn KalenderPage() -> impl IntoView {
     // Detail sesi (`/sesi/:id`) hanya untuk petugas — `session_detail_data`
-    // menuntut teacher/supervisor/admin/dewan_guru. Kalender ini dibaca SEMUA
+    // menuntut teacher/admin/dewan_guru. Kalender ini dibaca SEMUA
     // peran, jadi barisnya cuma jadi tautan bagi yang memang bisa membukanya.
     // Menautkan untuk semua orang berarti menawarkan santri sebuah tautan yang
     // pasti berakhir "tak berwenang".
@@ -70,7 +70,7 @@ pub fn KalenderPage() -> impl IntoView {
             .map(|u| {
                 crate::models::role_satisfies(
                     &u.role,
-                    &["teacher", "supervisor", "admin", "dewan_guru"],
+                    &["teacher", "admin", "dewan_guru"],
                 )
             })
             .unwrap_or(false)

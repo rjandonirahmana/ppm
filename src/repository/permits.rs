@@ -1,95 +1,52 @@
-//! repository/permits.rs — Query tabel permit_requests (izin/sakit/keperluan).
+//! repository/permits.rs — Query pengajuan & antrean izin.
 //!
-//! Migrasi 46 — izin PER-KELAS. Satu pengajuan izin memecah diri jadi beberapa
-//! baris `permit_requests`: satu untuk tiap WALI KELAS yang kelasnya dilewati
-//! selama rentang izin. Contoh: izin 2 hari melewati kelas A (wali X), B & C
-//! (wali Y) → 2 baris, satu ke wali X satu ke wali Y.
+//! SATU tahap: wali kelas KBM santri memutuskan, titik. Peran lama beserta
+//! seluruh kolomnya dihapus (migrasi 84 & 86).
 //!
-//! Alur per-baris: Pamong kelas (bila `require_pamong` DAN kelas itu punya
-//! pamong) → Wali Kelas (FINAL). Kelas ber-`require_pamong` tapi `pamong_id`
-//! masih NULL TIDAK memblokir izin — tahap pamong dilewati, izin langsung ke
-//! wali kelas. Tanpa ini izin macet permanen: tak ada pamong yang cocok untuk
-//! menyetujui, sementara tahap final menuntut `pamong_status = 'approved'`.
-//! Orang tua TIDAK lagi jadi penyetuju (kolom parent_* dihapus di migrasi 46) —
-//! izin adalah urusan akademik; orang tua cukup dinotifikasi.
+//! Izin disimpan sebagai RENTANG WAKTU (`start_time`/`end_time`, keduanya
+//! TIMESTAMP sejak migrasi 86): dari saat santri keluar sampai saat ia kembali.
+//! Izin sehari penuh = 00:00 → 23:59:59 pada tanggal yang sama, bukan keadaan
+//! khusus. Semua pertanyaan "kelas ini terlewat atau tidak" dijawab dengan satu
+//! aturan: apakah jam kelasnya beririsan dengan rentang itu.
 
 use anyhow::{Context, Result};
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use deadpool_postgres::Pool;
 
 /// Target notifikasi izin: penyetuju kelas UTAMA santri (wali kelas selalu;
-/// pamong hanya bila `require_pamong` = verifikasi 2 langkah).
+/// Wali kelas kelas tujuan izin.
+/// Wali kelas penerima notifikasi izin (nama & HP).
 pub struct PermitNotifyTargets {
     pub student_name: String,
-    pub require_pamong: bool,
-    pub wali_name: Option<String>,
     pub wali_phone: Option<String>,
-    pub pamong_name: Option<String>,
-    pub pamong_phone: Option<String>,
 }
 
-/// Ambil wali kelas + pamong (nama & HP) penyetuju izin.
-///
-/// `class_id` Some = kelas TUJUAN izin (migrasi 46) — dipakai saat satu ajuan
-/// terpecah ke beberapa wali; None = fallback ke kelas KBM santri (migrasi 65),
-/// untuk izin lama atau santri tanpa kelas terjadwal. Kelas KBM-lah yang punya
-/// wali kelas penanggung jawab; kelas non-KBM (piket, apel) kerap tak punya.
+/// Wali kelas yang harus diberi tahu bahwa ada izin baru di kelasnya.
 pub async fn permit_notify_targets(
     pool: &Pool,
     student_id: i64,
     class_id: Option<i64>,
 ) -> Result<Option<PermitNotifyTargets>> {
     let c = pool.get().await?;
+    let sql = format!(
+        "SELECT u.full_name, w.phone_number \
+           FROM users u \
+           LEFT JOIN classes tc ON tc.id = $2 \
+           {kelas} \
+           LEFT JOIN users w ON w.id = COALESCE(tc.wali_kelas_id, cl.wali_kelas_id) \
+          WHERE u.id = $1",
+        kelas = super::kelas_utama_lateral("u.id"),
+    );
     let row = c
-        .query_opt(
-            "SELECT s.full_name, \
-                    COALESCE(cl.require_pamong, TRUE), \
-                    w.full_name, w.phone_number, \
-                    pm.full_name, pm.phone_number \
-             FROM users s \
-             LEFT JOIN LATERAL ( \
-                 SELECT cp_ku.class_id FROM class_participants cp_ku \
-                   JOIN classes c ON c.id = cp_ku.class_id \
-                  WHERE cp_ku.user_id = s.id AND $2::bigint IS NULL \
-                  ORDER BY (c.category = 'kbm') DESC, c.id \
-                  LIMIT 1 \
-             ) cp ON TRUE \
-             LEFT JOIN classes cl ON cl.id = COALESCE($2::bigint, cp.class_id) \
-             LEFT JOIN users w  ON w.id = cl.wali_kelas_id \
-             LEFT JOIN users pm ON pm.id = cl.pamong_id \
-             WHERE s.id = $1 \
-             LIMIT 1",
-            &[&student_id, &class_id],
-        )
+        .query_opt(&sql, &[&student_id, &class_id])
         .await
         .context("permit_notify_targets")?;
     Ok(row.map(|r| PermitNotifyTargets {
         student_name: r.get(0),
-        require_pamong: r.get(1),
-        wali_name: r.get(2),
-        wali_phone: r.get(3),
-        pamong_name: r.get(4),
-        pamong_phone: r.get(5),
+        wali_phone: r.get(1),
     }))
 }
 
-/// Kelas KBM seorang santri — acuan SELURUH perizinannya.
-///
-/// Sejak migrasi 65 wali kelas hanya ada di kelas KBM dan satu santri hanya
-/// punya satu (dijaga `trg_satu_kelas_kbm`), jadi pertanyaan "siapa yang
-/// menyetujui izin santri ini" selalu punya satu jawaban — terlepas dari kelas
-/// mana saja yang kebetulan terlewat izinnya.
-///
-/// KENAPA TIDAK diambil dari kelas terdampak. Dulu kelas acuan dipilih dengan
-/// mencari kelas ber-wali DI ANTARA yang terlewat. Izin yang hanya menyentuh
-/// kegiatan non-KBM — sholat, apel, piket, yang memang tak punya wali — karena
-/// itu lahir tanpa kelas acuan sama sekali: tanpa wali yang dituju, dan tanpa
-/// pamong yang bisa menemukannya di antrean. Izin seperti itu menggantung tanpa
-/// ada satu pun layar yang menampilkannya.
-///
-/// Padahal jawabannya tak pernah bergantung pada kelas yang terlewat: wali KBM
-/// santri tetap walinya, dan setelan dua-tahap kelas KBM itulah yang berlaku,
-/// walau yang ditinggalkan hanya apel malam.
 pub struct KelasKbmSantri {
     pub class_id: i64,
     pub class_name: String,
@@ -130,7 +87,6 @@ pub struct AffectedClass {
     pub class_name: String,
     pub wali_kelas_id: Option<i64>,
     pub wali_name: Option<String>,
-    pub require_pamong: bool,
     /// once|daily|weekly|monthly|custom — ditafsirkan `dates_in_range`.
     pub recurrence_type: String,
     pub sched_start: NaiveDate,
@@ -140,10 +96,9 @@ pub struct AffectedClass {
     /// dan tanpa daftar ini pola-nya tak bisa diuji sama sekali.
     pub custom_dates: Vec<String>,
     /// Jam jadwal ini. Dibawa keluar karena penyaringan jam TAK BISA dilakukan
-    /// di SQL: apakah sebuah kelas terlewat bergantung pada HARI KEBERAPA ia
-    /// jatuh dalam rentang izin (hari pertama dipotong jam keluar, hari
-    /// terakhir dipotong jam pulang, hari di antaranya penuh) — dan tanggal
-    /// itu baru dihitung di Rust oleh `dates_in_range`.
+    /// di SQL: tanggal mana saja yang dihasilkan sebuah pola perulangan baru
+    /// diketahui setelah `dates_in_range` menghitungnya di Rust. Aturan
+    /// jamnya sendiri seragam — lihat `service::permits::tanggal_izin`.
     pub jam_mulai: NaiveTime,
     pub jam_selesai: NaiveTime,
 }
@@ -195,7 +150,6 @@ pub async fn affected_classes(
             // kelas di antara dua titik itu ikut terlewat. Keputusannya kini di
             // Rust, per tanggal (`service::permits::tanggal_izin`).
             "SELECT cl.id, cl.name, cl.wali_kelas_id, w.full_name, \
-                    COALESCE(cl.require_pamong, TRUE), \
                     cs.recurrence_type, cs.start_date, cs.end_date, \
                     cs.start_time, cs.end_time, \
                     (SELECT COALESCE(jsonb_agg(d.v), '[]'::jsonb) \
@@ -222,14 +176,13 @@ pub async fn affected_classes(
             class_name: r.get(1),
             wali_kelas_id: r.get(2),
             wali_name: r.get(3),
-            require_pamong: r.get(4),
-            recurrence_type: r.get(5),
-            sched_start: r.get(6),
-            sched_end: r.get(7),
-            jam_mulai: r.get(8),
-            jam_selesai: r.get(9),
+            recurrence_type: r.get(4),
+            sched_start: r.get(5),
+            sched_end: r.get(6),
+            jam_mulai: r.get(7),
+            jam_selesai: r.get(8),
             custom_dates: r
-                .get::<_, Option<serde_json::Value>>(10)
+                .get::<_, Option<serde_json::Value>>(9)
                 .and_then(|v| {
                     v.as_array().map(|a| {
                         a.iter().filter_map(|x| x.as_str().map(String::from)).collect()
@@ -264,21 +217,19 @@ pub async fn dampak_izin(
     let c = pool.get().await?;
     let rows = c
         .query(
+            // Cakupan dihitung dari IRISAN WAKTU + keanggotaan kelas, bukan
+            // dari daftar kelas tersimpan (migrasi 86). Sesi yang jamnya
+            // beririsan dengan rentang izin = sesi yang akan kosong.
             "SELECT p.id, cl.name, COUNT(s.id)::bigint \
              FROM permit_requests p \
-             JOIN permit_request_classes prc ON prc.permit_id = p.id \
-             JOIN classes cl ON cl.id = prc.class_id \
-             LEFT JOIN class_sessions s ON s.class_id = prc.class_id \
+             JOIN class_participants cp ON cp.user_id = p.user_id \
+             JOIN classes cl ON cl.id = cp.class_id \
+             JOIN class_sessions s ON s.class_id = cp.class_id \
                   AND s.status <> 'cancelled' \
-                  AND s.session_date BETWEEN p.start_date \
-                                         AND COALESCE(p.end_date, p.start_date) \
-             LEFT JOIN class_schedules sch ON sch.id = s.class_schedule_id \
+             JOIN class_schedules sch ON sch.id = s.class_schedule_id \
              WHERE p.id = ANY($1::bigint[]) \
-               AND (p.start_time IS NULL OR sch.start_time IS NULL \
-                    OR ((s.session_date + sch.start_time) \
-                            < (COALESCE(p.end_date, p.start_date) + p.end_time) \
-                        AND (s.session_date + sch.end_time) \
-                            > (p.start_date + p.start_time))) \
+               AND (s.session_date + sch.start_time) < p.end_time \
+               AND (s.session_date + sch.end_time) > p.start_time \
              GROUP BY p.id, cl.id, cl.name \
              ORDER BY p.id, cl.name",
             &[&permit_ids],
@@ -303,68 +254,40 @@ pub async fn dampak_izin(
     Ok(out)
 }
 
-/// Catat kelas-kelas yang DICAKUP sebuah izin (migrasi 64).
-///
-/// Terpisah dari `permit_requests.class_id` yang cuma kelas acuan persetujuan:
-/// izin satu wali kerap mencakup beberapa kelas sekaligus, dan sebelum tabel
-/// ini ada, kelas selain yang pertama tak tercatat di mana pun — sesinya tetap
-/// di-alpa-kan otomatis meski izinnya sudah disetujui.
-pub async fn insert_permit_classes(pool: &Pool, permit_id: i64, class_ids: &[i64]) -> Result<u64> {
-    if class_ids.is_empty() {
-        return Ok(0);
-    }
-    let c = pool.get().await?;
-    let n = c
-        .execute(
-            "INSERT INTO permit_request_classes (permit_id, class_id) \
-             SELECT $1, cid FROM unnest($2::bigint[]) AS cid \
-             ON CONFLICT DO NOTHING",
-            &[&permit_id, &class_ids],
-        )
-        .await
-        .context("insert_permit_classes")?;
-    Ok(n)
-}
-
 /// Sisipkan SATU baris izin yang ditujukan ke satu kelas + wali kelas tertentu.
-/// Dipanggil berulang oleh `auto_create_permits_per_wali` (sekali per wali unik).
+///
+/// Rentangnya satu potongan waktu utuh: `mulai` = saat santri keluar,
+/// `selesai` = saat ia kembali (migrasi 86). Izin sehari penuh diwakili
+/// 00:00 → 23:59:59 pada tanggal yang sama — bukan keadaan khusus, cuma rentang
+/// yang kebetulan selebar satu hari.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_permit(
     pool: &Pool,
     user_id: i64,
     requested_by: i64,
     kind: &str,
-    start_date: NaiveDate,
-    end_date: Option<NaiveDate>,
-    // `jam`: berlaku sama untuk setiap hari dalam rentang; None = sehari
-    // penuh (migrasi 66).
-    jam: Option<(NaiveTime, NaiveTime)>,
+    mulai: NaiveDateTime,
+    selesai: NaiveDateTime,
     reason: &str,
     class_id: Option<i64>,
     wali_kelas_id: Option<i64>,
 ) -> Result<i64> {
-    let (jam_mulai, jam_selesai) = match jam {
-        Some((a, b)) => (Some(a), Some(b)),
-        None => (None, None),
-    };
     let c = pool.get().await?;
     let row = c
         .query_one(
             "INSERT INTO permit_requests \
-                (user_id, requested_by, type, reason, start_date, end_date, class_id, \
-                 wali_kelas_id, start_time, end_time) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id",
+                (user_id, requested_by, type, reason, start_time, end_time, class_id, \
+                 wali_kelas_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
             &[
                 &user_id,
                 &requested_by,
                 &kind,
                 &reason,
-                &start_date,
-                &end_date,
+                &mulai,
+                &selesai,
                 &class_id,
                 &wali_kelas_id,
-                &jam_mulai,
-                &jam_selesai,
             ],
         )
         .await
@@ -378,13 +301,9 @@ pub struct PermitRow {
     pub oleh_ortu: bool,
     pub requester_name: String,
     pub kind: String,
-    pub start_date: NaiveDate,
-    pub end_date: Option<NaiveDate>,
-    pub pamong_status: String,
+    pub mulai: NaiveDateTime,
+    pub selesai: NaiveDateTime,
     pub guru_status: String,
-    /// Rute lewat pamong? Diturunkan dari KELAS tujuan izin (migrasi 46),
-    /// fallback ke kelas utama santri untuk baris lama hasil backfill.
-    pub require_pamong: bool,
     /// Nama kelas yang izin ini tujukan — supaya santri tahu izinnya terpecah
     /// ke mana saja ("Menunggu Wali Kelas — Fiqih Lanjutan").
     pub class_name: Option<String>,
@@ -401,13 +320,9 @@ pub struct PermitDetailRow {
     pub student_name: String,
     pub kind: String,
     pub reason: String,
-    pub start_date: NaiveDate,
-    pub end_date: Option<NaiveDate>,
-    pub start_time: Option<NaiveTime>,
-    pub end_time: Option<NaiveTime>,
-    pub pamong_status: String,
+    pub mulai: NaiveDateTime,
+    pub selesai: NaiveDateTime,
     pub guru_status: String,
-    pub require_pamong: bool,
     pub class_name: Option<String>,
     pub wali_kelas_id: Option<i64>,
     pub wali_name: Option<String>,
@@ -423,9 +338,7 @@ pub async fn permit_detail(pool: &Pool, permit_id: i64) -> Result<Option<PermitD
     let c = pool.get().await?;
     let sql = format!(
         "SELECT p.id, p.user_id, u.full_name, p.type, p.reason, \
-                p.start_date, p.end_date, p.start_time, p.end_time, \
-                p.pamong_status, p.guru_status, \
-                COALESCE(tc.require_pamong, cl.require_pamong, TRUE), \
+                p.start_time, p.end_time, p.guru_status, \
                 COALESCE(tc.name, cl.name), \
                 COALESCE(p.wali_kelas_id, tc.wali_kelas_id, cl.wali_kelas_id), \
                 w.full_name, p.requested_by, rb.full_name, rb.role, p.created_at \
@@ -445,20 +358,16 @@ pub async fn permit_detail(pool: &Pool, permit_id: i64) -> Result<Option<PermitD
         student_name: r.get(2),
         kind: r.get(3),
         reason: r.get(4),
-        start_date: r.get(5),
-        end_date: r.get(6),
-        start_time: r.get(7),
-        end_time: r.get(8),
-        pamong_status: r.get(9),
-        guru_status: r.get(10),
-        require_pamong: r.get(11),
-        class_name: r.get(12),
-        wali_kelas_id: r.get(13),
-        wali_name: r.get(14),
-        requested_by: r.get(15),
-        requester_name: r.get::<_, Option<String>>(16).unwrap_or_default(),
-        requester_role: r.get::<_, Option<String>>(17).unwrap_or_default(),
-        created_at: r.get(18),
+        mulai: r.get(5),
+        selesai: r.get(6),
+        guru_status: r.get(7),
+        class_name: r.get(8),
+        wali_kelas_id: r.get(9),
+        wali_name: r.get(10),
+        requested_by: r.get(11),
+        requester_name: r.get::<_, Option<String>>(12).unwrap_or_default(),
+        requester_role: r.get::<_, Option<String>>(13).unwrap_or_default(),
+        created_at: r.get(14),
     }))
 }
 
@@ -480,21 +389,15 @@ pub async fn update_permit(
     permit_id: i64,
     actor_id: i64,
     kind: &str,
-    start_date: NaiveDate,
-    end_date: Option<NaiveDate>,
-    jam: Option<(NaiveTime, NaiveTime)>,
+    mulai: NaiveDateTime,
+    selesai: NaiveDateTime,
     reason: &str,
 ) -> Result<bool> {
-    let (jam_mulai, jam_selesai) = match jam {
-        Some((a, b)) => (Some(a), Some(b)),
-        None => (None, None),
-    };
     let c = pool.get().await?;
     let n = c
         .execute(
             "UPDATE permit_requests p \
-                SET type = $3, start_date = $4, end_date = $5, \
-                    start_time = $6, end_time = $7, reason = $8 \
+                SET type = $3, start_time = $4, end_time = $5, reason = $6 \
               WHERE p.id = $1 \
                 AND p.guru_status = 'pending' \
                 AND (p.user_id = $2 OR p.wali_kelas_id = $2)",
@@ -502,10 +405,8 @@ pub async fn update_permit(
                 &permit_id,
                 &actor_id,
                 &kind,
-                &start_date,
-                &end_date,
-                &jam_mulai,
-                &jam_selesai,
+                &mulai,
+                &selesai,
                 &reason,
             ],
         )
@@ -514,41 +415,12 @@ pub async fn update_permit(
     Ok(n > 0)
 }
 
-/// Ganti seluruh cakupan kelas sebuah izin (dipakai setelah tanggalnya diubah).
-///
-/// Hapus-lalu-sisipkan, bukan menambahkan: mengubah rentang izin bisa membuat
-/// kelas yang tadinya terdampak jadi tak terdampak lagi, dan baris lama yang
-/// tertinggal akan terus membebaskan santri dari auto-alpa di kelas yang
-/// sebenarnya sudah di luar izinnya.
-pub async fn ganti_cakupan_izin(pool: &Pool, permit_id: i64, class_ids: &[i64]) -> Result<()> {
-    let mut c = pool.get().await?;
-    let tx = c.transaction().await.context("ganti_cakupan tx")?;
-    tx.execute(
-        "DELETE FROM permit_request_classes WHERE permit_id = $1",
-        &[&permit_id],
-    )
-    .await
-    .context("ganti_cakupan hapus")?;
-    if !class_ids.is_empty() {
-        tx.execute(
-            "INSERT INTO permit_request_classes (permit_id, class_id) \
-             SELECT $1, cid FROM unnest($2::bigint[]) AS cid ON CONFLICT DO NOTHING",
-            &[&permit_id, &class_ids],
-        )
-        .await
-        .context("ganti_cakupan sisip")?;
-    }
-    tx.commit().await.context("ganti_cakupan commit")?;
-    Ok(())
-}
-
 pub async fn list_my_permits(pool: &Pool, user_id: i64, limit: i64) -> Result<Vec<PermitRow>> {
     let c = pool.get().await?;
     let rows = c
         .query(
             &format!(
-                "SELECT p.type, p.start_date, p.end_date, p.pamong_status, p.guru_status, \
-                    COALESCE(tc.require_pamong, cl.require_pamong, TRUE), tc.name, \
+                "SELECT p.type, p.start_time, p.end_time, p.guru_status, tc.name, \
                     p.id, (p.requested_by <> p.user_id AND rb.role = 'parent'), \
                     COALESCE(rb.full_name, '') \
              FROM permit_requests p \
@@ -566,15 +438,13 @@ pub async fn list_my_permits(pool: &Pool, user_id: i64, limit: i64) -> Result<Ve
         .into_iter()
         .map(|r| PermitRow {
             kind: r.get(0),
-            start_date: r.get(1),
-            end_date: r.get(2),
-            pamong_status: r.get(3),
-            guru_status: r.get(4),
-            require_pamong: r.get(5),
-            class_name: r.get(6),
-            id: r.get(7),
-            oleh_ortu: r.get(8),
-            requester_name: r.get(9),
+            mulai: r.get(1),
+            selesai: r.get(2),
+            guru_status: r.get(3),
+            class_name: r.get(4),
+            id: r.get(5),
+            oleh_ortu: r.get(6),
+            requester_name: r.get(7),
         })
         .collect())
 }
@@ -583,202 +453,64 @@ pub async fn list_my_permits(pool: &Pool, user_id: i64, limit: i64) -> Result<Ve
 // `pending_parent_confirms` & `confirm_parent_permit` ikut dihapus — orang tua
 // kini hanya MELIHAT izin anaknya (lihat repository/parents.rs), tak memutus.
 
-// ── Tahap 1: PAMONG kelas ─────────────────────────────────────────────────────
+// ── Antrean keputusan WALI KELAS (satu-satunya tahap) ────────────────────────
 
-pub struct PendingPamongRow {
+/// Satu baris antrean izin yang menunggu keputusan wali kelas.
+pub struct PermitQueueRow {
     pub id: i64,
     pub student_name: String,
     pub nis: Option<String>,
     pub class_name: Option<String>,
     pub kind: String,
-    pub start_date: NaiveDate,
-    pub end_date: Option<NaiveDate>,
+    /// Rentang izin — keluar & kembali, lengkap dengan jamnya (migrasi 86).
+    pub mulai: NaiveDateTime,
+    pub selesai: NaiveDateTime,
     pub reason: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    /// Jam berlaku bila izinnya per jam (migrasi 66); None = sehari penuh.
-    pub start_time: Option<NaiveTime>,
-    pub end_time: Option<NaiveTime>,
-    /// Kelas tujuan memakai verifikasi dua langkah DAN punya pamong — penentu
-    /// apakah indikator kemajuan menampilkan tahap pamong.
-    pub dua_tahap: bool,
-    /// Tahap pamong sudah disetujui? (Tidak memblokir wali — lihat
-    /// `pending_guru_permits`.)
-    pub pamong_ok: bool,
+    pub created_at: DateTime<Utc>,
 }
-
-/// Antrean pamong: izin yang menuju KELAS yang wajib via pamong
-/// (`require_pamong`), menunggu keputusan pamong kelas itu. Guard `pamong_id`
-/// memakai pamong KELAS TUJUAN izin (`p.class_id`), bukan kelas utama santri —
-/// inilah inti migrasi 46: izin ke kelas X hanya boleh diputus pamong kelas X.
-/// `default_require` = fallback bila izin lama belum punya `class_id`.
-pub async fn pending_pamong_permits(
-    pool: &Pool,
-    default_require: bool,
-    pamong_id: Option<i64>,
-    limit: i64,
-) -> Result<Vec<PendingPamongRow>> {
-    let c = pool.get().await?;
-    let rows = c
-        .query(
-            &format!(
-                "SELECT p.id, u.full_name, u.nis, COALESCE(tc.name, cl.name), \
-                p.type, p.start_date, p.end_date, p.reason, p.created_at, \
-                p.start_time, p.end_time, \
-                (COALESCE(tc.require_pamong, cl.require_pamong, $2) \
-                 AND COALESCE(tc.pamong_id, cl.pamong_id) IS NOT NULL) AS dua_tahap, \
-                (p.pamong_status = 'approved') AS pamong_ok \
-             FROM permit_requests p JOIN users u ON u.id = p.user_id \
-             LEFT JOIN classes tc ON tc.id = p.class_id \
-             {kelas} \
-             WHERE p.pamong_status = 'pending' AND p.guru_status = 'pending' \
-                AND COALESCE(tc.require_pamong, cl.require_pamong, $2) = TRUE \
-                AND ($3::bigint IS NULL OR COALESCE(tc.pamong_id, cl.pamong_id) = $3) \
-             ORDER BY p.created_at ASC LIMIT $1",
-                kelas = super::kelas_utama_lateral("p.user_id"),
-            ),
-            &[&limit, &default_require, &pamong_id],
-        )
-        .await
-        .context("pending_pamong_permits")?;
-    Ok(rows
-        .into_iter()
-        .map(|r| PendingPamongRow {
-            id: r.get(0),
-            student_name: r.get(1),
-            nis: r.get(2),
-            class_name: r.get(3),
-            kind: r.get(4),
-            start_date: r.get(5),
-            end_date: r.get(6),
-            reason: r.get(7),
-            created_at: r.get(8),
-            start_time: r.get(9),
-            end_time: r.get(10),
-            dua_tahap: r.get(11),
-            pamong_ok: r.get(12),
-        })
-        .collect())
-}
-
-/// Jumlah izin diputuskan pamong HARI INI (statistik antrean).
-pub async fn pamong_permits_decided_today(pool: &Pool, pamong_id: Option<i64>) -> Result<i64> {
-    let c = pool.get().await?;
-    let row = c
-        .query_one(
-            &format!(
-                "SELECT COUNT(*) FROM permit_requests p \
-             LEFT JOIN classes tc ON tc.id = p.class_id \
-             {kelas} \
-             WHERE p.pamong_status <> 'pending' \
-                AND {hari} \
-                AND ($1::bigint IS NULL OR COALESCE(tc.pamong_id, cl.pamong_id) = $1)",
-                kelas = super::kelas_utama_lateral("p.user_id"),
-                hari = super::hari_ini_wib("p.pamong_at"),
-            ),
-            &[&pamong_id],
-        )
-        .await
-        .context("pamong_permits_decided_today")?;
-    Ok(row.get(0))
-}
-
-/// Setujui/tolak izin oleh pamong (tahap 1). Guard: KELAS TUJUAN izin
-/// (`p.class_id`) wajib via pamong (`require_pamong`) DAN pamong kelas itu =
-/// `pamong_id`. Izin lama tanpa `class_id` jatuh ke kelas utama santri.
-pub async fn decide_pamong_permit(
-    pool: &Pool,
-    permit_id: i64,
-    approve: bool,
-    default_require: bool,
-    pamong_id: Option<i64>,
-    staff_id: i64,
-) -> Result<bool> {
-    let status = if approve { "approved" } else { "rejected" };
-    let c = pool.get().await?;
-    let n = c
-        .execute(
-            "UPDATE permit_requests p SET pamong_status = $2, pamong_by = $3, pamong_at = NOW() \
-             WHERE p.id = $1 AND p.pamong_status = 'pending' AND p.guru_status = 'pending' \
-                AND COALESCE( \
-                    (SELECT c.require_pamong FROM classes c WHERE c.id = p.class_id), \
-                    (SELECT c.require_pamong FROM class_participants cp \
-                        JOIN classes c ON c.id = cp.class_id \
-                        WHERE cp.user_id = p.user_id \
-                          ORDER BY (c.category = 'kbm') DESC, c.id \
-                          LIMIT 1), $4) = TRUE \
-                AND ($5::bigint IS NULL OR COALESCE( \
-                    (SELECT c.pamong_id FROM classes c WHERE c.id = p.class_id), \
-                    (SELECT c.pamong_id FROM class_participants cp \
-                        JOIN classes c ON c.id = cp.class_id \
-                        WHERE cp.user_id = p.user_id \
-                          ORDER BY (c.category = 'kbm') DESC, c.id \
-                          LIMIT 1)) = $5)",
-            &[&permit_id, &status, &staff_id, &default_require, &pamong_id],
-        )
-        .await
-        .context("decide_pamong_permit")?;
-    Ok(n > 0)
-}
-
-// ── Tahap FINAL: WALI KELAS (guru penyetuju akhir) ────────────────────────────
 
 /// Antrean wali kelas: izin yang DITUJUKAN ke guru ini (`p.wali_kelas_id`).
 ///
-/// TIDAK menunggu pamong. Dulu izin di kelas dua-langkah baru muncul setelah
-/// `pamong_status = 'approved'` — akibatnya izin bisa mengendap tak terlihat
-/// oleh satu-satunya orang yang berhak memutuskannya, dan santri menunggu
-/// tanpa tahu ke siapa harus bertanya. Tahap pamong tetap ada sebagai catatan
-/// (dan ditampilkan di indikator kemajuan), tapi ia menyaring, bukan
-/// memblokir. Pamong yang MENOLAK tetap menghentikan izin.
-///
-/// `wali_id` Some = hanya izin milik guru ini; None = semua (dewan guru/admin
-/// oversight). `default_require` kini hanya dipakai pemanggil untuk label.
+/// `wali_id` Some = hanya izin milik guru ini; None = semua (oversight).
+/// Syaratnya HARUS sama persis dengan `decide_guru_permit` — kalau tidak,
+/// layar menawarkan tombol yang mustahil berhasil (pernah terjadi, lihat
+/// catatan di fungsi itu).
 pub async fn pending_guru_permits(
     pool: &Pool,
     wali_id: Option<i64>,
-    default_require: bool,
     limit: i64,
-) -> Result<Vec<PendingPamongRow>> {
+) -> Result<Vec<PermitQueueRow>> {
     let c = pool.get().await?;
     let rows = c
         .query(
             &format!(
                 "SELECT p.id, u.full_name, u.nis, COALESCE(tc.name, cl.name), \
-                p.type, p.start_date, p.end_date, p.reason, p.created_at, \
-                p.start_time, p.end_time, \
-                (COALESCE(tc.require_pamong, cl.require_pamong, $2) \
-                 AND COALESCE(tc.pamong_id, cl.pamong_id) IS NOT NULL) AS dua_tahap, \
-                (p.pamong_status = 'approved') AS pamong_ok \
+                p.type, p.start_time, p.end_time, p.reason, p.created_at \
              FROM permit_requests p JOIN users u ON u.id = p.user_id \
              LEFT JOIN classes tc ON tc.id = p.class_id \
              {kelas} \
              WHERE p.guru_status = 'pending' \
-                AND p.pamong_status <> 'rejected' \
-                AND ($3::bigint IS NULL \
-                     OR COALESCE(p.wali_kelas_id, tc.wali_kelas_id, cl.wali_kelas_id) = $3) \
+                AND ($2::bigint IS NULL \
+                     OR COALESCE(p.wali_kelas_id, tc.wali_kelas_id, cl.wali_kelas_id) = $2) \
              ORDER BY p.created_at ASC LIMIT $1",
                 kelas = super::kelas_utama_lateral("p.user_id"),
             ),
-            &[&limit, &default_require, &wali_id],
+            &[&limit, &wali_id],
         )
         .await
         .context("pending_guru_permits")?;
     Ok(rows
         .into_iter()
-        .map(|r| PendingPamongRow {
+        .map(|r| PermitQueueRow {
             id: r.get(0),
             student_name: r.get(1),
             nis: r.get(2),
             class_name: r.get(3),
             kind: r.get(4),
-            start_date: r.get(5),
-            end_date: r.get(6),
+            mulai: r.get(5),
+            selesai: r.get(6),
             reason: r.get(7),
             created_at: r.get(8),
-            start_time: r.get(9),
-            end_time: r.get(10),
-            dua_tahap: r.get(11),
-            pamong_ok: r.get(12),
         })
         .collect())
 }
@@ -809,27 +541,14 @@ pub async fn guru_permits_decided_today(pool: &Pool, wali_id: Option<i64>) -> Re
 
 /// Keputusan FINAL wali kelas atas SATU baris izin (satu kelas tujuan).
 ///
-/// Guard: `guru_status` masih pending, pamong belum MENOLAK, dan (wali_id None
-/// ATAU wali kelas tujuan = wali_id). Izin lama tanpa `class_id` jatuh ke kelas
-/// utama santri.
+/// Guard: `guru_status` masih pending dan (wali_id None ATAU wali kelas tujuan
+/// = wali_id). Izin lama tanpa `class_id` jatuh ke kelas utama santri.
 ///
-/// ── SYARAT "PAMONG HARUS APPROVE DULU" DIBUANG (Ags 2026) ────────────────────
-/// Query ini dulu menolak izin di kelas dua-langkah selama `pamong_status`
-/// belum `approved`. Masalahnya, ANTREANNYA (`pending_guru_permits`) sengaja
-/// TIDAK memakai syarat itu — komentarnya menjelaskan alasannya: izin yang
-/// menunggu pamong tak boleh mengendap tak terlihat oleh satu-satunya orang
-/// yang berhak memutuskan. Yang lupa diubah adalah query keputusan ini, jadi
-/// wali kelas MELIHAT izinnya, menekan Setujui, lalu ditolak "Izin ini bukan
-/// milik kelas Anda" — pesan yang bahkan tak menyebut sebab sesungguhnya.
-/// Daftar dan keputusan HARUS memakai syarat yang sama; kalau tidak, layarnya
-/// menawarkan tombol yang mustahil berhasil.
-///
-/// Sejak peran pamong dihapus (migrasi 84) syarat itu juga kehilangan artinya:
-/// tak ada lagi siapa pun yang bisa memajukan tahap-1, jadi mempertahankannya
-/// berarti izin lama yang telanjur menggantung di sana TAK BISA diputuskan
-/// selamanya. Penolakan pamong yang SUDAH tercatat tetap dihormati
-/// (`pamong_status <> 'rejected'`) — itu keputusan manusia, bukan tahap yang
-/// menggantung.
+/// SYARATNYA IDENTIK dengan `pending_guru_permits`. Pernah tidak: query ini dulu
+/// menuntut persetujuan tahap kedua sementara antreannya tidak, jadi wali
+/// kelas melihat izin di layarnya, menekan Setujui, lalu ditolak dengan pesan
+/// yang bahkan tak menyebut sebab sesungguhnya. Daftar dan aksi untuk hal yang
+/// sama wajib memakai syarat yang sama.
 pub async fn decide_guru_permit(
     pool: &Pool,
     permit_id: i64,
@@ -843,7 +562,6 @@ pub async fn decide_guru_permit(
         .execute(
             "UPDATE permit_requests p SET guru_status = $2, guru_by = $3, guru_at = NOW() \
              WHERE p.id = $1 AND p.guru_status = 'pending' \
-                AND p.pamong_status <> 'rejected' \
                 AND ($4::bigint IS NULL OR COALESCE( \
                      p.wali_kelas_id, \
                      (SELECT c.wali_kelas_id FROM classes c WHERE c.id = p.class_id), \
@@ -867,10 +585,8 @@ pub struct IzinAktifRow {
     pub nis: Option<String>,
     pub class_name: Option<String>,
     pub kind: String,
-    pub start_date: NaiveDate,
-    pub end_date: Option<NaiveDate>,
-    pub start_time: Option<NaiveTime>,
-    pub end_time: Option<NaiveTime>,
+    pub mulai: NaiveDateTime,
+    pub selesai: NaiveDateTime,
     pub reason: String,
 }
 
@@ -883,9 +599,8 @@ pub struct IzinAktifRow {
 /// daftar yang mencampur keduanya membuat pengurus mengira seseorang sudah
 /// dibolehkan padahal belum.
 ///
-/// `end_date` NULL = izin SEHARI (`start_date` saja) — bentuk yang dipakai
-/// seluruh kode lain (lihat `fmt_range`), jadi COALESCE-nya ke `start_date`,
-/// bukan dianggap tanpa batas.
+/// Izin sehari penuh tersimpan 00:00 → 23:59:59, jadi tak perlu diperlakukan
+/// khusus di sini: irisan rentangnya sudah menjawab dengan sendirinya.
 pub async fn izin_aktif(
     pool: &Pool,
     hari: NaiveDate,
@@ -894,16 +609,19 @@ pub async fn izin_aktif(
 ) -> Result<Vec<IzinAktifRow>> {
     let c = pool.get().await?;
     let sql = format!(
+        // "Sedang berlaku pada `hari`" = rentang izinnya menyentuh hari itu:
+        // mulai sebelum hari berikutnya, dan selesai setelah awal hari itu.
         "SELECT p.id, p.user_id, u.full_name, u.nis, COALESCE(tc.name, cl.name), \
-                p.type, p.start_date, p.end_date, p.start_time, p.end_time, p.reason \
+                p.type, p.start_time, p.end_time, p.reason \
            FROM permit_requests p \
            JOIN users u ON u.id = p.user_id \
            LEFT JOIN classes tc ON tc.id = p.class_id \
            {kelas} \
-          WHERE p.guru_status = 'approved' AND p.pamong_status <> 'rejected' \
-            AND p.start_date <= $1 AND COALESCE(p.end_date, p.start_date) >= $1 \
+          WHERE p.guru_status = 'approved' \
+            AND p.start_time < ($1::date + INTERVAL '1 day') \
+            AND p.end_time >= $1::date \
             AND ($3::bigint IS NULL OR p.user_id = $3) \
-          ORDER BY COALESCE(p.end_date, p.start_date), u.full_name LIMIT $2",
+          ORDER BY p.end_time, u.full_name LIMIT $2",
         kelas = super::kelas_utama_lateral("p.user_id"),
     );
     let rows = c
@@ -919,11 +637,9 @@ pub async fn izin_aktif(
             nis: r.get(3),
             class_name: r.get(4),
             kind: r.get(5),
-            start_date: r.get(6),
-            end_date: r.get(7),
-            start_time: r.get(8),
-            end_time: r.get(9),
-            reason: r.get(10),
+            mulai: r.get(6),
+            selesai: r.get(7),
+            reason: r.get(8),
         })
         .collect())
 }
@@ -963,7 +679,7 @@ pub async fn izin_aktif(
 ///
 /// `ON CONFLICT DO NOTHING`: baris yang SUDAH ada tak ditimpa. Santri yang
 /// ternyata hadir sebagian, atau yang sudah terlanjur dialpakan auto-absent,
-/// dibiarkan apa adanya — mengubahnya urusan koreksi manual oleh guru/pamong
+/// dibiarkan apa adanya — mengubahnya urusan koreksi manual oleh guru
 /// bertugas (migrasi 51), bukan efek samping diam-diam dari persetujuan izin.
 ///
 /// Verifikasi langsung 'approved': yang menyetujui izin adalah wali kelas, dan
@@ -971,24 +687,17 @@ pub async fn izin_aktif(
 /// memintanya menyetujui hal yang sama dua kali.
 ///
 /// Return jumlah baris absensi baru.
-/// Izin dibandingkan sebagai SATU RENTANG WAKTU: dari (tanggal mulai + jam
-/// keluar) sampai (tanggal selesai + jam pulang). Sesi terhitung terlewat bila
-/// jamnya bersinggungan dengan rentang itu.
-///
-/// Sebelum Ags 2026 syaratnya `sj.start_time < p.end_time AND sj.end_time >
-/// p.start_time` — membandingkan JAM saja, tanpa tanggal, yang berarti "izin
-/// berlaku pada jam segitu SETIAP hari". Untuk izin Jumat 14:00 sampai Minggu
-/// 08:00 itu hanya menutup sesi yang jamnya di antara 14:00–08:00, sementara
-/// seluruh kelas hari Sabtu tetap dihitung ALFA — padahal santrinya jelas
-/// sedang tak di pondok.
+/// Cakupannya DIHITUNG LANGSUNG dari irisan waktu, bukan dari daftar kelas yang
+/// pernah disimpan (`permit_request_classes` dihapus migrasi 86): sebuah sesi
+/// terlewat bila jam sesinya beririsan dengan rentang izin dan santrinya
+/// peserta kelas itu. Satu aturan, satu jawaban — dan tak ada tabel perantara
+/// yang bisa basi ketika jadwal berubah setelah izin disetujui.
 pub async fn materialize_permit_attendance(pool: &Pool, permit_id: i64) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
         .query_one(
             "WITH p AS ( \
-                SELECT pr.id, pr.user_id, pr.class_id, pr.type, \
-                       pr.start_date, COALESCE(pr.end_date, pr.start_date) AS end_date, \
-                       pr.start_time, pr.end_time, \
+                SELECT pr.id, pr.user_id, pr.type, pr.start_time, pr.end_time, \
                        CASE WHEN pr.type = 'sick' THEN 'sick' ELSE 'permit' END AS att_status \
                   FROM permit_requests pr \
                  WHERE pr.id = $1 AND pr.guru_status = 'approved' \
@@ -996,22 +705,18 @@ pub async fn materialize_permit_attendance(pool: &Pool, permit_id: i64) -> Resul
              ins AS ( \
                 INSERT INTO attendances \
                     (user_id, class_session_id, class_schedule_id, status, method, \
-                     pamong_status, pamong_at, verify_status, verified_at, \
+                     verify_status, verified_at, \
                      note, gate_label, scanned_at, scan_date) \
                 SELECT p.user_id, s.id, s.class_schedule_id, p.att_status, 'manual', \
-                       'approved', NOW(), 'approved', NOW(), \
+                       'approved', NOW(), \
                        'Izin disetujui', 'system', NOW(), s.session_date \
                   FROM p \
-                  JOIN permit_request_classes prc ON prc.permit_id = p.id \
-                  JOIN class_sessions s ON s.class_id = prc.class_id \
-                   AND s.session_date BETWEEN p.start_date AND p.end_date \
+                  JOIN class_participants cp ON cp.user_id = p.user_id \
+                  JOIN class_sessions s ON s.class_id = cp.class_id \
                    AND s.status <> 'cancelled' \
-                  LEFT JOIN class_schedules sj ON sj.id = s.class_schedule_id \
-                 WHERE p.start_time IS NULL \
-                    OR ((s.session_date + sj.start_time) \
-                            < (COALESCE(p.end_date, p.start_date) + p.end_time) \
-                        AND (s.session_date + sj.end_time) \
-                            > (p.start_date + p.start_time)) \
+                  JOIN class_schedules sj ON sj.id = s.class_schedule_id \
+                 WHERE (s.session_date + sj.start_time) < p.end_time \
+                   AND (s.session_date + sj.end_time) > p.start_time \
                  ON CONFLICT (user_id, class_session_id) DO NOTHING \
                 RETURNING id, user_id, class_schedule_id, status \
              ), \

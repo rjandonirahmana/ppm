@@ -345,7 +345,7 @@ pub fn RekapMingguanPage() -> impl IntoView {
                                                     </span>
                                                 </div>
                                                 <p class="text-[11px] text-on-surface-variant">
-                                                    "Net poin ≤ -9 pekan ini. Pemanggil: KoorSantri (≤-9), Pamong (≤-12), Wali Kelas (≤-18)."
+                                                    "Net poin ≤ -9 pekan ini. Pemanggil: KoorSantri (≤-9), Wali Kelas (≤-12), Ketua (≤-18)."
                                                 </p>
                                                 {if has_pemanggilan {
                                                     view! {

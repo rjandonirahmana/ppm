@@ -170,7 +170,7 @@ pub async fn student_progress_for_viewer(
     student_id: i64,
 ) -> Result<Vec<BookProgressItem>> {
     let allowed = match viewer_role {
-        "admin" | "ketua" | "dewan_guru" | "supervisor" | "teacher" => true,
+        "admin" | "ketua" | "dewan_guru" | "teacher" => true,
         "parent" => repo::is_connected(pool, viewer_id, student_id).await?,
         "santri" | "santri_finance" => viewer_id == student_id,
         _ => false,

@@ -42,14 +42,18 @@ pub fn role_satisfies(role: &str, allowed: &[&str]) -> bool {
     allowed.contains(&role)
         || (role == "ketua" && allowed.contains(&"admin"))
         || (role == "santri_finance" && allowed.contains(&"santri"))
-        // 'supervisor' (pamong) SUDAH TIDAK ADA — migrasi 84 mengubah akunnya
-        // jadi 'dewan_guru'. Tapi peran dibaca dari KLAIM JWT, bukan dari DB
-        // (lihat `get_session`), dan cookie di ponsel pengurus berumur ratusan
-        // hari: mantan pamong akan terus membawa "supervisor" sampai ia logout.
-        // Tanpa baris ini ia terkunci dari layar yang justru baru saja jadi
-        // haknya — dan tak ada yang menghubungkannya dengan migrasi kemarin.
-        // Sama persis perlakuannya dengan 'teacher' (digabung di migrasi 36).
-        || (role == "supervisor" && allowed.contains(&"dewan_guru"))
+        // 'teacher' digabung ke 'dewan_guru' di migrasi 36, dan sejak migrasi
+        // 84 tak lagi sah di kolom `users.role`. Ia hanya bisa muncul dari
+        // KLAIM TOKEN lama, dan hanya terpakai saat DB tak menjawab — di jalur
+        // itulah `require_session` jatuh kembali ke klaim.
+        //
+        // Ditangani DI SINI, bukan dengan menulis "teacher" di setiap daftar
+        // peran: cara lama membuat delapan endpoint lupa menulisnya, sehingga
+        // akun lama diterima di sebagian layar dan ditolak di sebagian lain.
+        //
+        // ('supervisor' — bekas pamong — dibuang seluruhnya: migrasi 84 sudah
+        // mengubah akunnya jadi 'dewan_guru', dan peran dibaca segar dari DB.)
+        || (role == "teacher" && allowed.contains(&"dewan_guru"))
 }
 
 pub fn role_home(role: &str) -> &'static str {
@@ -59,9 +63,6 @@ pub fn role_home(role: &str) -> &'static str {
         // 'teacher' digabung ke 'dewan_guru' (migrasi 36) — arahkan ke dashboard
         // yang sama bila ada sisa data lama.
         "teacher" | "dewan_guru" => "/dewan-guru",
-        // Pamong kini guru (migrasi 84); antrean verifikasi pamong tak pernah
-        // terisi lagi, jadi mengirimnya ke sana = beranda yang selamanya kosong.
-        "supervisor" => "/dewan-guru",
         // santri_finance = santri pemegang kunci finance → dashboard santri.
         "santri" | "santri_finance" => "/santri",
         "parent" => "/orang-tua",
@@ -85,9 +86,6 @@ pub fn role_label(role: &str) -> &'static str {
         // 'teacher' digabung ke 'dewan_guru' (migrasi 36); sisa data lama tetap
         // diberi label yang benar alih-alih jatuh ke "Pengguna".
         "teacher" | "dewan_guru" => "Dewan Guru",
-        // Peran pamong dihapus (migrasi 84) — sisa klaim lama diberi label
-        // peran BARUNYA, bukan nama jabatan yang sudah tak ada.
-        "supervisor" => "Dewan Guru",
         "santri" => "Santri",
         "santri_finance" => "Santri (Finance)",
         "parent" => "Orang Tua",
@@ -116,7 +114,7 @@ pub struct InviteInfo {
 
 /// Peran STAF yang hanya boleh DIUNDANG oleh admin.
 ///
-/// Mengundang seseorang jadi `dewan_guru`/`supervisor` = memberi wewenang
+/// Mengundang seseorang jadi `dewan_guru` = memberi wewenang
 /// setara atau lebih tinggi dari pengundang. Tanpa batas ini, pamong bisa
 /// mencetak link yang menjadikan siapa pun dewan guru tanpa sepengetahuan
 /// admin. Mengundang santri/orang tua tetap boleh — itu tugas harian mereka.

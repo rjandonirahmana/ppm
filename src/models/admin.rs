@@ -44,7 +44,7 @@ pub fn is_main_gate(category: &str) -> bool {
 pub struct UserRow {
     pub id: i64,
     pub name: String,
-    /// Peran mentah (admin/teacher/dewan_guru/supervisor/santri/parent) — utk
+    /// Peran mentah (admin/teacher/dewan_guru/santri/parent) — utk
     /// pre-select dropdown ganti peran.
     pub role: String,
     /// "Admin" / "Guru" / "Dewan Guru" / "Pamong" / "Santri" / "Orang Tua".

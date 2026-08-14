@@ -1,7 +1,7 @@
 //! web/pages/laporan.rs — Halaman /laporan, MENGGANTIKAN item Profil di navbar
 //! (profil tetap ada, dibuka lewat ikon setting di header — lihat components.rs).
 //! Bentuk laporan beda per peran, mengikuti bahasa desain report-ppm-mobile /
-//! report-desktop-ppm: admin & pamong → Laporan Institusi; guru & dewan guru →
+//! report-desktop-ppm: admin & ketua → Laporan Institusi; guru & dewan guru →
 //! Laporan Kelas Akademik (reuse `analisis_data` + ranking hafalan "Mengaji");
 //! orang tua → Laporan Santri (anak terpilih); santri → Rapor Pribadi.
 
@@ -49,7 +49,7 @@ pub fn LaporanPage() -> impl IntoView {
                             let role = session.and_then(|s| s.get()).flatten().map(|u| u.role);
                             match role.as_deref() {
                                 // ketua = admin (finance).
-                                Some("admin") | Some("ketua") | Some("supervisor") => {
+                                Some("admin") | Some("ketua") => {
                                     view! { <LaporanAdminBody /> }.into_any()
                                 }
                                 Some("teacher") | Some("dewan_guru") => {

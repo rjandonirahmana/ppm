@@ -5,7 +5,7 @@
 //!   • quality_label / is_mengaji_category → label hafalan.
 //! Jalankan: `cargo test --test auth_and_labels`.
 
-use ppm::models::{is_mengaji_category, quality_label, role_home, role_satisfies};
+use ppm::models::{is_mengaji_category, quality_label, role_home, role_label, role_satisfies};
 use ppm::service::auth::normalize_phone;
 
 // ── normalize_phone (login by phone + forgot-password) ───────────────────────
@@ -65,11 +65,6 @@ fn role_home_tiap_peran() {
     // 'teacher' digabung ke dewan_guru (migrasi 36) → dashboard sama.
     assert_eq!(role_home("teacher"), "/dewan-guru");
     assert_eq!(role_home("dewan_guru"), "/dewan-guru");
-    // Peran 'supervisor' (pamong) DIHAPUS (migrasi 84) — pamong menjadi guru.
-    // Klaim JWT lama masih menyebutnya sampai pemiliknya logout, jadi ia harus
-    // mendarat di beranda peran BARUNYA, bukan di antrean yang tak akan pernah
-    // terisi lagi.
-    assert_eq!(role_home("supervisor"), "/dewan-guru");
     assert_eq!(role_home("santri"), "/santri");
     assert_eq!(role_home("santri_finance"), "/santri"); // santri + finance
     assert_eq!(role_home("parent"), "/orang-tua");
@@ -89,7 +84,7 @@ fn ketua_setara_admin() {
     assert!(role_satisfies("ketua", &["admin", "dewan_guru"]));
     assert!(role_satisfies("ketua", &["admin"]));
     // Endpoint tanpa admin → ketua TIDAK otomatis boleh.
-    assert!(!role_satisfies("ketua", &["dewan_guru", "supervisor"]));
+    assert!(!role_satisfies("ketua", &["dewan_guru"]));
     assert!(!role_satisfies("ketua", &["santri"]));
 }
 
@@ -106,14 +101,7 @@ fn santri_finance_setara_santri() {
 #[test]
 fn role_biasa_cocok_persis() {
     assert!(role_satisfies("admin", &["admin"]));
-    assert!(role_satisfies("dewan_guru", &["supervisor", "dewan_guru", "admin"]));
-    // 'supervisor' kini ALIAS 'dewan_guru' (migrasi 84: pamong menjadi guru).
-    // Tanpa ini, mantan pamong terkunci dari layar yang justru baru jadi haknya
-    // selama cookie lamanya belum kedaluwarsa — dan cookie di sini berumur 400 hari.
-    assert!(role_satisfies("supervisor", &["admin", "dewan_guru"]));
-    // Tapi ia BUKAN admin: alias itu satu arah, hanya ke dewan_guru.
-    assert!(!role_satisfies("supervisor", &["admin"]));
-    assert!(!role_satisfies("supervisor", &["ketua"]));
+    assert!(role_satisfies("dewan_guru", &["dewan_guru", "admin"]));
     assert!(!role_satisfies("santri", &["admin"]));
     assert!(!role_satisfies("parent", &["santri"]));
 }
@@ -137,4 +125,51 @@ fn kategori_mengaji_variasi() {
     assert!(!is_mengaji_category("Sholat Berjamaah"));
     assert!(!is_mengaji_category("Piket"));
     assert!(!is_mengaji_category(""));
+}
+
+// ── Peran lama yang sudah tak sah di DB, tapi masih hidup di klaim JWT ───────
+//
+// `users.role` sejak migrasi 84 hanya menerima tujuh nilai; 'teacher'
+// (digabung ke 'dewan_guru' di migrasi 36) bukan salah satunya. `require_session`
+// membaca peran SEGAR dari DB, jadi klaim lama hanya terpakai di satu jalur:
+// ketika DB tak menjawab dan sesinya jatuh kembali ke isi token.
+
+/// 'teacher' harus diterima di mana pun 'dewan_guru' diterima. Ditangani di
+/// `role_satisfies`, bukan dengan menulisnya di tiap daftar peran — cara lama
+/// membuat delapan endpoint lupa menulisnya.
+#[test]
+fn teacher_setara_dewan_guru() {
+    assert!(role_satisfies("teacher", &["dewan_guru"]));
+    assert!(role_satisfies("teacher", &["admin", "dewan_guru"]));
+}
+
+/// Setara BUKAN berarti naik pangkat.
+#[test]
+fn teacher_tidak_naik_pangkat() {
+    assert!(!role_satisfies("teacher", &["admin"]));
+    assert!(!role_satisfies("teacher", &["ketua"]));
+    assert!(!role_satisfies("teacher", &["santri"]));
+}
+
+/// 'supervisor' (pamong) DIBUANG SELURUHNYA. Peran itu tak lagi punya arti di
+/// mana pun: bukan alias, bukan peran, bukan label.
+///
+/// Diuji supaya tak diam-diam dihidupkan lagi lewat daftar peran baru. Kalau
+/// suatu saat pamong benar-benar dibutuhkan lagi, ia harus lahir sebagai
+/// keputusan sadar — bukan sebagai sisa yang tak pernah dibersihkan.
+#[test]
+fn supervisor_tak_punya_wewenang_apa_pun() {
+    for daftar in [
+        &["dewan_guru"][..],
+        &["admin"][..],
+        &["ketua"][..],
+        &["santri"][..],
+        &["admin", "ketua", "dewan_guru", "santri", "parent", "penjaga"][..],
+    ] {
+        assert!(
+            !role_satisfies("supervisor", daftar),
+            "supervisor tak boleh lolos {daftar:?}"
+        );
+    }
+    assert_eq!(role_label("supervisor"), "Pengguna");
 }

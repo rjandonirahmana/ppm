@@ -62,13 +62,14 @@ pub struct SessionVerifyItem {
     pub status: String,
 }
 
-/// Data panel verifikasi kehadiran satu sesi (tahap sesuai peran pemanggil).
+/// Data panel verifikasi kehadiran satu sesi.
+///
+/// `stage` & `stage_label` DIBUANG: keduanya sisa era dua tahap dan sejak
+/// migrasi 84 isinya selalu sama persis ("final" / "Verifikasi Kehadiran"),
+/// dikirim ulang tiap permintaan tanpa pernah menjelaskan apa pun. Judulnya
+/// kini tetap di UI, tempatnya semestinya.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionVerifyData {
-    /// "pamong" | "final".
-    pub stage: String,
-    /// "Verifikasi Pamong" | "Verifikasi Final".
-    pub stage_label: String,
     pub items: Vec<SessionVerifyItem>,
 }
 
@@ -98,7 +99,7 @@ pub struct PendingAtt {
 
 /// Payload halaman verifikasi pamong.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PamongData {
+pub struct VerifikasiData {
     pub pending: Vec<PendingAtt>,
     pub approved_today: i64,
     /// Statistik hari ini (hero dashboard pamong/dewan).

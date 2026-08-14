@@ -99,14 +99,37 @@ pub fn tanggal_panjang(ts: DateTime<Utc>) -> String {
     format!("{} {} {}", d.day(), BULAN_PANJANG[d.month0() as usize], d.year())
 }
 
-/// Rentang tanggal izin: "12 – 13 Nov 2025" / "12 Nov 2025".
-pub fn fmt_range(start: chrono::NaiveDate, end: Option<chrono::NaiveDate>) -> String {
+/// Rentang izin: dari kapan sampai kapan, lengkap dengan jamnya.
+///
+/// Satu fungsi untuk SEMUA layar (santri, wali kelas, pantauan staf) — bentuk
+/// tanggal yang ditulis ulang di tiap halaman cepat atau lambat berbeda.
+///
+/// Izin sehari penuh disimpan 00:00 → 23:59:59 (migrasi 86); jamnya sengaja
+/// TIDAK ditampilkan di kasus itu — "13 Agu 2026, 00:00 – 23:59" hanya
+/// membuat orang mengira ada jam yang perlu diperhatikan.
+pub fn fmt_rentang(mulai: chrono::NaiveDateTime, selesai: chrono::NaiveDateTime) -> String {
     let f = |d: chrono::NaiveDate| {
         format!("{} {} {}", d.day(), BULAN_PENDEK[d.month0() as usize], d.year())
     };
-    match end {
-        Some(e) if e != start => format!("{} – {}", f(start), f(e)),
-        _ => f(start),
+    let sehari_penuh = mulai.time() == chrono::NaiveTime::MIN
+        && selesai.time() >= chrono::NaiveTime::from_hms_opt(23, 59, 0).expect("23:59 valid");
+    let sama_hari = mulai.date() == selesai.date();
+    match (sama_hari, sehari_penuh) {
+        (true, true) => f(mulai.date()),
+        (true, false) => format!(
+            "{}, {} – {} WIB",
+            f(mulai.date()),
+            mulai.format("%H:%M"),
+            selesai.format("%H:%M")
+        ),
+        (false, true) => format!("{} – {}", f(mulai.date()), f(selesai.date())),
+        (false, false) => format!(
+            "{} {} → {} {} WIB",
+            f(mulai.date()),
+            mulai.format("%H:%M"),
+            f(selesai.date()),
+            selesai.format("%H:%M")
+        ),
     }
 }
 
@@ -132,5 +155,54 @@ pub fn fmt_date(d: chrono::NaiveDate) -> String {
         "Kemarin".into()
     } else {
         format!("{} {} {}", d.day(), BULAN_PENDEK[d.month0() as usize], d.year())
+    }
+}
+
+#[cfg(test)]
+mod tests_rentang {
+    use super::fmt_rentang;
+    use chrono::{NaiveDate, NaiveTime};
+
+    fn dt(t: &str, j: &str) -> chrono::NaiveDateTime {
+        NaiveDate::parse_from_str(t, "%Y-%m-%d")
+            .unwrap()
+            .and_time(NaiveTime::parse_from_str(j, "%H:%M:%S").unwrap())
+    }
+
+    /// Sehari penuh disimpan 00:00 → 23:59:59 (migrasi 86). Jamnya sengaja TAK
+    /// ditampilkan: "13 Agu 2026, 00:00 – 23:59" hanya membuat orang mengira
+    /// ada jam yang perlu diperhatikan.
+    #[test]
+    fn sehari_penuh_tanpa_jam() {
+        assert_eq!(
+            fmt_rentang(dt("2026-08-13", "00:00:00"), dt("2026-08-13", "23:59:59")),
+            "13 Agu 2026"
+        );
+    }
+
+    #[test]
+    fn sehari_dengan_jam() {
+        assert_eq!(
+            fmt_rentang(dt("2026-08-13", "09:00:00"), dt("2026-08-13", "12:00:00")),
+            "13 Agu 2026, 09:00 – 12:00 WIB"
+        );
+    }
+
+    #[test]
+    fn beberapa_hari_penuh() {
+        assert_eq!(
+            fmt_rentang(dt("2026-08-13", "00:00:00"), dt("2026-08-15", "23:59:59")),
+            "13 Agu 2026 – 15 Agu 2026"
+        );
+    }
+
+    /// Kasus yang paling perlu jelas: jam keluar milik tanggal keluar, jam
+    /// kembali milik tanggal kembali.
+    #[test]
+    fn lintas_hari_dengan_jam() {
+        assert_eq!(
+            fmt_rentang(dt("2026-08-13", "14:00:00"), dt("2026-08-15", "08:00:00")),
+            "13 Agu 2026 14:00 → 15 Agu 2026 08:00 WIB"
+        );
     }
 }

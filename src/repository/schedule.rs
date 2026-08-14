@@ -167,8 +167,6 @@ pub struct SessionRow {
     pub status: String,
     pub teacher: Option<String>,
     pub teacher_id: Option<i64>,
-    /// Pamong bertugas verifikasi sesi (migrasi 33) — None = pakai pamong kelas.
-    pub pamong_id: Option<i64>,
     /// Kategori kelas (mis. "Pengajian", "Sholat") — menentukan boleh/tidaknya
     /// siaran suara direkam (lihat models::category_allows_recording).
     pub category: Option<String>,
@@ -182,7 +180,7 @@ pub struct SessionRow {
 
 const SESSION_COLS: &str = "SELECT s.id, COALESCE(s.title, cs.title), c.name, s.session_date, \
      cs.start_time, s.status, t.full_name, s.teacher_id, COALESCE(cs.category, c.category), \
-     s.pamong_id, s.class_schedule_id \
+     s.class_schedule_id \
      FROM class_sessions s \
      JOIN classes c ON c.id = s.class_id \
      LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
@@ -199,8 +197,7 @@ fn row_to_session(r: tokio_postgres::Row) -> SessionRow {
         teacher: r.get(6),
         teacher_id: r.get(7),
         category: r.get(8),
-        pamong_id: r.get(9),
-        class_schedule_id: r.get(10),
+        class_schedule_id: r.get(9),
     }
 }
 
@@ -292,7 +289,7 @@ pub async fn schedules_in_range(
         .collect())
 }
 
-/// SEMUA sesi (admin/pamong/dewan guru) dalam rentang [since, until] — untuk
+/// SEMUA sesi (admin/dewan guru) dalam rentang [since, until] — untuk
 /// halaman /sesi yang menampilkan "1 minggu terakhir yang sudah lewat".
 pub async fn all_sessions(
     pool: &Pool,
@@ -383,11 +380,10 @@ pub async fn sessions_of_class(
 
 pub struct SessionDetailRow {
     pub id: i64,
-    /// Wali & pamong KELAS — cadangan bila sesi belum menetapkan petugasnya.
+    /// Wali KELAS — cadangan bila sesi belum menetapkan gurunya.
     /// Dipakai menghitung siapa yang boleh mengoreksi absensi (migrasi 51),
     /// mencerminkan COALESCE di repository::correct_attendance.
     pub class_wali_id: Option<i64>,
-    pub class_pamong_id: Option<i64>,
     /// Nama wali kelas — CADANGAN tampilan bila sesi tak punya guru pengisi.
     pub wali_name: Option<String>,
     pub class_id: i64,
@@ -403,8 +399,6 @@ pub struct SessionDetailRow {
     pub recording_path: Option<String>,
     pub recording_size: Option<i64>,
     pub teacher_id: Option<i64>,
-    /// Pamong bertugas verifikasi sesi (migrasi 33) — None = pakai pamong kelas.
-    pub pamong_id: Option<i64>,
     /// Label kategori untuk TAMPILAN — bisa teks bebas dari jadwal.
     pub category: Option<String>,
     /// Kategori KELAS-nya: kbm | bacaan | non_kbm (migrasi 65). Ini yang jadi
@@ -426,13 +420,13 @@ pub struct SessionDetailRow {
 
 /// Kategori kelas dari sebuah sesi — query ringan (dipakai guard server-side
 /// tiap potongan siaran suara di web/live_audio.rs, bukan seluruh detail).
-/// Siapa saja yang BERHAK menyiarkan sesi ini: (pengisi, pamong sesi/kelas,
-/// wali kelas). Dipakai `web/live_audio.rs::post_chunk` untuk menolak staf lain
+/// Siapa saja yang BERHAK menyiarkan sesi ini: (guru pengisi, wali kelas).
+/// Dipakai `web/live_audio.rs::post_chunk` untuk menolak staf lain
 /// menimpa rekaman sesi yang bukan urusannya.
 pub async fn session_broadcasters(
     pool: &Pool,
     session_id: i64,
-) -> Result<Option<(Option<i64>, Option<i64>, Option<i64>, String)>> {
+) -> Result<Option<(Option<i64>, Option<i64>, String)>> {
     let c = pool.get().await?;
     let row = c
         .query_opt(
@@ -441,40 +435,39 @@ pub async fn session_broadcasters(
             // objek dan berkas lokalnya dihapus — potongan yang datang
             // belakangan akan membuat berkas lokal BARU yang tak seorang pun
             // tahu keberadaannya, sementara DB menunjuk berkas final.
-            "SELECT s.teacher_id, COALESCE(s.pamong_id, cl.pamong_id), cl.wali_kelas_id, s.status \
+            "SELECT s.teacher_id, cl.wali_kelas_id, s.status \
              FROM class_sessions s JOIN classes cl ON cl.id = s.class_id \
              WHERE s.id = $1",
             &[&session_id],
         )
         .await
         .context("session_broadcasters")?;
-    Ok(row.map(|r| (r.get(0), r.get(1), r.get(2), r.get(3))))
+    Ok(row.map(|r| (r.get(0), r.get(1), r.get(2))))
 }
 
-/// Satu sesi KBM yang sebentar lagi mulai dan pamongnya perlu diingatkan.
+/// Satu sesi KBM yang sebentar lagi mulai dan wali kelasnya perlu diingatkan.
 pub struct PengingatSesi {
     pub session_id: i64,
     pub class_name: String,
     pub title: String,
     /// "05:00 – 06:30"
     pub jam: String,
-    pub pamong_name: String,
-    pub pamong_phone: String,
+    pub wali_name: String,
+    pub wali_phone: String,
     /// Guru sesi sudah ditunjuk? Pesan menyesuaikan — mengingatkan hal yang
     /// sudah dikerjakan hanya melatih orang mengabaikan pesan berikutnya.
     pub ada_guru: bool,
-    pub ada_pamong_sesi: bool,
 }
 
-/// Sesi KBM yang mulai ~1 jam lagi, pamong kelasnya punya nomor HP, dan
+/// Sesi KBM yang mulai ~1 jam lagi, wali kelasnya punya nomor HP, dan
 /// pengingatnya belum pernah dikirim (migrasi 67).
 ///
 /// Jendelanya `[+{dari} menit, +{sampai} menit]` dari sekarang WIB — dilebarkan
 /// melebihi jarak antar-tick supaya tak ada sesi yang terlewat di celah waktu,
-/// sementara `pamong_reminded_at` yang menjaga tak ada yang dikirim dua kali.
+/// sementara `reminded_at` yang menjaga tak ada yang dikirim dua kali.
 ///
-/// Hanya KBM: kelas lain diverifikasi pamong bertugas satu langkah, tak ada
-/// guru pengajar yang perlu ditunjuk lebih dulu.
+/// Hanya KBM: hanya kelas KBM yang menunjuk guru pengajar per sesi — kelas lain
+/// diisi walinya sendiri, tak ada yang perlu diingatkan.
 pub async fn sesi_perlu_pengingat(
     pool: &Pool,
     dari_menit: i32,
@@ -485,15 +478,15 @@ pub async fn sesi_perlu_pengingat(
         .query(
             "SELECT s.id, cl.name, COALESCE(NULLIF(s.title, ''), sch.title, 'Sesi Kelas'), \
                     to_char(sch.start_time, 'HH24:MI') || ' – ' || to_char(sch.end_time, 'HH24:MI'), \
-                    pm.full_name, pm.phone_number, \
-                    s.teacher_id IS NOT NULL, s.pamong_id IS NOT NULL \
+                    w.full_name, w.phone_number, \
+                    s.teacher_id IS NOT NULL \
              FROM class_sessions s \
              JOIN classes cl ON cl.id = s.class_id AND cl.category = 'kbm' \
              JOIN class_schedules sch ON sch.id = s.class_schedule_id \
-             JOIN users pm ON pm.id = cl.pamong_id \
-                  AND pm.is_active AND COALESCE(pm.phone_number, '') <> '' \
+             JOIN users w ON w.id = cl.wali_kelas_id \
+                  AND w.is_active AND COALESCE(w.phone_number, '') <> '' \
              WHERE s.status <> 'cancelled' \
-               AND s.pamong_reminded_at IS NULL \
+               AND s.reminded_at IS NULL \
                AND s.session_date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date \
                AND sch.start_time BETWEEN \
                      ((NOW() AT TIME ZONE 'Asia/Jakarta') + make_interval(mins => $1))::time \
@@ -510,21 +503,20 @@ pub async fn sesi_perlu_pengingat(
             class_name: r.get(1),
             title: r.get(2),
             jam: r.get(3),
-            pamong_name: r.get(4),
-            pamong_phone: r.get::<_, Option<String>>(5).unwrap_or_default(),
+            wali_name: r.get(4),
+            wali_phone: r.get::<_, Option<String>>(5).unwrap_or_default(),
             ada_guru: r.get(6),
-            ada_pamong_sesi: r.get(7),
         })
         .collect())
 }
 
 /// Tandai pengingat sesi sudah terkirim. Dipanggil SETELAH WA berhasil dikirim
-/// — bila ditandai lebih dulu lalu pengirimannya gagal, pamongnya tak akan
+/// — bila ditandai lebih dulu lalu pengirimannya gagal, walinya tak akan
 /// pernah diingatkan sama sekali.
 pub async fn tandai_pengingat_terkirim(pool: &Pool, session_id: i64) -> Result<()> {
     let c = pool.get().await?;
     c.execute(
-        "UPDATE class_sessions SET pamong_reminded_at = NOW() WHERE id = $1",
+        "UPDATE class_sessions SET reminded_at = NOW() WHERE id = $1",
         &[&session_id],
     )
     .await
@@ -539,8 +531,8 @@ pub async fn tandai_pengingat_terkirim(pool: &Pool, session_id: i64) -> Result<(
 /// menafsirkannya sebagai "punya token yang sah", yang berarti santri mana pun
 /// cukup menebak id sesi untuk mendengarkan rekaman kelas lain.
 ///
-/// Yang berkepentingan: petugas sesi itu (guru/pamong), petugas kelasnya (wali
-/// kelas/pamong kelas), santri anggota kelasnya, dan orang tua yang terhubung
+/// Yang berkepentingan: guru pengisi sesi itu, wali kelasnya, santri anggota
+/// kelasnya, dan orang tua yang terhubung
 /// dengan salah satu anggotanya. Peran pengawas lintas-kelas (admin, ketua,
 /// dewan guru) TIDAK diurus di sini — itu keputusan peran, bukan keterkaitan
 /// data, dan pemanggilnya yang menentukan (lihat `web::live_audio`).
@@ -555,8 +547,7 @@ pub async fn session_stakeholder(pool: &Pool, session_id: i64, user_id: i64) -> 
                 SELECT 1 FROM class_sessions s \
                   JOIN classes cl ON cl.id = s.class_id \
                  WHERE s.id = $1 AND ( \
-                       s.teacher_id = $2 OR s.pamong_id = $2 \
-                    OR cl.wali_kelas_id = $2 OR cl.pamong_id = $2 \
+                       s.teacher_id = $2 OR cl.wali_kelas_id = $2 \
                     OR EXISTS (SELECT 1 FROM class_participants cp \
                                 WHERE cp.class_id = s.class_id AND cp.user_id = $2) \
                     OR EXISTS (SELECT 1 FROM parent_connections pc \
@@ -593,9 +584,9 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
             "SELECT s.id, s.class_id, COALESCE(s.title, cs.title), c.name, s.session_date, \
                     cs.start_time, cs.end_time, s.status, t.full_name, s.recording_path, \
                     s.recording_size, s.teacher_id, COALESCE(cs.category, c.category), \
-                    s.book_id, b.title, s.book_pages, s.pamong_id, \
+                    s.book_id, b.title, s.book_pages, \
                     s.target_book_id, tb.title, s.target_pages, s.actual_detail, \
-                    c.wali_kelas_id, c.pamong_id, w.full_name, c.category \
+                    c.wali_kelas_id, w.full_name, c.category \
              FROM class_sessions s \
              JOIN classes c ON c.id = s.class_id \
              LEFT JOIN class_schedules cs ON cs.id = s.class_schedule_id \
@@ -625,15 +616,13 @@ pub async fn session_detail(pool: &Pool, id: i64) -> Result<Option<SessionDetail
         book_id: r.get(13),
         book_title: r.get(14),
         book_pages: r.get(15),
-        pamong_id: r.get(16),
-        target_book_id: r.get(17),
-        target_book_title: r.get(18),
-        target_pages: r.get(19),
-        actual_detail: r.get(20),
-        class_wali_id: r.get(21),
-        class_pamong_id: r.get(22),
-        wali_name: r.get(23),
-        class_category: r.get(24),
+        target_book_id: r.get(16),
+        target_book_title: r.get(17),
+        target_pages: r.get(18),
+        actual_detail: r.get(19),
+        class_wali_id: r.get(20),
+        wali_name: r.get(21),
+        class_category: r.get(22),
     }))
 }
 
@@ -740,7 +729,7 @@ pub async fn session_chats(
 
 /// Tandai HADIR manual oleh staf (method='manual', gate 'manual'). Idempotent
 /// lewat UNIQUE(user_id, class_session_id) → sudah tercatat = tak diubah.
-/// Masuk antrean verifikasi normal (pamong_status/verify_status 'pending').
+/// Masuk antrean verifikasi normal (verify_status 'pending').
 pub async fn mark_manual_present(
     pool: &Pool,
     student_id: i64,
@@ -772,7 +761,7 @@ pub async fn mark_manual_present(
 
 /// Tandai BANYAK santri sekaligus pada sesi dgn `status` ('present'|'absent').
 /// Set-based via unnest; ON CONFLICT skip yang sudah tercatat. Masuk antrean
-/// verifikasi normal (pamong/verify 'pending' → poin di tahap final, migrasi 33).
+/// verifikasi normal (verify 'pending' → poin di tahap final, migrasi 33).
 /// Return jumlah BARU tercatat.
 pub async fn mark_attendance_bulk(
     pool: &Pool,
