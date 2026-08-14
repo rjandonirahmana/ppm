@@ -300,6 +300,69 @@ pub async fn change_password_action(
         .map_err(err)
 }
 
+/// Ganti nomor WhatsApp — LANGKAH 1: kirim kode ke nomor BARU.
+///
+/// Return nomor tujuan yang sudah disamarkan, untuk ditampilkan di lembar
+/// verifikasi. Belum ada perubahan apa pun di database sampai langkah 2.
+#[server(MulaiGantiNomor, "/api-fn")]
+pub async fn mulai_ganti_nomor_action(nomor: String) -> Result<String, ServerFnError> {
+    let sess = require_session().await?;
+    let state = app_state().await?;
+    let mut redis = state.redis.clone();
+    let hasil = crate::service::ganti_nomor::mulai(
+        &state.pool,
+        &mut redis,
+        &state.http,
+        &state.waha,
+        sess.id,
+        &nomor,
+    )
+    .await
+    .map_err(err)?;
+    Ok(hasil.tujuan)
+}
+
+/// Ganti nomor WhatsApp — LANGKAH 2: cocokkan kode, pindahkan nomornya.
+///
+/// Token DITANDATANGANI ULANG di sini. Nomor ikut di dalam klaim JWT, dan
+/// `get_session` menyalin `claims.phone` apa adanya setiap kunjungan — tanpa
+/// langkah ini, klaim akan terus membawa nomor LAMA sampai pengguna logout,
+/// meski kolom di database sudah berubah.
+#[server(VerifikasiGantiNomor, "/api-fn")]
+pub async fn verifikasi_ganti_nomor_action(otp: String) -> Result<(), ServerFnError> {
+    let sess = require_session().await?;
+    let state = app_state().await?;
+    let mut redis = state.redis.clone();
+    let nomor_baru = crate::service::ganti_nomor::verifikasi(&state.pool, &mut redis, sess.id, &otp)
+        .await
+        .map_err(err)?;
+
+    // Gagal menandatangani ulang TIDAK membatalkan pergantian nomornya — itu
+    // sudah tersimpan dan memang yang diminta pengguna. Klaim lama paling jauh
+    // membuat `phone` di token basi sampai ia login berikutnya; tak ada wewenang
+    // yang bergantung padanya (`require_session` memakai `user_id`).
+    if let Ok(fresh) = state.jwt.sign(sess.id, &sess.name, &nomor_baru, &sess.role) {
+        let _ = set_auth_cookie(&fresh);
+    } else {
+        tracing::warn!(user_id = sess.id, "nomor berubah tapi token gagal ditandatangani ulang");
+    }
+    Ok(())
+}
+
+/// Batalkan pengajuan ganti nomor yang belum diverifikasi.
+///
+/// Ada supaya pengguna yang salah ketik tak perlu menunggu 10 menit sebelum
+/// boleh mengajukan nomor yang benar.
+#[server(BatalGantiNomor, "/api-fn")]
+pub async fn batal_ganti_nomor_action() -> Result<(), ServerFnError> {
+    let sess = require_session().await?;
+    let state = app_state().await?;
+    let mut redis = state.redis.clone();
+    crate::service::ganti_nomor::batalkan(&mut redis, sess.id)
+        .await
+        .map_err(err)
+}
+
 /// Sesi saat ini (None bila belum login).
 ///
 /// SLIDING SESSION: bila token valid, token BARU di-sign dan cookie di-set
@@ -1303,20 +1366,25 @@ pub async fn create_schedule_action(
     room_id: i64,
     custom_dates: String,
     activity_type: String,
-    izin_points: String,
 ) -> Result<i64, ServerFnError> {
     require_petugas_kelas(class_id).await?;
     let state = app_state().await?;
     crate::service::kelas::create_schedule(
         &state.pool, class_id, &title, &start_time, &end_time, &limit_time, &recurrence,
         &start_date, &end_date, &category, &present_points, &late_points, &absent_points, room_id,
-        &custom_dates, &activity_type, &izin_points,
+        &custom_dates, &activity_type,
     )
     .await
     .map_err(err)
 }
 
 /// Buat sesi baru untuk sebuah kelas. `book_id` 0 = tanpa materi buku.
+///
+/// WALI KELAS-nya sendiri, bukan admin saja. Dulu di sini `KELAS_ADMIN`, dan
+/// akibatnya bertentangan dengan seluruh sisa berkas ini: wali kelas boleh
+/// menyusun jadwal, menempatkan santri, menunjuk guru tiap sesi, dan mengubah
+/// materinya — tapi tak boleh membuat sesi yang menampung semua itu. Kelasnya
+/// diserahkan kepadanya; membuat sesi bagian dari menjalankannya.
 #[server(CreateSession, "/api-fn")]
 pub async fn create_session_action(
     class_id: i64,
@@ -1327,7 +1395,7 @@ pub async fn create_session_action(
     book_id: i64,
     book_pages: String,
 ) -> Result<i64, ServerFnError> {
-    require_roles(KELAS_ADMIN).await?;
+    require_petugas_kelas(class_id).await?;
     let state = app_state().await?;
     crate::service::kelas::create_session(
         &state.pool,
@@ -1429,7 +1497,6 @@ pub async fn update_schedule_action(
     room_id: i64,
     custom_dates: String,
     activity_type: String,
-    izin_points: String,
 ) -> Result<(), ServerFnError> {
     let state = app_state().await?;
     let class_id = kelas_dari_jadwal(&state.pool, schedule_id).await?;
@@ -1437,7 +1504,7 @@ pub async fn update_schedule_action(
     crate::service::kelas::update_schedule(
         &state.pool, schedule_id, &title, &start_time, &end_time, &limit_time, &recurrence,
         &start_date, &end_date, &category, &present_points, &late_points, &absent_points, room_id,
-        &custom_dates, &activity_type, &izin_points,
+        &custom_dates, &activity_type,
     )
     .await
     .map_err(err)

@@ -10,7 +10,7 @@ use crate::web::api::{
     update_curriculum_action,
 };
 use crate::web::components::{
-    EmptyState, FlashMsg, kartu_grid,
+    kartu_grid, AdminOnly, EmptyState, FlashMsg,
 };
 
 // ── Tab KURIKULUM (migrasi 17) ───────────────────────────────────────────────
@@ -29,16 +29,27 @@ pub fn KurikulumTab(
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
     let items = d.curriculum.clone();
+    let bisa_kelola = d.can_manage_jadwal;
     let book_opts = StoredValue::new(d.book_options.clone());
 
     view! {
         <div class="space-y-3 stagger">
             <div class="md:max-w-md">
-                // Kurikulum boleh disusun GURU & PAMONG, bukan admin saja:
-                // merekalah yang tahu kelasnya sedang membaca kitab apa dan
-                // sampai mana. Yang tetap admin-saja adalah struktur kelasnya
-                // (anggota, jadwal, wali kelas).
-                <BuatKurikulumForm class_id=class_id book_options=book_opts refetch=refetch />
+                // Kurikulum disusun WALI KELAS-nya, bukan admin: dialah yang tahu
+                // kelasnya sedang membaca kitab apa dan sampai mana. Yang tetap
+                // admin-saja adalah penunjukan wali kelasnya sendiri.
+                //
+                // Diberi penanda kunci, bukan sekadar disembunyikan atau
+                // dibiarkan terlihat: server menolaknya lewat
+                // `require_petugas_kelas`, dan formulir yang terlihat lalu gagal
+                // saat disimpan terbaca sebagai aplikasi yang rusak.
+                <AdminOnly
+                    can_manage=bisa_kelola
+                    apa="menyusun kurikulum kelas"
+                    siapa="admin, ketua, atau wali kelas ini"
+                >
+                    <BuatKurikulumForm class_id=class_id book_options=book_opts refetch=refetch />
+                </AdminOnly>
             </div>
 
             {if items.is_empty() {

@@ -204,7 +204,7 @@ pub fn KelasPage() -> impl IntoView {
                                                         .filter(|k| {
                                                             q.is_empty()
                                                                 || k.name.to_lowercase().contains(&q)
-                                                                || k.teacher.to_lowercase().contains(&q)
+                                                                || k.wali_kelas.to_lowercase().contains(&q)
                                                         })
                                                         .collect();
                                                     if list.is_empty() && !q.is_empty() {
@@ -437,10 +437,22 @@ fn TambahKelas(
 fn KelasCard(k: KelasItem) -> impl IntoView {
     let href = format!("/kelas/{}", k.id);
     // SEMUA kelas wajib punya wali: dialah yang menunjuk pengisi sesi dan
-    // mengesahkan absensinya (di KBM sekalian menyetujui izin). Aturannya
-    // ditegakkan di jalur tulis, tapi baris lama bisa lolos dari sebelum aturan
-    // ini ada — ditandai di sini supaya diperbaiki, bukan didiamkan.
+    // mengesahkan absensinya. Aturannya ditegakkan di jalur tulis, tapi baris
+    // lama bisa lolos dari sebelum aturan ini ada — ditandai di sini supaya
+    // diperbaiki, bukan didiamkan.
     let wali_kosong = k.wali_kelas.trim().is_empty();
+    // Akibatnya BEDA per kategori, jadi kalimatnya pun beda.
+    //
+    // Perizinan hanya urusan wali kelas KBM: izin santri selalu diputus wali
+    // kelas KBM-nya sendiri, ke mana pun ia menghadiri kegiatan. Kelas piket,
+    // sholat, dan Quran tak pernah menyetujui izin siapa pun — menuliskannya di
+    // sana membuat pengurus mengira ada antrean izin yang menggantung, padahal
+    // yang benar-benar hilang cuma pengesah absensinya.
+    let akibat = if k.category == "kbm" {
+        "izin santrinya tak punya penyetuju dan absensinya tak ada yang mengesahkan"
+    } else {
+        "absensi kelas ini tak ada yang mengesahkan"
+    };
     view! {
         <div class="ppm-card p-4 card-hover anim-in ppm-accent">
             <div class="flex flex-wrap gap-1.5 mb-1.5">
@@ -466,14 +478,35 @@ fn KelasCard(k: KelasItem) -> impl IntoView {
                             <span class="material-symbols-outlined text-[15px] text-warning shrink-0">
                                 "warning"
                             </span>
-                            "Belum ada wali kelas — izin santri kelas ini tak punya penyetuju. Tetapkan di detail kelas."
+                            {format!("Belum ada wali kelas — {akibat}. Tetapkan di detail kelas.")}
                         </p>
                     }
                 })}
-            <p class="text-body-sm text-on-surface-variant flex items-center gap-1 mt-1">
-                <span class="material-symbols-outlined text-[15px]">"person"</span>
-                {k.teacher}
-            </p>
+            // WALI KELAS, bukan pengajar sesi terakhir.
+            //
+            // Baris ini dulu menampilkan `k.teacher` — guru yang mengisi sesi
+            // TERAKHIR kelas ini, bukan penanggung jawabnya. Dua akibatnya
+            // terlihat berdampingan di layar yang sama: kelas yang walinya
+            // kosong tetap memajang sebuah nama (guru sesi terakhirnya) tepat di
+            // bawah peringatan "belum ada wali kelas", sementara kelas yang
+            // walinya SUDAH ada tapi belum pernah bersesi hanya memajang "-"
+            // seolah tak terurus. Nama yang ditampilkan dan peringatan yang
+            // ditampilkan menjawab pertanyaan yang berbeda.
+            //
+            // Di daftar kelas, yang dicari orang adalah "siapa penanggung
+            // jawabnya" — dan itu wali kelas.
+            // Hanya bila ADA walinya — kalau kosong, kotak peringatan di atas
+            // sudah mengatakannya, dan mengulanginya di baris ini membuat satu
+            // kartu memuat kalimat yang sama dua kali.
+            {(!wali_kosong)
+                .then(|| {
+                    view! {
+                        <p class="text-body-sm text-on-surface-variant flex items-center gap-1 mt-1">
+                            <span class="material-symbols-outlined text-[15px]">"person"</span>
+                            {k.wali_kelas.clone()}
+                        </p>
+                    }
+                })}
             <div class="flex items-center gap-4 mt-3 text-body-sm text-on-surface-variant">
                 <span class="flex items-center gap-1">
                     <span class="material-symbols-outlined text-[16px] text-primary">"groups"</span>

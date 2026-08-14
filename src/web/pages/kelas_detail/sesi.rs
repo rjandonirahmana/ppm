@@ -22,7 +22,10 @@ pub(super) fn SesiTab(
     d: KelasDetail,
     refetch: impl Fn() + Copy + Send + 'static,
 ) -> impl IntoView {
-    let can_manage = d.can_manage;
+    // `can_manage_jadwal`, BUKAN `can_manage`: membuat sesi adalah wewenang
+    // wali kelas ini (lihat `create_session_action`). Memakai bendera admin di
+    // sini menyembunyikan tombolnya dari orang yang justru paling berhak.
+    let can_manage = d.can_manage_jadwal;
     let sessions = d.sessions.clone();
     let sched_opts = StoredValue::new(d.schedule_options.clone());
     let teacher_opts = StoredValue::new(d.teacher_options.clone());
@@ -33,7 +36,7 @@ pub(super) fn SesiTab(
             <div class="md:max-w-md">
                 // Membuat sesi ad-hoc = wewenang admin. Sesi rutin lahir
                 // otomatis dari jadwal, jadi peran lain tak kehilangan apa pun.
-                <AdminOnly can_manage=can_manage apa="membuat sesi baru">
+                <AdminOnly can_manage=can_manage apa="membuat sesi baru" siapa="admin, ketua, atau wali kelas ini">
                     <BuatSesiForm
                         class_id=class_id
                         schedule_options=sched_opts

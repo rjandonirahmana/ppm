@@ -159,7 +159,6 @@ fn JadwalCard(
     let e_late = RwSignal::new(s.late_points.clone());
     let e_absent = RwSignal::new(s.absent_points.clone());
     let e_activity = RwSignal::new(s.activity_type.clone());
-    let e_izin = RwSignal::new(s.izin_points.clone());
     let e_room = RwSignal::new(s.room_id);
     let e_custom = RwSignal::new(
         s.custom_dates
@@ -191,11 +190,10 @@ fn JadwalCard(
             e_room.get_untracked(),
             e_custom.get_untracked().join(","),
             e_activity.get_untracked(),
-            e_izin.get_untracked(),
         );
         leptos::task::spawn_local(async move {
             match update_schedule_action(
-                sid, a.0, a.1, a.2, a.3, a.4, a.5, a.6, a.7, a.8, a.9, a.10, a.11, a.12, a.13, a.14,
+                sid, a.0, a.1, a.2, a.3, a.4, a.5, a.6, a.7, a.8, a.9, a.10, a.11, a.12, a.13,
             )
             .await
             {

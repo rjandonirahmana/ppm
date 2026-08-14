@@ -349,8 +349,6 @@ pub struct ScheduleItem {
     /// = legacy. Menentukan preset poin default — presetnya ada di fungsi SQL
     /// `cat_default_points()` (migrasi 28), satu-satunya sumber angka poin.
     pub activity_type: String,
-    /// Poin DIPOTONG saat IZIN biasa (migrasi 28). "" = preset kategori.
-    pub izin_points: String,
     /// Materi yang sedang DIBAHAS jadwal rutin ini (migrasi 57). 0 = belum
     /// diset. Hanya "materi apa" — "sampai mana" milik baris kurikulum
     /// (migrasi 59), tempat rentangnya berada.

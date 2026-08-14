@@ -402,9 +402,9 @@ pub async fn permits_of_children(pool: &Pool, parent_id: i64, limit: i64) -> Res
             reason: r.get(4),
             guru_status: r.get(5),
             created_at: r.get(6),
-            id: r.get(9),
-            oleh_ortu: r.get(10),
-            requester_name: r.get(11),
+            id: r.get(7),
+            oleh_ortu: r.get(8),
+            requester_name: r.get(9),
         })
         .collect())
 }

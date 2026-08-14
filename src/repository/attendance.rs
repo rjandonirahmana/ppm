@@ -419,7 +419,7 @@ pub async fn riwayat_all(pool: &Pool, user_id: i64, limit: i64) -> Result<Vec<Ri
             // Dulu layar riwayat menghitung sendiri angkanya lewat
             // `models::point_rule` — tebakan yang tak pernah melihat buku besar.
             // Tebakan itu tak mungkin benar: potongan sesungguhnya ditentukan
-            // `class_schedules.izin_points`/`late_points`/`absent_points` yang
+            // `class_schedules.late_points`/`absent_points` yang
             // BEDA-BEDA per jadwal, sementara `point_rule` hanya tahu statusnya.
             // Dan salah di layar inilah yang paling merusak kepercayaan: santri
             // membandingkan riwayatnya dengan saldonya, lalu menyimpulkan
@@ -619,37 +619,23 @@ const PETUGAS_SESI_SQL: &str = "COALESCE(cs.teacher_id, cl.wali_kelas_id)";
 /// eksplisit dan `ELSE` dikembalikan ke 0 — status yang belum dikenal tak
 /// seharusnya diam-diam kena potongan terbesar.
 ///
-/// ── IZIN: SATU SUMBER, `class_schedules.izin_points` ─────────────────────────
-/// Nilai `permit` sempat ditulis 0 mati di sini untuk mengakhiri pertentangan
-/// dengan `models::point_rule` yang menampilkan 0 ke santri. Yang tak disadari
-/// saat itu: pertentangannya tidak hilang, hanya berpindah. Jalur
-/// `permits::materialize_permit_attendance` TETAP memotong `−izin_points`, jadi
-/// dua santri dengan izin serupa mendapat perlakuan berbeda semata karena
-/// barisnya lahir dari jalur yang berbeda. Komentar lama di sini bahkan
-/// menyatakan `class_schedules.izin_points` "tak lagi dibaca siapa pun" —
-/// tidak benar, dan justru membuat orang berhenti mencari.
+/// ── IZIN BERDELTA 0, DAN TAK ADA SETELANNYA LAGI ────────────────────────────
+/// `class_schedules.izin_points` DIBUANG (migrasi 87). Izin yang disetujui tak
+/// memotong poin sama sekali — santri yang mengurus izinnya melakukan hal yang
+/// benar, dan menghukumnya membuat orang memilih tidak melapor.
 ///
-/// Sekarang KEDUA jalur membaca kolom yang sama, `class_schedules.izin_points`
-/// (migrasi 28) — kolom yang memang sudah ada untuk keperluan ini dan sudah
-/// bisa disunting dari form jadwal. Tak perlu setelan baru di tempat lain.
+/// Sebelum ini kolom itu sempat jadi sumber tunggal bagi DUA jalur (verifikasi
+/// di sini dan materialisasi izin di `repository::permits`), tepatnya karena
+/// keduanya pernah menyimpang: nilai `permit` ditulis 0 mati di sini sementara
+/// jalur izin tetap memotong, sehingga dua santri dengan izin serupa mendapat
+/// perlakuan berbeda semata karena barisnya lahir dari jalur berbeda.
 ///
-/// ATURANNYA: potongan berlaku HANYA bila `izin_points` diisi dan lebih dari 0.
-/// NULL berarti tidak memotong — BUKAN jatuh ke preset PRD seperti tiga kolom
-/// poin lainnya. Perbedaan yang disengaja: hadir/telat/alfa punya nilai wajar
-/// yang berlaku di kegiatan mana pun, sedangkan "apakah izin dihukum" adalah
-/// kebijakan yang berbeda-beda per kegiatan dan tak pantas ditebak preset.
-/// Diam berarti tidak memotong; yang memotong harus dinyatakan.
-///
-/// Karena letaknya di JADWAL, keputusannya bisa berbeda antar kegiatan dalam
-/// satu kelas yang sama — ngaji wajib hadir, kajian tambahan tidak — sesuatu
-/// yang setelan per-kelas tak bisa ungkapkan.
-///
-/// `izin_points` dijaga `>= 0` oleh CHECK migrasi 44, jadi "tidak null DAN
-/// lebih dari 0" cukup ditulis `COALESCE(sch.izin_points, 0)`.
+/// Sekarang keduanya sepakat lagi, kali ini pada NOL — dan tak ada kolom
+/// tersisa yang bisa membuatnya menyimpang lagi. `sick` memang tak pernah
+/// disebut di sini: ia jatuh ke `ELSE 0`, sama artinya.
 const DELTA_SQL: &str = "CASE \
      WHEN att.status = 'present' THEN COALESCE(sch.present_points, cat_default_points(COALESCE(sch.activity_type,'other'),'present'))::int \
      WHEN att.status = 'late' THEN -COALESCE(sch.late_points, cat_default_points(COALESCE(sch.activity_type,'other'),'late'))::int \
-     WHEN att.status = 'permit' THEN -COALESCE(sch.izin_points, 0)::int \
      WHEN att.status = 'absent' THEN -COALESCE(sch.absent_points, cat_default_points(COALESCE(sch.activity_type,'other'),'absent'))::int \
      ELSE 0 \
    END";

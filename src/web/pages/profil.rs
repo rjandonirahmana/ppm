@@ -7,11 +7,11 @@ use leptos_meta::Title;
 
 use crate::models::ProfilData;
 use crate::web::api::{
-    add_ipk_action, delete_ipk_action, kalender_langganan_path, logout_action, profil_data,
-    update_contact_action,
-    update_profile_action,
+    add_ipk_action, batal_ganti_nomor_action, delete_ipk_action, kalender_langganan_path,
+    logout_action, mulai_ganti_nomor_action, profil_data, update_contact_action,
+    update_profile_action, verifikasi_ganti_nomor_action,
 };
-use crate::web::components::{DeviceFrame, MobileHeader};
+use crate::web::components::{DeviceFrame, MobileHeader, Sheet};
 
 #[component]
 pub fn ProfilPage() -> impl IntoView {
@@ -113,6 +113,17 @@ pub fn ProfilPage() -> impl IntoView {
     };
 
     crate::web::components::guard_sesi(data);
+
+    // Keadaan lembar ganti nomor DITARUH DI SINI, bukan di dalam kartunya.
+    //
+    // Sebabnya letak, bukan kerapian: `position: fixed` berpatokan pada leluhur
+    // terdekat yang punya `transform`/`filter`/`contain` — dan di dalam kartu
+    // kontak, lembar itu tampil melenceng lalu tertimpa kolom sebelahnya di
+    // desktop. Setiap <Sheet> lain di proyek ini juga dirender di akar
+    // halamannya; ini mengikuti pola yang sama, bukan membuat mekanisme baru.
+    let ganti_nomor = RwSignal::new(false);
+    let nomor_tampil = RwSignal::new(String::new());
+    provide_context(GantiNomor { buka: ganti_nomor, tampil: nomor_tampil });
 
     view! {
         <Title text="Profil — AFM SMART" />
@@ -366,9 +377,29 @@ pub fn ProfilPage() -> impl IntoView {
                     </div>
                 </div>
 
+                // DI LUAR grid `.stagger` — lihat catatan di atas.
+                <Show when=move || ganti_nomor.get()>
+                    <SheetGantiNomor
+                        on_close=move || ganti_nomor.set(false)
+                        on_sukses=move |baru: String| {
+                            nomor_tampil.set(baru);
+                            ganti_nomor.set(false);
+                        }
+                    />
+                </Show>
             </div>
         </DeviceFrame>
     }
+}
+
+/// Kanal kecil antara baris nomor (jauh di dalam kartu) dan lembar verifikasi
+/// (di akar halaman). Context, bukan prop berantai: yang perlu tahu cuma dua
+/// tempat, dan menyalurkan dua sinyal lewat empat lapis komponen hanya
+/// menambah parameter yang tak dipakai di antaranya.
+#[derive(Clone, Copy)]
+struct GantiNomor {
+    buka: RwSignal<bool>,
+    tampil: RwSignal<String>,
 }
 
 #[component]
@@ -405,7 +436,7 @@ fn ProfilContent(p: ProfilData) -> impl IntoView {
             </div>
             <div class="space-y-3">
                 <ContactRow icon="mail" label="Email" value=p.email.unwrap_or_else(|| "—".into()) />
-                <ContactRow icon="call" label="Nomor Telepon" value=p.phone.unwrap_or_else(|| "—".into()) />
+                <BarisNomorWa nomor=p.phone.clone().unwrap_or_default() />
                 <ContactRow icon="location_on" label="Alamat" value=p.address.unwrap_or_else(|| "—".into()) />
             </div>
         </div>
@@ -598,5 +629,244 @@ fn LanggananKalender() -> impl IntoView {
                 </p>
             </Show>
         </div>
+    }
+}
+
+/// Baris "Nomor WhatsApp" yang bisa DIUBAH sendiri oleh pemiliknya.
+///
+/// Nomor di sini bukan data kontak biasa: ia identitas login, penerima OTP, dan
+/// penerima pengingat tagihan. Karena itu perubahannya tidak langsung disimpan —
+/// sistem mengirim kode ke nomor BARU dulu, dan hanya kode itu yang membuktikan
+/// nomornya benar-benar dipegang orang yang sama.
+#[component]
+fn BarisNomorWa(nomor: String) -> impl IntoView {
+    // Lembarnya sendiri dirender di AKAR halaman (lihat `GantiNomor` di
+    // `ProfilPage`); di sini hanya barisnya dan tombol pembukanya.
+    let g = expect_context::<GantiNomor>();
+    // Nomor yang tampil disimpan di signal, bukan dibaca ulang dari resource:
+    // sesudah verifikasi berhasil, baris ini harus langsung berubah tanpa
+    // memuat ulang seluruh halaman profil.
+    if g.tampil.get_untracked().is_empty() {
+        g.tampil.set(nomor);
+    }
+
+    view! {
+        <div class="bg-surface-container rounded-xl p-3.5 flex items-center gap-3">
+            <span class="material-symbols-outlined text-on-surface-variant">"chat"</span>
+            <div class="flex-1 min-w-0">
+                <p class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">
+                    "Nomor WhatsApp"
+                </p>
+                <p class="text-body-md text-on-background truncate">
+                    {move || {
+                        let n = g.tampil.get();
+                        if n.is_empty() { "—".to_string() } else { n }
+                    }}
+                </p>
+            </div>
+            <button
+                type="button"
+                class="ppm-chip bg-primary/10 text-primary shrink-0 flex items-center gap-1"
+                on:click=move |_| g.buka.set(true)
+            >
+                <span class="material-symbols-outlined text-[15px]">"edit"</span>
+                "Ubah"
+            </button>
+        </div>
+    }
+}
+
+/// Lembar ganti nomor — DUA LANGKAH dalam satu lembar.
+///
+/// Digabung, bukan dua layar berurutan: kode yang masuk lewat WhatsApp perlu
+/// dibaca sambil melihat nomor tujuannya. Kalau langkah kedua berdiri di halaman
+/// lain, pengguna kehilangan konteks "kode ini dikirim ke mana" persis saat ia
+/// paling membutuhkannya.
+///
+/// Tampilannya bottom-sheet di ponsel dan dialog terpusat di desktop — itu
+/// bawaan komponen `Sheet`, jadi tak ada aturan tata letak kedua yang perlu
+/// dijaga di sini.
+#[component]
+fn SheetGantiNomor(
+    on_close: impl Fn() + Copy + Send + Sync + 'static,
+    on_sukses: impl Fn(String) + Copy + Send + Sync + 'static,
+) -> impl IntoView {
+    // None = masih di langkah 1. Some(tujuan tersamar) = kode sudah dikirim.
+    let terkirim = RwSignal::new(Option::<String>::None);
+    let nomor = RwSignal::new(String::new());
+    let kode = RwSignal::new(String::new());
+    let sibuk = RwSignal::new(false);
+    let galat = RwSignal::new(Option::<String>::None);
+
+    // Menutup lembar SEKALIGUS membatalkan pengajuan yang belum diverifikasi.
+    // Tanpa ini, pengguna yang salah ketik nomor lalu menutup lembar harus
+    // menunggu jeda kirim-ulang sebelum boleh mencoba nomor yang benar.
+    let tutup = move || {
+        if terkirim.get_untracked().is_some() {
+            leptos::task::spawn_local(async move {
+                let _ = batal_ganti_nomor_action().await;
+            });
+        }
+        on_close();
+    };
+
+    let kirim = move |_| {
+        if sibuk.get_untracked() {
+            return;
+        }
+        let n = nomor.get_untracked().trim().to_string();
+        if n.is_empty() {
+            galat.set(Some("Isi nomor WhatsApp barumu dulu.".into()));
+            return;
+        }
+        sibuk.set(true);
+        galat.set(None);
+        leptos::task::spawn_local(async move {
+            match mulai_ganti_nomor_action(n).await {
+                Ok(tujuan) => terkirim.set(Some(tujuan)),
+                Err(e) => galat.set(Some(crate::web::components::pesan_galat(&e.to_string()))),
+            }
+            sibuk.set(false);
+        });
+    };
+
+    let verifikasi = move |_| {
+        if sibuk.get_untracked() {
+            return;
+        }
+        let k = kode.get_untracked().trim().to_string();
+        if k.len() != 6 {
+            galat.set(Some("Kode terdiri dari 6 angka.".into()));
+            return;
+        }
+        sibuk.set(true);
+        galat.set(None);
+        let n = nomor.get_untracked().trim().to_string();
+        leptos::task::spawn_local(async move {
+            match verifikasi_ganti_nomor_action(k).await {
+                Ok(()) => on_sukses(n),
+                Err(e) => {
+                    galat.set(Some(crate::web::components::pesan_galat(&e.to_string())));
+                    sibuk.set(false);
+                }
+            }
+        });
+    };
+
+    view! {
+        <Sheet title="Ganti Nomor WhatsApp" on_close=tutup>
+            <div class="space-y-4">
+                <Show
+                    when=move || terkirim.get().is_some()
+                    fallback=move || {
+                        view! {
+                            <div class="space-y-3">
+                                <p class="text-body-sm text-on-surface-variant">
+                                    "Kami akan mengirim kode verifikasi ke nomor baru lewat WhatsApp. \
+                                     Pastikan nomornya aktif dan bisa kamu buka sekarang."
+                                </p>
+                                <label class="space-y-1 block">
+                                    <span class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">
+                                        "Nomor WhatsApp baru"
+                                    </span>
+                                    <input
+                                        type="tel"
+                                        inputmode="tel"
+                                        autocomplete="tel"
+                                        class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-body-md text-on-surface"
+                                        placeholder="08xx atau 628xx"
+                                        prop:value=move || nomor.get()
+                                        on:input=move |ev| nomor.set(event_target_value(&ev))
+                                    />
+                                </label>
+                                <button
+                                    type="button"
+                                    class="w-full py-3.5 rounded-xl bg-primary text-on-primary font-semibold press cursor-pointer disabled:opacity-60"
+                                    prop:disabled=move || sibuk.get()
+                                    on:click=kirim
+                                >
+                                    {move || {
+                                        if sibuk.get() { "Mengirim…" } else { "Kirim Kode" }
+                                    }}
+                                </button>
+                            </div>
+                        }
+                    }
+                >
+                    <div class="space-y-3">
+                        <div class="bg-surface-container rounded-xl px-3.5 py-3 flex items-start gap-2.5">
+                            <span class="material-symbols-outlined text-primary text-[19px]">
+                                "mark_chat_read"
+                            </span>
+                            <p class="text-body-sm text-on-background">
+                                "Kode dikirim ke "
+                                <b>{move || terkirim.get().unwrap_or_default()}</b>
+                                ". Berlaku 10 menit."
+                            </p>
+                        </div>
+                        <label class="space-y-1 block">
+                            <span class="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">
+                                "Kode verifikasi"
+                            </span>
+                            <input
+                                type="text"
+                                inputmode="numeric"
+                                autocomplete="one-time-code"
+                                maxlength="6"
+                                class="w-full bg-surface-container border-0 rounded-xl px-4 py-3.5 text-center text-2xl font-bold tracking-[0.5em] text-on-surface"
+                                placeholder="••••••"
+                                prop:value=move || kode.get()
+                                on:input=move |ev| {
+                                    // Hanya angka: papan ketik ponsel kerap
+                                    // menyisipkan spasi saat kode ditempel dari
+                                    // notifikasi WhatsApp.
+                                    let bersih: String = event_target_value(&ev)
+                                        .chars()
+                                        .filter(char::is_ascii_digit)
+                                        .take(6)
+                                        .collect();
+                                    kode.set(bersih);
+                                }
+                            />
+                        </label>
+                        <button
+                            type="button"
+                            class="w-full py-3.5 rounded-xl bg-primary text-on-primary font-semibold press cursor-pointer disabled:opacity-60"
+                            prop:disabled=move || sibuk.get()
+                            on:click=verifikasi
+                        >
+                            {move || if sibuk.get() { "Memeriksa…" } else { "Verifikasi & Simpan" }}
+                        </button>
+                        <button
+                            type="button"
+                            class="w-full text-body-sm text-on-surface-variant py-2"
+                            prop:disabled=move || sibuk.get()
+                            on:click=move |_| {
+                                terkirim.set(None);
+                                kode.set(String::new());
+                                galat.set(None);
+                                leptos::task::spawn_local(async move {
+                                    let _ = batal_ganti_nomor_action().await;
+                                });
+                            }
+                        >
+                            "Salah nomor? Ubah nomornya"
+                        </button>
+                    </div>
+                </Show>
+
+                {move || {
+                    galat
+                        .get()
+                        .map(|e| {
+                            view! {
+                                <p class="text-body-sm text-error bg-error/10 rounded-xl px-3.5 py-2.5">
+                                    {e}
+                                </p>
+                            }
+                        })
+                }}
+            </div>
+        </Sheet>
     }
 }

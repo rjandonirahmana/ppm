@@ -1037,7 +1037,6 @@ pub struct SchedRow {
     /// legacy (preset default 10/0/15). Menentukan preset poin bila override kosong.
     pub activity_type: Option<String>,
     /// Poin DIPOTONG saat IZIN biasa (migrasi 28). None = preset kategori.
-    pub izin_points: Option<i16>,
     /// Ruang = perangkat RFID (migrasi 24). None = belum diset. room_name utk
     /// tampilan (join rfid_devices.device_name).
     pub room_id: Option<i64>,
@@ -1095,7 +1094,7 @@ pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>
             "SELECT cs.id, COALESCE(cs.title, ''), cs.start_time, cs.end_time, \
                     cs.limit_entery_time, cs.recurrence_type, cs.start_date, cs.end_date, \
                     cs.category, cs.present_points, cs.late_points, cs.absent_points, \
-                    cs.room_id, dev.device_name, cs.custom_dates, cs.activity_type, cs.izin_points, \
+                    cs.room_id, dev.device_name, cs.custom_dates, cs.activity_type, \
                     cs.current_book_id, cb.title, cb.category, cb.surahs, \
                     cs.current_surah, cs.current_unit \
              FROM class_schedules cs \
@@ -1125,13 +1124,12 @@ pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>
             room_name: r.get(13),
             custom_dates: json_dates(&r.get::<_, serde_json::Value>(14)),
             activity_type: r.get(15),
-            izin_points: r.get(16),
-            current_book_id: r.get(17),
-            current_book_title: r.get(18),
-            current_book_category: r.get(19),
-            current_book_surahs: r.get(20),
-            current_surah: r.get(21),
-            current_unit: r.get(22),
+            current_book_id: r.get(16),
+            current_book_title: r.get(17),
+            current_book_category: r.get(18),
+            current_book_surahs: r.get(19),
+            current_surah: r.get(20),
+            current_unit: r.get(21),
         })
         .collect())
 }
@@ -1202,7 +1200,6 @@ pub async fn create_schedule(
     room_id: Option<i64>,
     custom_dates: &serde_json::Value,
     activity_type: Option<&str>,
-    izin_points: Option<i16>,
 ) -> Result<i64> {
     let c = pool.get().await?;
     let row = c
@@ -1210,12 +1207,12 @@ pub async fn create_schedule(
             "INSERT INTO class_schedules \
                 (class_id, title, start_time, end_time, limit_entery_time, recurrence_type, \
                  start_date, end_date, category, present_points, late_points, absent_points, \
-                 room_id, custom_dates, activity_type, izin_points) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id",
+                 room_id, custom_dates, activity_type) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id",
             &[
                 &class_id, &title, &start_time, &end_time, &limit_time, &recurrence_type,
                 &start_date, &end_date, &category, &present_points, &late_points, &absent_points,
-                &room_id, custom_dates, &activity_type, &izin_points,
+                &room_id, custom_dates, &activity_type,
             ],
         )
         .await
@@ -1393,7 +1390,6 @@ pub async fn update_schedule(
     room_id: Option<i64>,
     custom_dates: &serde_json::Value,
     activity_type: Option<&str>,
-    izin_points: Option<i16>,
 ) -> Result<bool> {
     let c = pool.get().await?;
     let n = c
@@ -1401,7 +1397,7 @@ pub async fn update_schedule(
             "UPDATE class_schedules SET title = $2, start_time = $3, end_time = $4, \
                 limit_entery_time = $5, recurrence_type = $6, start_date = $7, end_date = $8, \
                 category = $9, present_points = $10, late_points = $11, absent_points = $12, \
-                room_id = $13, custom_dates = $14, activity_type = $15, izin_points = $16 \
+                room_id = $13, custom_dates = $14, activity_type = $15 \
              WHERE id = $1",
             &[
                 &schedule_id,
@@ -1419,7 +1415,6 @@ pub async fn update_schedule(
                 &room_id,
                 custom_dates,
                 &activity_type,
-                &izin_points,
             ],
         )
         .await

@@ -454,6 +454,46 @@ pub async fn find_by_phone(pool: &Pool, phone: &str) -> Result<Option<i64>> {
     Ok(row.map(|r| r.get(0)))
 }
 
+/// Nomor HP yang TERSIMPAN sekarang — bentuk `628…`, `None` bila belum ada.
+///
+/// Dipakai `service::ganti_nomor` untuk menolak lebih awal pengajuan ke nomor
+/// yang sudah dipakai orang itu sendiri.
+pub async fn phone_of(pool: &Pool, user_id: i64) -> Result<Option<String>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt("SELECT phone_number FROM users WHERE id = $1", &[&user_id])
+        .await
+        .context("phone_of")?;
+    Ok(row.and_then(|r| r.get(0)))
+}
+
+/// Pindahkan nomor HP satu akun. Return `false` bila akunnya tak ada ATAU
+/// nomornya keburu diambil orang lain.
+///
+/// Dua penjaga, dan keduanya perlu:
+///
+///   • `WHERE NOT EXISTS (…)` menutup balapan antara pemeriksaan di service dan
+///     penulisan di sini — tanpa itu, dua akun yang mengajukan nomor sama pada
+///     detik yang sama sama-sama lolos pemeriksaan lalu satu gagal dengan galat
+///     constraint mentah.
+///   • `uq_users_phone` (migrasi 19) tetap menjadi lapis terakhir. Guard di SQL
+///     ini mengubah balapan itu jadi `false` yang bisa dijelaskan ke pengguna,
+///     bukan menggantikan constraint-nya.
+pub async fn set_phone_number(pool: &Pool, user_id: i64, phone: &str) -> Result<bool> {
+    let c = pool.get().await?;
+    let n = c
+        .execute(
+            "UPDATE users SET phone_number = $2 \
+              WHERE id = $1 \
+                AND NOT EXISTS (SELECT 1 FROM users u \
+                                 WHERE u.phone_number = $2 AND u.id <> $1)",
+            &[&user_id, &phone],
+        )
+        .await
+        .context("set_phone_number")?;
+    Ok(n > 0)
+}
+
 /// Ambil hash password user (untuk verifikasi sandi lama saat ganti sandi).
 pub async fn get_password_hash(pool: &Pool, user_id: i64) -> Result<Option<String>> {
     let c = pool.get().await?;

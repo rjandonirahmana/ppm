@@ -51,6 +51,7 @@ pub mod dashboard;
 pub mod enrollment;
 pub mod export;
 pub mod finance;
+pub mod ganti_nomor;
 pub mod fmt;
 pub mod gate;
 pub mod guest;

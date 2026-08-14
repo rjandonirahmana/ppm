@@ -729,7 +729,6 @@ pub async fn kelas_detail(
             room_label: s.room_name.clone().unwrap_or_default(),
             custom_dates: s.custom_dates.join(","),
             activity_type: s.activity_type.clone().unwrap_or_default(),
-            izin_points: s.izin_points.map(|n| n.to_string()).unwrap_or_default(),
             }
         })
         .collect();
@@ -1069,7 +1068,6 @@ pub async fn create_schedule(
     room_id: i64,
     custom_dates: &str,
     activity_type: &str,
-    izin_points: &str,
 ) -> Result<i64> {
     let today = Utc::now().with_timezone(&wib()).date_naive();
     // Recurrence 'custom' = tanggal manual (loncat-loncat): start/end jadwal
@@ -1099,7 +1097,6 @@ pub async fn create_schedule(
     let pp = wajib_point_magnitude(present_points, "tepat waktu")?;
     let lp = wajib_point_magnitude(late_points, "telat")?;
     let ap = wajib_point_magnitude(absent_points, "alpa")?;
-    let ip = wajib_point_magnitude(izin_points, "izin")?;
     // Jenis kegiatan menentukan preset poin & apakah sesi boleh direkam —
     // dibiarkan kosong berarti jatuh ke preset "legacy" tanpa ada yang memilih.
     // Form tak lagi mengirim jenis kegiatan; diturunkan dari kategori kelas.
@@ -1130,7 +1127,7 @@ pub async fn create_schedule(
     let cd_json = custom_dates_json(&custom);
     let id = repo::create_schedule(
         pool, class_id, title.trim(), st, et, lt, rec, sd, ed, cat, pp, lp, ap, room, &cd_json,
-        atype.as_deref(), ip,
+        atype.as_deref(),
     )
     .await?;
     // Materialisasi sesi. 'custom' → langsung SEMUA tanggal ≥ hari ini (tak
@@ -1164,7 +1161,6 @@ pub async fn update_schedule(
     room_id: i64,
     custom_dates: &str,
     activity_type: &str,
-    izin_points: &str,
 ) -> Result<()> {
     let today = Utc::now().with_timezone(&wib()).date_naive();
     let custom = if recurrence == "custom" { parse_custom_dates(custom_dates)? } else { Vec::new() };
@@ -1189,7 +1185,6 @@ pub async fn update_schedule(
     let pp = parse_point_magnitude(present_points, "tepat waktu")?;
     let lp = parse_point_magnitude(late_points, "telat")?;
     let ap = parse_point_magnitude(absent_points, "alpa")?;
-    let ip = parse_point_magnitude(izin_points, "izin")?;
     // Form tak lagi mengirim jenis kegiatan; diturunkan dari kategori kelas.
     // `normalize_activity_type` tetap didahulukan supaya pemanggil lama (atau
     // server fn yang dipanggil langsung) masih bisa menyetelnya eksplisit.
@@ -1215,7 +1210,7 @@ pub async fn update_schedule(
     let cd_json = custom_dates_json(&custom);
     if !repo::update_schedule(
         pool, schedule_id, title.trim(), st, et, lt, rec, sd, ed, cat, pp, lp, ap, room, &cd_json,
-        atype.as_deref(), ip,
+        atype.as_deref(),
     )
     .await?
     {

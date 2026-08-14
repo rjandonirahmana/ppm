@@ -159,7 +159,6 @@ pub(super) fn BuatJadwalForm(
     let present_point = RwSignal::new(String::new());
     let point = RwSignal::new(String::new());
     let absent_point = RwSignal::new(String::new());
-    let izin_point = RwSignal::new(String::new());
     let room = RwSignal::new(0i64);
     // Recurrence 'custom' = daftar tanggal manual (loncat-loncat).
     let custom_dates = RwSignal::new(Vec::<String>::new());
@@ -188,12 +187,11 @@ pub(super) fn BuatJadwalForm(
             room.get_untracked(),
             custom_dates.get_untracked().join(","),
             activity.get_untracked(),
-            izin_point.get_untracked(),
         );
         leptos::task::spawn_local(async move {
             match create_schedule_action(
                 class_id, args.0, args.1, args.2, args.3, args.4, args.5, args.6, args.7, args.8,
-                args.9, args.10, args.11, args.12, args.13, args.14,
+                args.9, args.10, args.11, args.12, args.13,
             )
             .await
             {
@@ -210,7 +208,6 @@ pub(super) fn BuatJadwalForm(
                     present_point.set(String::new());
                     point.set(String::new());
                     absent_point.set(String::new());
-                    izin_point.set(String::new());
                     room.set(0);
                     custom_dates.set(Vec::new());
                     refetch();

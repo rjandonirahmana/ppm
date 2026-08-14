@@ -648,34 +648,25 @@ pub async fn izin_aktif(
 ///
 /// MASALAH yang diselesaikan: sampai sekarang tak ada satu pun kode yang
 /// menulis `attendances.status = 'permit'/'sick'`. Akibatnya kolom "Izin" di
-/// rekap mingguan selalu 0, dan aturan PRD "izin mengurangi poin"
-/// (`izin_points` migrasi 28, `attendance_delta("permit")`) tak pernah
-/// berjalan — santri berizin sekadar TIDAK PUNYA baris, hanya dilewati
-/// auto-absent.
+/// rekap mingguan selalu 0 — santri berizin sekadar TIDAK PUNYA baris, hanya
+/// dilewati auto-absent.
 ///
-/// Status yang ditulis mengikuti JENIS izin:
-///   • `sick`  → status 'sick'  → 0 poin (PRD: sakit dgn surat sah tak memotong)
-///   • `leave` → status 'permit' → 0 poin (PRD: CUTI juga tak memotong)
-///   • lainnya → status 'permit' → −`class_schedules.izin_points` (migrasi 28),
-///     HANYA bila kolom itu diisi dan lebih dari 0. NULL atau 0 = kegiatan itu
-///     tak memotong poin, dan tak ada baris `point_logs` yang ditulis sama
-///     sekali (bukan baris berdelta 0 yang cuma meramaikan buku besar).
+/// Status yang ditulis mengikuti JENIS izin: `sick` → 'sick', selain itu →
+/// 'permit'. Keduanya dibedakan karena rekap memisahkan sakit dari izin;
+/// menandai cuti sebagai sakit akan memalsukan angka itu.
 ///
-/// Aturan yang SAMA kini dibaca `attendance::DELTA_SQL`. Dulu jalur itu memberi
-/// 0 mati sementara jalur ini memotong sesuai preset, sehingga dua santri
-/// dengan izin serupa diperlakukan berbeda semata karena barisnya lahir dari
-/// jalur yang berbeda — dan tak satu pun layar memperlihatkan perbedaan itu.
+/// ── TIDAK ADA POTONGAN POIN, JENIS APA PUN ──────────────────────────────────
+/// Izin yang DISETUJUI berdelta 0. `class_schedules.izin_points` dibuang di
+/// migrasi 87 bersama seluruh CTE penulis `point_logs` yang dulu ada di sini.
 ///
-/// `leave` = cuti resmi: magang, tugas akhir, lomba mewakili pondok, atau sakit
-/// yang butuh perawatan intensif di luar. PRD menyebut sakit dan cuti dalam
-/// satu tarikan napas sebagai yang TIDAK mengurangi poin, tapi dulu hanya
-/// `sick` yang dibebaskan — cuti jatuh ke cabang "lainnya" dan dipotong persis
-/// seperti izin keperluan biasa. Santri yang mewakili pondok berlomba pulang
-/// membawa minus poin.
+/// Dulu cabangnya bertingkat — sakit dan cuti bebas, "keperluan" dipotong —
+/// dan tingkatan itu sendiri yang bermasalah: ia menghukum santri yang justru
+/// melapor. Yang paling terasa adalah cuti resmi (magang, lomba mewakili
+/// pondok) yang sempat jatuh ke cabang "lainnya", sehingga santri yang berlomba
+/// atas nama pondok pulang membawa minus poin.
 ///
-/// Statusnya tetap 'permit' (bukan dipaksa jadi 'sick'): rekap membedakan sakit
-/// dari izin, dan menandai cuti sebagai sakit akan memalsukan angka itu. Yang
-/// dibedakan hanya potongan poinnya.
+/// Aturan yang sama berlaku di `attendance::DELTA_SQL`, dan sekarang tak ada
+/// kolom tersisa yang bisa membuat kedua jalur menyimpang lagi.
 ///
 /// `ON CONFLICT DO NOTHING`: baris yang SUDAH ada tak ditimpa. Santri yang
 /// ternyata hadir sebagian, atau yang sudah terlanjur dialpakan auto-absent,
@@ -718,19 +709,7 @@ pub async fn materialize_permit_attendance(pool: &Pool, permit_id: i64) -> Resul
                  WHERE (s.session_date + sj.start_time) < p.end_time \
                    AND (s.session_date + sj.end_time) > p.start_time \
                  ON CONFLICT (user_id, class_session_id) DO NOTHING \
-                RETURNING id, user_id, class_schedule_id, status \
-             ), \
-             lg AS ( \
-                INSERT INTO point_logs (user_id, delta, reason, category, attendance_id) \
-                SELECT ins.user_id, -sch.izin_points::int, \
-                       'Kehadiran (' || ins.status || ') — izin disetujui', 'discipline', ins.id \
-                  FROM ins \
-                  JOIN class_schedules sch ON sch.id = ins.class_schedule_id \
-                  CROSS JOIN p \
-                 WHERE ins.status = 'permit' \
-                   AND p.type NOT IN ('sick', 'leave') \
-                   AND COALESCE(sch.izin_points, 0) > 0 \
-                RETURNING user_id \
+                RETURNING id \
              ) \
              SELECT COUNT(*)::bigint FROM ins",
             &[&permit_id],
