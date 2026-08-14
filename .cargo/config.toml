@@ -3,12 +3,31 @@
 [env]
 MACOSX_DEPLOYMENT_TARGET = "15.0"
 
-# macOS host-only: linker Apple baru (ld-prime, ld-1267 di Xcode 26) meng-dead-strip
-# simbol internal LLVM (anon.*.llvm dari monomorphisasi generik, mis. VecDeque fold)
-# yang MASIH direferensikan → "Undefined symbols for architecture arm64" saat me-link
-# cdylib byproduct native `libppm.dylib`. Paksa linker KLASIK (ld64) hanya di target
-# host; build wasm (target berbeda) tak terpengaruh. -ld_classic memang deprecated
-# (muncul warning) tapi masih ada & stabil di ld-1267. Bila kelak dihapus Apple,
-# alternatif: pasang `lld` (brew install llvm) lalu -fuse-ld=lld, atau codegen-units=1.
-[target.aarch64-apple-darwin]
-rustflags = ["-C", "link-arg=-Wl,-ld_classic"]
+# ── PENANGKAL LINKER YANG SUDAH DICABUT (Agustus 2026) ───────────────────────
+# Dulu di sini ada:
+#
+#   [target.aarch64-apple-darwin]
+#   rustflags = ["-C", "link-arg=-Wl,-ld_classic"]
+#
+# Alasannya: linker Apple baru (ld-prime) meng-dead-strip simbol internal LLVM
+# (`anon.*.llvm` dari monomorphisasi generik) yang MASIH direferensikan, sehingga
+# me-link cdylib byproduct `libppm.dylib` gagal dengan "Undefined symbols for
+# architecture arm64". Memaksa linker klasik ld64 menghindarinya.
+#
+# DICABUT karena dua hal:
+#
+#   1. `-ld_classic` deprecated dan memunculkan peringatan di tiap build. Lint
+#      rustc `linker_messages` kini menampilkannya, dan membungkam lint itu
+#      berarti ikut menyembunyikan galat linker SUNGGUHAN — termasuk kelas galat
+#      yang penangkal ini justru dibuat untuk mencegahnya.
+#   2. Diuji: build bersih tanpa flag ini BERHASIL pada rustc nightly
+#      1.99.0 (2026-07-14) + ld-1267, dan `libppm.dylib` (20 MB) benar-benar
+#      terbentuk. Jadi jalur yang dulu gagal kini lolos.
+#
+# ⚠️ Bila "Undefined symbols for architecture arm64" muncul lagi saat me-link
+# `libppm.dylib`, COBA `cargo clean -p ppm` LEBIH DULU. Sekali kejadian di sesi
+# Agustus 2026 ternyata artefak inkremental basi, bukan bug linker — dan
+# penangkal di atas sedang aktif saat itu, jadi ia memang tak menolong.
+#
+# Kalau benar-benar terulang pada build bersih, kembalikan dua baris di atas.
+# Alternatif lain: `brew install llvm` lalu `-fuse-ld=lld`, atau codegen-units=1.

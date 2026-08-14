@@ -25,10 +25,25 @@ pub const SESSION_SECS: i64 = TOKEN_DAYS * 24 * 3600;
 /// memeriksa tanda tangan token dan tak pernah menanyakan keadaan terkini ke
 /// database.
 ///
-/// 30 hari membatasi kerusakan itu tanpa menambah query per request. Ini BUKAN
-/// pencabutan seketika — perubahan peran/status masih butuh sampai 30 hari untuk
-/// benar-benar berlaku pada sesi yang sudah berjalan. Pencabutan seketika butuh
-/// `token_version` atau cache Redis; belum dikerjakan.
+/// PENCABUTAN SEKARANG SEKETIKA — komentar ini pernah mengatakan sebaliknya.
+///
+/// Sejak `web::api::require_session` membaca peran & keaktifan SEGAR dari
+/// database pada setiap panggilan (`repository::session_user_aktif`), akun yang
+/// dinonaktifkan langsung ditolak dan peran yang diturunkan langsung berlaku.
+/// Umur token tak lagi menentukan seberapa lama pencabutan tertunda.
+///
+/// Satu-satunya sisa: bila DATABASE TAK MENJAWAB, sesi jatuh kembali ke klaim
+/// token — sengaja, supaya aplikasi tak mati total saat DB tersendat, dan
+/// dibatasi karena tindakan apa pun yang berarti toh gagal di query berikutnya.
+///
+/// ⚠️ Versi lama komentar ini menyatakan pencabutan "belum dikerjakan", padahal
+/// sudah. Sebuah audit pada Agustus 2026 membacanya, mempercayainya, dan
+/// melaporkan lubang keamanan yang tidak ada — lalu menyarankan membangun
+/// `token_version` yang akan menduplikasi mekanisme yang sudah jalan. Komentar
+/// yang berbohong lebih mahal daripada komentar yang tak ada.
+///
+/// 30 hari kini murni soal higiene: perangkat yang hilang berhenti berlaku
+/// sendiri tanpa ada yang perlu ingat mencabutnya.
 pub const TOKEN_DAYS: i64 = 30;
 
 /// Kenapa sebuah token ditolak.

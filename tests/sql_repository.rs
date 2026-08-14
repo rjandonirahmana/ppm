@@ -26,6 +26,7 @@
 //! perlu Postgres sungguhan. Yang ada di sini adalah jaring pertama yang murah
 //! dan selalu jalan — bukan pengganti tes integrasi.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -95,6 +96,30 @@ fn rapikan(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Semua `const NAMA: &str = "…";` di `src/repository`, untuk menyulih `{NAMA}`
+/// pada query yang dirakit `format!`.
+fn konstanta_sql() -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for path in berkas_repository() {
+        let src = fs::read_to_string(&path).unwrap();
+        for (pos, isi) in literal_string(&src) {
+            let Some(eq) = src[..pos].rfind('=') else { continue };
+            let kepala = src[..eq].trim_end();
+            let Some(k) = kepala.rfind("const ") else { continue };
+            let nama = kepala[k + "const ".len()..].split(':').next().unwrap_or("").trim();
+            // Hanya nama bergaya konstanta, dan hanya yang berdempetan dengan
+            // literalnya — supaya `const` lain di berkas yang sama tak terpungut.
+            if !nama.is_empty()
+                && nama.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                && src[eq..pos].trim() == "="
+            {
+                out.insert(nama.to_string(), rapikan(&isi));
+            }
+        }
+    }
+    out
+}
+
 fn sql_beneran(s: &str) -> bool {
     let t = s.trim_start().to_ascii_uppercase();
     ["SELECT ", "INSERT ", "UPDATE ", "DELETE ", "WITH "]
@@ -131,15 +156,34 @@ fn cacah_elemen(s: &str) -> usize {
 /// (mis. `INSERT`, atau `SELECT` tanpa `FROM`).
 fn kolom_select(sql: &str) -> Option<usize> {
     let atas = sql.to_ascii_uppercase();
-    let mulai = atas.find("SELECT ")? + "SELECT ".len();
+
+    // SELECT teratas TERAKHIR, bukan yang pertama.
+    //
+    // Pada query CTE (`WITH a AS (…), b AS (…) SELECT x, y FROM a`) yang
+    // menentukan kolom keluaran adalah SELECT penutup — SELECT di dalam CTE
+    // berada di kedalaman kurung > 0. Versi pertama pemeriksa ini mengambil yang
+    // pertama, jadi seluruh query CTE terpaksa dilewati; padahal
+    // `decide_verify_bulk` — salah satu query terpanas — justru berbentuk ini.
+    let mut mulai = None;
+    let mut dalam = 0i32;
+    for (i, c) in sql.char_indices() {
+        match c {
+            '(' => dalam += 1,
+            ')' => dalam -= 1,
+            _ => {}
+        }
+        if dalam == 0 && atas[i..].starts_with("SELECT ") {
+            mulai = Some(i + "SELECT ".len());
+        }
+    }
+    let mulai = mulai?;
+
     let sisa = &sql[mulai..];
     let atas_sisa = &atas[mulai..];
 
     // `char_indices` memberi indeks BYTE, bukan urutan karakter. Versi pertama
     // mencacah dengan indeks karakter lalu memotong string dengan angka itu —
-    // dan langsung panik pada em-dash di komentar SQL. Rust menolak potongan di
-    // tengah karakter, jadi kesalahan ini selalu ketahuan; di bahasa lain ia
-    // hanya menghasilkan teks rusak.
+    // dan langsung panik pada em-dash di komentar SQL.
     let (mut dalam, mut akhir) = (0i32, None);
     for (i, c) in sisa.char_indices() {
         match c {
@@ -147,7 +191,6 @@ fn kolom_select(sql: &str) -> Option<usize> {
             ')' => dalam -= 1,
             _ => {}
         }
-        // `FROM` teratas — milik subquery diabaikan karena `dalam > 0`.
         if dalam == 0 && atas_sisa[i..].starts_with("FROM ") {
             akhir = Some(i);
             break;
@@ -302,20 +345,49 @@ fn potong_di_pemetaan_kedua(ekor: &str) -> String {
     ekor.to_string()
 }
 
-/// Apakah jumlah kolom query ini bisa dipastikan secara statis?
+/// Siapkan SQL untuk dicacah kolomnya — `None` bila memang tak bisa dipastikan.
 ///
-/// TIDAK bisa, dan karena itu dilewati, bila:
-///   • memuat `{…}` — daftar kolomnya dirakit `format!` saat berjalan;
-///   • diawali `WITH` — SELECT teratasnya bukan yang pertama ditemukan;
-///   • bukan `SELECT` (UPDATE/INSERT/DELETE) — "SELECT" yang terlihat milik
-///     subquery, dan kolom keluarannya ditentukan `RETURNING`.
+/// `WITH` (CTE) KINI IKUT DIPERIKSA: `kolom_select` mengambil SELECT teratas
+/// TERAKHIR, jadi SELECT penutup sebuah CTE terbaca dengan benar.
 ///
-/// Melewatkan sesuatu jauh lebih baik daripada menuduhnya: pemeriksa yang
-/// sering salah tuduh akan dimatikan orang, dan setelah itu ia tak menangkap
-/// apa pun lagi.
-fn bisa_dicacah(sql: &str) -> bool {
+/// Yang masih dilewati:
+///   • bukan `SELECT`/`WITH` — pada UPDATE/INSERT/DELETE, "SELECT" yang terlihat
+///     milik subquery dan kolom keluarannya ditentukan `RETURNING`;
+///   • `{…}` yang tak dikenali DAN berada di dalam daftar kolom.
+///
+/// ── DUA CARA MEMBUKA QUERY BER-`format!` ─────────────────────────────────────
+/// 1. `{NAMA}` disulih isi `const NAMA: &str = "…"` bila konstantanya ditemukan.
+///    Inilah yang membuka `{DELTA_SQL}`, `{PETUGAS_SESI_SQL}`, dan `{BOOK_COLS}`
+///    — justru fragmen yang paling sering disunting, jadi paling rawan bergeser.
+/// 2. `{…}` yang TAK dikenali (mis. `{kelas}`, diisi pemanggilan fungsi) tetap
+///    boleh dilewati ASAL letaknya SESUDAH `FROM`: apa pun isinya, fragmen di
+///    bagian FROM/JOIN tak bisa mengubah jumlah kolom keluaran.
+///
+/// Prinsipnya tetap: melewatkan sesuatu boleh, menuduh yang benar tidak.
+/// Pemeriksa yang sering salah tuduh akan dimatikan orang, dan sesudah itu ia
+/// tak menangkap apa pun lagi.
+fn bisa_dicacah(sql: &str, konstanta: &HashMap<String, String>) -> Option<String> {
     let t = sql.trim_start().to_ascii_uppercase();
-    t.starts_with("SELECT ") && !sql.contains('{')
+    if !(t.starts_with("SELECT ") || t.starts_with("WITH ")) {
+        return None;
+    }
+
+    let mut hasil = String::with_capacity(sql.len());
+    let mut sisa = sql;
+    while let Some(i) = sisa.find('{') {
+        let j = sisa[i..].find('}')?;
+        let nama = &sisa[i + 1..i + j];
+        hasil.push_str(&sisa[..i]);
+        match konstanta.get(nama) {
+            Some(isi) => hasil.push_str(isi),
+            // Tak dikenali: hanya aman bila daftar kolom sudah lewat.
+            None if hasil.to_ascii_uppercase().contains(" FROM ") => hasil.push('x'),
+            None => return None,
+        }
+        sisa = &sisa[i + j + 1..];
+    }
+    hasil.push_str(sisa);
+    Some(hasil)
 }
 
 /// Setiap `$n` harus punya parameter. Ini yang menangkap `$16` tertinggal.
@@ -350,15 +422,14 @@ fn placeholder_cocok_dengan_jumlah_parameter() {
 /// pergeseran indeks saat sebuah kolom dibuang.
 #[test]
 fn indeks_kolom_tidak_melewati_select() {
+    let konst = konstanta_sql();
     let mut salah = Vec::new();
     for path in berkas_repository() {
         let src = tanpa_blok_tes(&fs::read_to_string(&path).unwrap());
         let nama = path.file_name().unwrap().to_string_lossy().to_string();
         for p in petak_query(&src) {
-            if !bisa_dicacah(&p.sql) {
-                continue;
-            }
-            let Some(kol) = kolom_select(&p.sql) else { continue };
+            let Some(sql) = bisa_dicacah(&p.sql, &konst) else { continue };
+            let Some(kol) = kolom_select(&sql) else { continue };
             if kol == 0 {
                 continue;
             }
@@ -462,10 +533,43 @@ fn pemetaan_kedua_dipotong() {
 /// bukan ditebak.
 #[test]
 fn query_dengan_format_dilewati() {
-    assert!(!bisa_dicacah("SELECT {BOOK_COLS} FROM books WHERE id = $1"));
-    assert!(!bisa_dicacah("WITH x AS (SELECT 1) SELECT a, b FROM x"));
-    assert!(!bisa_dicacah("UPDATE t SET a = $1 WHERE id IN (SELECT id FROM u)"));
-    assert!(bisa_dicacah("SELECT a, b FROM t"));
+    let kosong = HashMap::new();
+    // Placeholder tak dikenali DI DALAM daftar kolom → tak bisa dipastikan.
+    assert!(bisa_dicacah("SELECT {BOOK_COLS} FROM books WHERE id = $1", &kosong).is_none());
+    // Bukan SELECT/WITH → dilewati.
+    assert!(bisa_dicacah("UPDATE t SET a = $1 WHERE id IN (SELECT id FROM u)", &kosong).is_none());
+    // SELECT biasa → lolos apa adanya.
+    assert!(bisa_dicacah("SELECT a, b FROM t", &kosong).is_some());
+}
+
+/// Konstanta yang dikenali harus DISULIH, bukan dilewati — inilah yang membuka
+/// `{DELTA_SQL}` dan kawan-kawan untuk diperiksa.
+#[test]
+fn konstanta_dikenali_disulih() {
+    let mut k = HashMap::new();
+    k.insert("COLS".to_string(), "a, b, c".to_string());
+    let hasil = bisa_dicacah("SELECT {COLS} FROM t", &k).expect("harus bisa dicacah");
+    assert_eq!(kolom_select(&hasil), Some(3));
+}
+
+/// Placeholder tak dikenali di bagian FROM/JOIN tak mengubah jumlah kolom, jadi
+/// query-nya tetap boleh diperiksa. Ini yang membuka query ber-`{kelas}`.
+#[test]
+fn placeholder_sesudah_from_tidak_menghalangi() {
+    let kosong = HashMap::new();
+    let hasil = bisa_dicacah("SELECT a, b FROM t {kelas} WHERE x = $1", &kosong)
+        .expect("placeholder sesudah FROM harus aman");
+    assert_eq!(kolom_select(&hasil), Some(2));
+}
+
+/// CTE kini ikut diperiksa: yang menentukan kolom adalah SELECT PENUTUP.
+#[test]
+fn cte_memakai_select_penutup() {
+    let kosong = HashMap::new();
+    let sql = "WITH upd AS (UPDATE t SET a = 1 RETURNING id, user_id) \
+               SELECT x, y, z FROM upd";
+    let hasil = bisa_dicacah(sql, &kosong).expect("WITH harus ikut diperiksa");
+    assert_eq!(kolom_select(&hasil), Some(3), "3 kolom SELECT penutup, bukan 2 dari RETURNING");
 }
 
 /// SQL di proyek ini memuat em-dash dan tanda kutip melengkung di komentarnya.

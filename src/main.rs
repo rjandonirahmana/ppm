@@ -470,6 +470,59 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(socket_addr).await?;
     tracing::info!("ppm (SSR) listening on http://{}", bind_addr);
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(sinyal_berhenti())
+        .await?;
+    tracing::info!("ppm berhenti dengan rapi");
     Ok(())
+}
+
+/// Tunggu SIGTERM (dari orkestrator) atau Ctrl-C (dari terminal).
+///
+/// Tanpa ini, `axum::serve` berhenti seketika begitu prosesnya diberi sinyal —
+/// dan setiap permintaan yang SEDANG berjalan terputus di tengah. Untuk aplikasi
+/// ini yang berarti: absensi yang sudah tersimpan tapi poinnya belum ditulis,
+/// unggahan rekaman yang terpotong, dan pengguna yang melihat galat jaringan
+/// setiap kali dilakukan deploy.
+///
+/// Dengan `with_graceful_shutdown`, listener berhenti menerima koneksi BARU lalu
+/// menunggu yang sedang jalan selesai. Deploy jadi tak terlihat oleh pemakai.
+///
+/// SIGTERM diperlukan terpisah dari Ctrl-C: itu sinyal yang dikirim Docker,
+/// systemd, dan hampir semua orkestrator saat menghentikan wadah. Menangani
+/// Ctrl-C saja berarti fitur ini hanya bekerja di mesin pengembang — persis
+/// tempat ia paling tak dibutuhkan.
+///
+/// TUGAS LATAR TIDAK IKUT DITUNGGU, dan itu disengaja. Ketiganya idempoten dan
+/// aman dijalankan ulang (lihat catatan masing-masing di atas), jadi menunggu
+/// sebuah tick 24 jam yang kebetulan sedang berjalan hanya menahan deploy tanpa
+/// menyelamatkan apa pun.
+async fn sinyal_berhenti() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::error!("gagal memasang penangkap Ctrl-C: {e}");
+            // Tanpa penangkap, jangan pernah picu shutdown dari cabang ini.
+            std::future::pending::<()>().await;
+        }
+    };
+
+    #[cfg(unix)]
+    let sigterm = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(e) => {
+                tracing::error!("gagal memasang penangkap SIGTERM: {e}");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let sigterm = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c  => tracing::info!("Ctrl-C diterima — menghabiskan permintaan yang berjalan"),
+        _ = sigterm => tracing::info!("SIGTERM diterima — menghabiskan permintaan yang berjalan"),
+    }
 }

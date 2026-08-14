@@ -141,6 +141,8 @@ tokio = { version = "1", features = [
     "time",
     "fs",
     "sync",
+    # SIGTERM/Ctrl-C untuk graceful shutdown (lihat `sinyal_berhenti` di main.rs).
+    "signal",
 ] }
 # BroadcastStream utk endpoint SSE ruang live.
 tokio-stream = { version = "0.1", features = ["sync"] }

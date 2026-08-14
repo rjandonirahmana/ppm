@@ -1051,6 +1051,38 @@ fn parse_schedule_fields(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Rentang berlaku sebuah jadwal: `(tanggal custom, mulai, selesai)`.
+///
+/// Untuk recurrence `custom`, tanggal mulai & selesai TIDAK diambil dari form —
+/// keduanya diturunkan dari tanggal paling awal & paling akhir yang dipilih.
+/// Membiarkan form mengisinya berarti dua sumber kebenaran untuk satu fakta,
+/// dan yang satu bisa berbohong tentang yang lain.
+///
+/// Diekstrak karena `create_schedule` dan `update_schedule` dulu memuat blok ini
+/// KATA PER KATA. Keduanya masih sepadan saat itu, tapi bentuk seperti inilah
+/// yang melahirkan seluruh kelas bug di proyek ini: satu sisi disunting, sisi
+/// lain terlupa. Sekarang keduanya mustahil menyimpang.
+///
+/// `unwrap()` di bawah aman: baris sebelumnya sudah menolak daftar kosong, jadi
+/// `first()` dan `last()` pasti ada.
+fn rentang_jadwal(
+    recurrence: &str,
+    custom_dates: &str,
+    start_date: &str,
+    end_date: &str,
+) -> Result<(Vec<NaiveDate>, String, String)> {
+    if recurrence != "custom" {
+        return Ok((Vec::new(), start_date.to_string(), end_date.to_string()));
+    }
+    let custom = parse_custom_dates(custom_dates)?;
+    if custom.is_empty() {
+        bail_user!("Pilih minimal satu tanggal untuk jadwal tanggal-tertentu.");
+    }
+    let f = |d: &NaiveDate| d.format("%Y-%m-%d").to_string();
+    let (sd, ed) = (f(custom.first().unwrap()), f(custom.last().unwrap()));
+    Ok((custom, sd, ed))
+}
+
 pub async fn create_schedule(
     pool: &Pool,
     class_id: i64,
@@ -1072,18 +1104,8 @@ pub async fn create_schedule(
     let today = Utc::now().with_timezone(&wib()).date_naive();
     // Recurrence 'custom' = tanggal manual (loncat-loncat): start/end jadwal
     // diturunkan dari min/max tanggal, bukan dari form.
-    let custom = if recurrence == "custom" { parse_custom_dates(custom_dates)? } else { Vec::new() };
-    if recurrence == "custom" && custom.is_empty() {
-        bail_user!("Pilih minimal satu tanggal untuk jadwal tanggal-tertentu.");
-    }
-    let (sd_str, ed_str) = if recurrence == "custom" {
-        (
-            custom.first().unwrap().format("%Y-%m-%d").to_string(),
-            custom.last().unwrap().format("%Y-%m-%d").to_string(),
-        )
-    } else {
-        (start_date.to_string(), end_date.to_string())
-    };
+    let (custom, sd_str, ed_str) =
+        rentang_jadwal(recurrence, custom_dates, start_date, end_date)?;
     let (st, et, lt, rec, sd, ed) =
         parse_schedule_fields(start_time, end_time, limit_time, recurrence, &sd_str, &ed_str)?;
     if rec != "custom" {
@@ -1163,18 +1185,8 @@ pub async fn update_schedule(
     activity_type: &str,
 ) -> Result<()> {
     let today = Utc::now().with_timezone(&wib()).date_naive();
-    let custom = if recurrence == "custom" { parse_custom_dates(custom_dates)? } else { Vec::new() };
-    if recurrence == "custom" && custom.is_empty() {
-        bail_user!("Pilih minimal satu tanggal untuk jadwal tanggal-tertentu.");
-    }
-    let (sd_str, ed_str) = if recurrence == "custom" {
-        (
-            custom.first().unwrap().format("%Y-%m-%d").to_string(),
-            custom.last().unwrap().format("%Y-%m-%d").to_string(),
-        )
-    } else {
-        (start_date.to_string(), end_date.to_string())
-    };
+    let (custom, sd_str, ed_str) =
+        rentang_jadwal(recurrence, custom_dates, start_date, end_date)?;
     let (st, et, lt, rec, sd, ed) =
         parse_schedule_fields(start_time, end_time, limit_time, recurrence, &sd_str, &ed_str)?;
     if rec != "custom" {
