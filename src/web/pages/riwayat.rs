@@ -29,10 +29,7 @@ pub fn RiwayatPage() -> impl IntoView {
         let unauth = matches!(&data.get(), Some(Err(e)) if crate::web::components::is_auth_error(&e.to_string()))
             || matches!(&laporan_res.get(), Some(Err(e)) if crate::web::components::is_auth_error(&e.to_string()));
         if unauth {
-            #[cfg(target_arch = "wasm32")]
-            if let Some(w) = web_sys::window() {
-                let _ = w.location().replace("/login");
-            }
+            crate::web::components::ke_login();
         }
     });
 

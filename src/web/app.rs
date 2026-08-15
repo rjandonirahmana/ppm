@@ -64,8 +64,29 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
   if(window.__ppmFx) return; window.__ppmFx=true;
   /* bfcache: halaman yang dipulihkan tombol Back masih memegang state sesi
      LAMA (mis. setelah logout) → muat ulang agar cookie dicek kembali.
-     Tanpa ini logout tampak "gagal" saat user menekan Back. */
-  window.addEventListener('pageshow',function(e){ if(e.persisted) location.reload(); });
+     Tanpa ini logout tampak "gagal" saat user menekan Back.
+
+     HANYA bila sesi memang baru diakhiri. Dulu SETIAP pemulihan bfcache
+     dimuat ulang, dan itu mahal justru pada kasus yang paling sering: halaman
+     yang dipulihkan bfcache masih memegang WASM yang SUDAH terhidrasi —
+     seluruh aplikasi hidup dan siap pakai. Memuat ulang membuangnya, lalu
+     memulangkan pengguna ke jendela "terlihat tapi belum bisa diklik" untuk
+     kesekian kalinya. Padahal yang dikhawatirkan cuma satu keadaan: sesi
+     sudah diakhiri tapi layarnya masih memperlihatkan isi milik pemilik lama.
+     Keadaan itu kini ditandai eksplisit oleh SATU jalur keluar
+     (`components::ke_login` — dipakai tombol Keluar maupun setiap pengalihan
+     karena sesi tak berlaku), dan tandanya baru dicabut saat ada yang berhasil
+     masuk lagi (`components::masuk_ke`) — jadi menekan Back berkali-kali,
+     melewati beberapa halaman lama sekaligus, tetap aman.
+
+     sessionStorage bisa melempar (Safari mode privat pada iOS lama). Di situ
+     kita kembali ke perilaku lama: lebih baik memuat ulang tanpa perlu
+     daripada memperlihatkan layar orang sebelumnya. */
+  window.addEventListener('pageshow',function(e){
+    if(!e.persisted) return;
+    try{ if(sessionStorage.getItem('ppm-keluar')) location.reload(); }
+    catch(err){ location.reload(); }
+  });
   var reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   function countUp(el){
     if(el.getAttribute('data-counted')==='1') return;
@@ -106,24 +127,65 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
     if(scanQueued) return; scanQueued=true;
     requestAnimationFrame(function(){ scanQueued=false; scan(); });
   }
+  /* Menambah class SAJA — tak satu pun simpul DOM dibuat, dipindah, atau
+     dibuang. Aman dijalankan kapan pun, termasuk di tengah hidrasi: Leptos
+     mencocokkan SIMPUL, bukan atribut class. Inilah satu-satunya bagian efek
+     yang boleh jalan tanpa menunggu hidrasi, dan ia memang yang wajib jalan —
+     tanpanya [data-reveal] tetap tersembunyi dan halaman tampak kosong. */
+  function revealSaja(){
+    document.querySelectorAll('[data-reveal]').forEach(function(el){el.classList.add('is-visible');});
+  }
   function start(){
     scan();
     try{ new MutationObserver(queueScan)
       .observe(document.body,{childList:true,subtree:true}); }catch(e){}
     /* Pengaman: tampilkan semua reveal setelah 5 dtk apa pun yang terjadi. */
-    setTimeout(function(){
-      document.querySelectorAll('[data-reveal]').forEach(function(el){el.classList.add('is-visible');});
-    },5000);
+    setTimeout(revealSaja,5000);
   }
-  /* JANGAN memutasi DOM sebelum HYDRATION Leptos selesai: count-up menimpa
-     textContent [data-count] & reveal menambah class — kalau menyentuh node
-     yang sedang dihidrasi, hydration mismatch → event delegation tak terpasang
-     → klik mati / section tersembunyi = blank (parah di Safari private karena
-     WASM dimuat fresh/lebih lambat). Rust memanggil __ppmStartFx() SETELAH
-     hydrate. Fallback: bila tak pernah dipanggil (hydrate absen/gagal), jalan
-     sendiri setelah load — di kasus itu tak ada hydration yang bisa dirusak. */
-  window.__ppmStartFx=function(){ if(window.__ppmFxStarted) return; window.__ppmFxStarted=true; start(); };
-  window.addEventListener('load',function(){ setTimeout(window.__ppmStartFx,1000); });
+  /* ── COUNT-UP TAK BOLEH JALAN SEBELUM HIDRASI SELESAI ─────────────────────
+     `countUp` menulis `el.textContent = …`. Penugasan itu MEMBUANG SELURUH
+     ANAK simpul elemennya — termasuk simpul teks dan penanda yang ditaruh
+     Leptos saat render server — lalu memasang satu simpul teks baru. Bila itu
+     terjadi pada elemen yang belum sempat dihidrasi, kursor hidrasi meleset di
+     titik itu, dan SEMUA yang ada sesudahnya dalam urutan dokumen kehilangan
+     event delegation-nya: klik mati sampai halaman dimuat ulang. Targetnya
+     bukan elemen sembarangan — [data-count] justru selalu berisi angka
+     dinamis dari Leptos (lihat pages/profil.rs, kelas.rs, ortu_riwayat.rs).
+
+     Versi sebelumnya menjaga ini dengan memanggil __ppmStartFx() dari Rust
+     sesudah hidrasi, TAPI menyisakan jalur cadangan `load + 1 detik` yang
+     tidak memeriksa apa pun kecuali "apakah FX sudah mulai". `load` tidak
+     menunggu WASM (unduhannya lewat fetch, bukan subresource), jadi di ponsel
+     lambat urutan yang RUTIN terjadi adalah: load → +1 dtk → count-up jalan →
+     baru hidrasi selesai. Persis balapan yang hendak dicegah, dan penjelasan
+     kenapa "kadang tak bisa diklik" muncul hilang-timbul tanpa pola.
+
+     Sekarang: count-up HANYA dari Rust, tanpa batas waktu apa pun. Yang
+     hilang bila hidrasi tak pernah datang cuma animasinya — angka tujuannya
+     sudah tertulis sebagai teks di HTML server, jadi pembaca tetap melihat
+     angka yang benar. Yang tak boleh hilang (reveal) punya jalur cadangannya
+     sendiri di bawah, dan jalur itu tak menyentuh satu simpul pun. */
+  window.__ppmStartFx=function(){
+    if(window.__ppmFxStarted) return; window.__ppmFxStarted=true;
+    /* Penanda untuk diagnosis: `document.documentElement.dataset.hydrated`
+       ada = WASM sudah terpasang dan klik pasti hidup. Membuka Inspect lalu
+       melihat <html data-hydrated="1"> menjawab dalam sekejap pertanyaan
+       "apakah ini pra-hidrasi atau hidrasi yang rusak" saat ada laporan
+       tombol tak berfungsi. */
+    document.documentElement.setAttribute('data-hydrated','1');
+    start();
+  };
+  /* Jaring pengaman untuk REVEAL saja — dan digantung pada DOMContentLoaded,
+     bukan `load`. `load` menunggu SELURUH subresource, termasuk stylesheet
+     Work Sans dari Google Fonts; di jaringan yang memblokirnya ia bisa
+     tertahan lama atau tak pernah datang sama sekali, dan bersamanya seluruh
+     konten [data-reveal] tetap tersembunyi. DOMContentLoaded hanya menunggu
+     HTML-nya sendiri — yang memang satu-satunya syarat untuk menambah class. */
+  function jadwalkanCadangan(){
+    setTimeout(function(){ if(!window.__ppmFxStarted) revealSaja(); },1500);
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',jadwalkanCadangan);
+  else jadwalkanCadangan();
 })();
 "#></script>
 

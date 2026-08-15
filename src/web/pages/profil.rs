@@ -352,10 +352,7 @@ pub fn ProfilPage() -> impl IntoView {
                                     on:click=move |_| {
                                         leptos::task::spawn_local(async move {
                                             let _ = logout_action().await;
-                                            #[cfg(target_arch = "wasm32")]
-                                            if let Some(w) = web_sys::window() {
-                                                let _ = w.location().replace("/login");
-                                            }
+                                            crate::web::components::ke_login();
                                         });
                                     }
                                 >

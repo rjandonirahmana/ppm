@@ -472,9 +472,7 @@ pub fn DesktopSidebar() -> impl IntoView {
         #[cfg(target_arch = "wasm32")]
         leptos::task::spawn_local(async move {
             let _ = crate::web::api::logout_action().await;
-            if let Some(w) = web_sys::window() {
-                let _ = w.location().replace("/login");
-            }
+            ke_login();
         });
     };
     view! {
@@ -1134,10 +1132,7 @@ pub fn AuthGuard(#[prop(into)] children: ChildrenFn) -> impl IntoView {
         if let Some(s) = session {
             let is_authed = s.get().flatten().is_some();
             if !is_authed {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
+                ke_login();
             }
         }
     });
@@ -1164,12 +1159,7 @@ pub fn RoleGuard(
     Effect::new(move |_| {
         if let Some(s) = session {
             match s.get().flatten() {
-                None => {
-                    #[cfg(target_arch = "wasm32")]
-                    if let Some(w) = web_sys::window() {
-                        let _ = w.location().replace("/login");
-                    }
-                }
+                None => ke_login(),
                 Some(user) => {
                     let has_role = required_roles
                         .iter()
@@ -1663,13 +1653,63 @@ where
             let msg = e.to_string();
             // `forbidden` sengaja dikecualikan — lihat FetchError.
             if msg.contains("unauth") || msg.contains("session_expired") {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
+                ke_login();
             }
         }
     });
+}
+
+/// Kunci sessionStorage: "sesi di tab ini sudah berakhir".
+///
+/// Per-TAB, bukan per-peramban (`localStorage`), karena yang dijawabnya juga
+/// per-tab: tumpukan riwayat mana yang isinya sudah tak boleh diperlihatkan
+/// lagi. Dua tab dengan akun berbeda tak saling mengganggu.
+#[cfg(target_arch = "wasm32")]
+const TANDA_KELUAR: &str = "ppm-keluar";
+
+/// Alihkan ke `/login` karena sesi berakhir — keluar atas kemauan sendiri
+/// maupun token yang sudah tak berlaku.
+///
+/// Menandai tab ini "sesi berakhir" SEBELUM berpindah. Skrip di `web::app`
+/// membaca tanda itu saat `pageshow` dan hanya memuat ulang halaman yang
+/// dipulihkan bfcache bila tandanya ada — lihat catatan panjang di sana untuk
+/// alasannya (pemulihan bfcache mengembalikan WASM yang SUDAH terhidrasi;
+/// memuat ulang tanpa perlu justru memulangkan pengguna ke jendela "terlihat
+/// tapi belum bisa diklik").
+///
+/// Tandanya TIDAK dihapus saat dipakai, melainkan saat ada yang berhasil masuk
+/// lagi ([`masuk_ke`]). Menekan Back berkali-kali bisa melewati beberapa
+/// halaman lama sekaligus, dan semuanya sama-sama tak boleh dipulihkan apa
+/// adanya — tanda yang habis sesudah pemakaian pertama hanya melindungi
+/// halaman yang pertama muncul.
+pub fn ke_login() {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(s) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+            let _ = s.set_item(TANDA_KELUAR, "1");
+        }
+        if let Some(w) = web_sys::window() {
+            let _ = w.location().replace("/login");
+        }
+    }
+}
+
+/// Masuk ke halaman `path` sesudah login/pendaftaran berhasil.
+///
+/// Mencabut tanda yang dipasang [`ke_login`]: sejak titik ini ada sesi yang
+/// sah lagi di tab ini, dan halaman-halaman baru yang dibuka sesudahnya boleh
+/// dipulihkan bfcache seperti biasa.
+pub fn masuk_ke(path: &str) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(s) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+            let _ = s.remove_item(TANDA_KELUAR);
+        }
+        if let Some(w) = web_sys::window() {
+            let _ = w.location().replace(path);
+        }
+    }
+    let _ = path;
 }
 
 /// Kotak hasil aksi: hijau bila berhasil, merah bila gagal.

@@ -43,13 +43,7 @@ pub fn LoginPage() -> impl IntoView {
     let session = use_context::<Resource<Option<SessionUser>>>();
     Effect::new(move |_| {
         if let Some(Some(user)) = session.and_then(|s| s.get()) {
-            let path = role_home(&user.role);
-            #[cfg(target_arch = "wasm32")]
-            if let Some(w) = web_sys::window() {
-                let _ = w.location().replace(path);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            let _ = path;
+            crate::web::components::masuk_ke(role_home(&user.role));
         }
     });
 
@@ -67,12 +61,7 @@ pub fn LoginPage() -> impl IntoView {
             match login_action(l, p).await {
                 Ok(path) => {
                     // Full reload → cookie sesi terpasang, SSR render sesuai peran.
-                    #[cfg(target_arch = "wasm32")]
-                    if let Some(w) = web_sys::window() {
-                        let _ = w.location().replace(&path);
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let _ = path;
+                    crate::web::components::masuk_ke(&path);
                 }
                 Err(e) => {
                     // Ambil pesan inti tanpa prefix ServerFnError.

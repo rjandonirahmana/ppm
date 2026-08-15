@@ -249,17 +249,41 @@ fn FinTab(
             on:click=move |_| tab.set(value.to_string())
         >
             <span class="truncate">{label}</span>
-            {move || {
-                let n = badge.get();
-                (n > 0)
-                    .then(|| {
-                        view! {
-                            <span class="shrink-0 px-1.5 min-w-5 h-5 rounded-full bg-error text-on-error text-[10px] font-bold flex items-center justify-center">
-                                {n}
-                            </span>
-                        }
-                    })
-            }}
+            // ── LENCANA WAJIB DI DALAM <Suspense> ────────────────────────────
+            // Angkanya datang dari Resource (`menunggu`, `tunggakan` di
+            // `FinancePage`), dan sebuah Resource yang dibaca DI LUAR Suspense
+            // membuat server dan klien merender hal yang berbeda:
+            //
+            //   * Di server, resource non-blocking belum selesai saat baris ini
+            //     dirender → n = 0 → <span> lencana TIDAK ADA di HTML.
+            //   * Di klien, nilai terserialisasinya sudah tersedia saat hidrasi
+            //     → n = 3 → <span> lencana ADA.
+            //
+            // Yang berbeda bukan teksnya, melainkan JUMLAH SIMPUL. Kursor
+            // hidrasi meleset di titik ini, dan seluruh isi halaman sesudahnya
+            // tak pernah dipasangi event delegation: tak satu pun tombol di
+            // /tagihan bisa ditekan sampai halamannya dimuat ulang. Gejalanya
+            // hilang-timbul karena bergantung pada balapan murni — bila query
+            // lencananya kebetulan lambat, nilainya belum sampai saat hidrasi
+            // dan halamannya baik-baik saja.
+            //
+            // Suspense membuat kedua sisi sepakat: server menunggu resource-nya
+            // lalu mengirim isi batas ini sebagai potongan tersendiri, dan klien
+            // menghidrasinya saat potongan itu tiba. `fallback=|| ()` — bilah
+            // tab tetap tampil utuh sejak awal, hanya lencananya yang menyusul.
+            <Suspense fallback=|| ()>
+                {move || {
+                    let n = badge.get();
+                    (n > 0)
+                        .then(|| {
+                            view! {
+                                <span class="shrink-0 px-1.5 min-w-5 h-5 rounded-full bg-error text-on-error text-[10px] font-bold flex items-center justify-center">
+                                    {n}
+                                </span>
+                            }
+                        })
+                }}
+            </Suspense>
         </button>
     }
 }

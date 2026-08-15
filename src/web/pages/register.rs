@@ -131,12 +131,7 @@ pub fn RegisterPage() -> impl IntoView {
         leptos::task::spawn_local(async move {
             match verify_register_action(k, p, o).await {
                 Ok(path) => {
-                    #[cfg(target_arch = "wasm32")]
-                    if let Some(w) = web_sys::window() {
-                        let _ = w.location().replace(&path);
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let _ = path;
+                    crate::web::components::masuk_ke(&path);
                 }
                 Err(e) => {
                     error.set(Some(strip(e)));

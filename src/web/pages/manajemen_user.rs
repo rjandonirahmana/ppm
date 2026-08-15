@@ -93,10 +93,7 @@ pub fn ManajemenUserPage() -> impl IntoView {
         if let Some(Err(e)) = data.get() {
             let m = e.to_string();
             if crate::web::components::is_auth_error(&m) || m.contains("forbidden") {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
+                crate::web::components::ke_login();
             }
         }
     });

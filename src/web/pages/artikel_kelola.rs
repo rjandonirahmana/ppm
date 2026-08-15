@@ -27,10 +27,7 @@ pub fn KelolaArtikelPage() -> impl IntoView {
         if let Some(Err(e)) = data.get() {
             let msg = e.to_string();
             if crate::web::components::is_auth_error(&msg) || msg.contains("forbidden") {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(w) = web_sys::window() {
-                    let _ = w.location().replace("/login");
-                }
+                crate::web::components::ke_login();
             }
         }
     });
