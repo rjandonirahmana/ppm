@@ -134,3 +134,29 @@ pub fn is_staff_invite(target_role: &str) -> bool {
 pub fn can_invite(by_role: &str, target_role: &str) -> bool {
     !is_staff_invite(target_role) || role_satisfies(by_role, &["admin"])
 }
+
+/// Peran yang hanya boleh DIBERIKAN dan DICABUT oleh ketua sendiri.
+///
+/// `ketua` bukan sekadar peran dengan menu lebih banyak: ia admin PENUH
+/// ditambah seluruh kewenangan keuangan (lihat [`role_satisfies`]) dan
+/// satu-satunya yang boleh menghapus akun beserta datanya. Membiarkan admin
+/// biasa memberikannya berarti setiap admin sesungguhnya SUDAH ketua — cukup
+/// satu klik untuk mengangkat dirinya lewat akun lain, dan pemisahan wewenang
+/// yang dijaga di seluruh berkas ini tinggal hiasan.
+pub const KETUA_ONLY_ROLES: &[&str] = &["ketua"];
+
+/// Boleh tidaknya `by_role` mengubah peran seseorang dari `current_role`
+/// menjadi `new_role`.
+///
+/// Dijaga DUA ARAH, dan arah keduanya sama pentingnya:
+///   • MENGANGKAT — hanya ketua yang menunjuk ketua;
+///   • MENURUNKAN — hanya ketua pula yang boleh mencabutnya. Tanpa itu, admin
+///     yang tak bisa mengangkat siapa pun tetap bisa MENYINGKIRKAN ketua yang
+///     ada, dan kunci yang dipasang di arah pertama tak menahan apa-apa.
+///
+/// Tinggal di `models` (seperti [`can_invite`]) supaya dropdown peran di WASM
+/// menyaring pilihan yang persis sama dengan yang ditegakkan server.
+pub fn can_change_role(by_role: &str, current_role: &str, new_role: &str) -> bool {
+    by_role == "ketua"
+        || (!KETUA_ONLY_ROLES.contains(&current_role) && !KETUA_ONLY_ROLES.contains(&new_role))
+}

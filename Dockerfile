@@ -51,7 +51,22 @@ RUN rustup show
 # — persis kelas kegagalan yang sudah pernah menimpa proyek ini, lihat catatan
 # di bawah. Samakan dengan versi yang dipakai pengembang (`cargo leptos --version`).
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
-    cargo install cargo-leptos --locked --version 0.3.6
+    cargo install cargo-leptos --locked --version 0.3.7
+
+# ── Kunci versi Tailwind ──────────────────────────────────────────────────────
+# Versi Tailwind TIDAK ditentukan repo ini, melainkan dipatri di dalam biner
+# cargo-leptos (0.3.6 dan 0.3.7 sama-sama membawa v4.2.1) dan diunduh saat build.
+# Artinya, tanpa baris ini, menaikkan cargo-leptos suatu hari nanti ikut
+# mengganti compiler CSS tanpa ada yang memutuskannya — dan selisihnya muncul
+# sebagai tata letak yang bergeser di produksi, bukan sebagai galat build.
+#
+# Satu-satunya kenop yang tersedia adalah env var ini; tak ada kunci
+# `tailwind-version` di `[package.metadata.leptos]`.
+#
+# Kalau ingin naik versi Tailwind, ubah DI SINI dan jalankan `cargo leptos build`
+# sekali di lokal dengan env var yang sama sebelum deploy — kalau tidak, CSS
+# pengembang dan CSS produksi dibangun oleh dua compiler berbeda.
+ENV LEPTOS_TAILWIND_VERSION=v4.2.1
 
 ENV OPENSSL_STATIC=1
 ENV PKG_CONFIG_ALLOW_CROSS=1

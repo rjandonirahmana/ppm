@@ -15,11 +15,13 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{AnakOrtu, ManagedUser, OrtuSantri, ProfilEdit, StudentSearchItem};
+use crate::models::{
+    AnakOrtu, ManagedUser, OrtuSantri, ProfilEdit, SessionUser, StudentSearchItem,
+};
 use crate::web::api::{
     anak_ortu_data, anak_ortu_search, angkatan_tersedia_data, change_user_role_action,
-    managed_users_data, set_anak_ortu_action, set_user_active_action, set_users_active_action,
-    update_managed_user_action,
+    delete_user_action, managed_users_data, set_anak_ortu_action, set_user_active_action,
+    set_users_active_action, update_managed_user_action,
     ortu_santri_data, ortu_santri_search, set_ortu_santri_action,};
 use crate::web::components::{
     DeviceFrame, EmptyState, FetchError, FlashMsg, MobileHeader, Sheet,
@@ -101,6 +103,22 @@ pub fn ManajemenUserPage() -> impl IntoView {
     let msg = RwSignal::new(Option::<(bool, String)>::None);
     let busy = RwSignal::new(false);
     let editing: RwSignal<Option<ManagedUser>> = RwSignal::new(None);
+
+    // Peran PEMAKAI LAYAR — hanya untuk menyaring apa yang ditawarkan (pilihan
+    // "Ketua" di dropdown peran, tombol hapus akun). Bukan penjagaan: yang
+    // memutuskan tetap server. Di-set lewat Effect, yang hanya jalan di klien
+    // pasca-hydration, jadi SSR dan render pertama sama-sama `false` dan tak
+    // ada hydration-mismatch (pola sama `pages/galeri.rs`).
+    let session = use_context::<Resource<Option<SessionUser>>>();
+    let saya_ketua = RwSignal::new(false);
+    Effect::new(move |_| {
+        saya_ketua.set(
+            session
+                .and_then(|s| s.get())
+                .flatten()
+                .is_some_and(|u| u.role == "ketua"),
+        );
+    });
 
     // ── Pilihan untuk aksi massal ────────────────────────────────────────────
     // Dikosongkan tiap penyaring berubah: id yang tercentang lalu tak lagi
@@ -448,6 +466,7 @@ pub fn ManajemenUserPage() -> impl IntoView {
                                 >
                                     <FormProfil
                                         u=u
+                                        saya_ketua=saya_ketua
                                         on_saved=move |pesan| {
                                             editing.set(None);
                                             data.refetch();
@@ -564,10 +583,18 @@ fn BarisUser(
 #[component]
 fn FormProfil(
     u: ManagedUser,
+    /// true bila yang membuka layar ini seorang ketua — lihat catatan di
+    /// `ManajemenUserPage`.
+    saya_ketua: RwSignal<bool>,
     on_saved: impl Fn(String) + Copy + Send + Sync + 'static,
 ) -> impl IntoView {
     let id = u.id;
     let santri = u.role.starts_with("santri");
+    // Peran yang sedang disandang orang ini — MENCABUT peran ketua sama
+    // terkuncinya dengan memberikannya (lihat models::can_change_role).
+    let target_ketua = u.role == "ketua";
+    let peran_kini = StoredValue::new(u.role.clone());
+    let nama_asli = StoredValue::new(u.full_name.clone());
     let nama = RwSignal::new(u.full_name.clone());
     let nis = RwSignal::new(u.nis.clone().unwrap_or_default());
     let hp = RwSignal::new(u.phone_number.clone().unwrap_or_default());
@@ -600,8 +627,40 @@ fn FormProfil(
             let hasil = change_user_role_action(id, r).await;
             busy.set(false);
             match hasil {
-                Ok(()) => on_saved("Peran diubah.".into()),
+                // Kalimatnya datang dari server: hanya di sana diketahui apakah
+                // yang barusan terjadi sekadar ganti peran, atau PENYERAHAN
+                // jabatan ketua yang ikut menurunkan orang yang menekannya.
+                Ok(pesan) => on_saved(pesan),
                 Err(e) => err.set(e.to_string()),
+            }
+        });
+    };
+
+    // ── Hapus akun permanen (ketua) ──────────────────────────────────────────
+    // Dua langkah dengan sengaja: satu klik membuka konfirmasinya, dan
+    // konfirmasinya menuntut kata yang harus DIKETIK. Aksi ini satu-satunya di
+    // aplikasi yang tak punya jalan pulang, jadi ia tak boleh bisa terjadi dari
+    // salah sentuh di layar ponsel — sementara "yakin?" biasa sudah lama
+    // berhenti dibaca orang.
+    let hapus_buka = RwSignal::new(false);
+    let konfirmasi = RwSignal::new(String::new());
+    let hapus_err = RwSignal::new(String::new());
+    let hapus = move |_| {
+        if busy.get_untracked() {
+            return;
+        }
+        if konfirmasi.get_untracked().trim() != "HAPUS" {
+            hapus_err.set("Ketik HAPUS (huruf besar) untuk memastikan.".into());
+            return;
+        }
+        hapus_err.set(String::new());
+        busy.set(true);
+        leptos::task::spawn_local(async move {
+            let hasil = delete_user_action(id).await;
+            busy.set(false);
+            match hasil {
+                Ok(pesan) => on_saved(pesan),
+                Err(e) => hapus_err.set(e.to_string()),
             }
         });
     };
@@ -723,38 +782,74 @@ fn FormProfil(
         // ── Ganti peran ──────────────────────────────────────────────────
         // Dipisah dari tombol "Simpan": mengubah peran mengubah HAK AKSES, dan
         // itu tak boleh ikut terkirim diam-diam saat seseorang cuma
-        // membetulkan ejaan nama. Server tetap membatasi ke admin — ketua bisa
-        // menyunting profil & mengaktifkan, tapi tidak menaikkan peran orang
-        // (termasuk dirinya sendiri).
+        // membetulkan ejaan nama. Admin & ketua sama-sama boleh — KECUALI untuk
+        // peran "Ketua" itu sendiri, yang hanya ketua boleh berikan dan cabut.
+        // Penyaringan di bawah cuma menjauhkan tombol yang pasti ditolak;
+        // aturannya sendiri ditegakkan `service::admin::change_role`.
         <div class="mt-2 mb-4 p-3 rounded-xl border border-outline-variant/60">
             <p class="text-body-sm font-semibold text-on-background mb-1.5">"Peran"</p>
             <div class="flex gap-2">
                 <select
-                    class="flex-1 min-w-0 bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface"
+                    class="flex-1 min-w-0 bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface disabled:opacity-50"
+                    prop:disabled=move || target_ketua && !saya_ketua.get()
                     on:change=move |ev| peran_baru.set(event_target_value(&ev))
                 >
-                    {PERAN
-                        .iter()
-                        .filter(|(k, _)| !k.is_empty())
-                        .map(|(k, l)| {
-                            let k = *k;
-                            view! {
-                                <option value=k selected=move || peran_baru.get() == k>{*l}</option>
-                            }
-                        })
-                        .collect_view()}
+                    {move || {
+                        PERAN
+                            .iter()
+                            .filter(|(k, _)| !k.is_empty())
+                            .filter(move |(k, _)| {
+                                // "Ketua" hanya ditawarkan kepada ketua. Peran
+                                // yang sedang disandang tetap ditampilkan apa
+                                // adanya — kalau tidak, dropdown-nya berbohong
+                                // tentang keadaan sekarang.
+                                let kini = peran_kini.get_value();
+                                saya_ketua.get()
+                                    || kini == *k
+                                    || crate::models::can_change_role("admin", &kini, k)
+                            })
+                            .map(|(k, l)| {
+                                let k = *k;
+                                view! {
+                                    <option value=k selected=move || {
+                                        peran_baru.get() == k
+                                    }>{*l}</option>
+                                }
+                            })
+                            .collect_view()
+                    }}
                 </select>
                 <button
                     class="px-4 py-2.5 rounded-xl border border-outline-variant text-body-sm font-semibold text-on-surface hover:border-primary hover:text-primary transition-colors cursor-pointer disabled:opacity-50"
-                    prop:disabled=move || busy.get() || peran_baru.get() == peran_awal.get_value()
+                    prop:disabled=move || {
+                        busy.get() || peran_baru.get() == peran_awal.get_value()
+                            || (target_ketua && !saya_ketua.get())
+                    }
                     on:click=ganti_peran
                 >
                     "Ubah"
                 </button>
             </div>
             <p class="text-[11px] text-on-surface-variant mt-1.5">
-                "Khusus admin. Mengubah peran mengubah hak akses."
+                {move || {
+                    if target_ketua && !saya_ketua.get() {
+                        "Peran Ketua hanya bisa diubah oleh Ketua."
+                    } else if saya_ketua.get() {
+                        "Mengubah peran mengubah hak akses. Peran Ketua hanya bisa Anda berikan."
+                    } else {
+                        "Mengubah peran mengubah hak akses. Peran Ketua ditunjuk oleh Ketua."
+                    }
+                }}
             </p>
+            // Peringatan yang muncul TEPAT sebelum tombolnya ditekan.
+            // Menyerahkan jabatan ketua menurunkan orang yang menekannya sendiri
+            // jadi admin — akibat yang tak bisa ia batalkan sendiri sesudahnya,
+            // jadi ia harus terbaca sebelum, bukan sesudah.
+            <Show when=move || peran_baru.get() == "ketua" && saya_ketua.get()>
+                <p class="text-[11px] text-error mt-1.5">
+                    "Ketua hanya satu orang. Menekan \"Ubah\" MEMINDAHKAN jabatan Ketua ke orang ini, dan peran Anda sendiri otomatis turun menjadi Admin."
+                </p>
+            </Show>
         </div>
 
         <Show when=move || !err.get().is_empty()>
@@ -770,6 +865,60 @@ fn FormProfil(
         >
             {move || if busy.get() { "Menyimpan…" } else { "Simpan" }}
         </button>
+
+        // ── Zona berbahaya — hanya ketua yang melihatnya ──────────────────
+        <Show when=move || saya_ketua.get()>
+            <div class="mt-6 p-3 rounded-xl border border-error/50">
+                <p class="text-body-sm font-semibold text-error mb-1">"Hapus akun permanen"</p>
+                <p class="text-[11px] text-on-surface-variant mb-2.5">
+                    "Menghapus "
+                    {move || nama_asli.get_value()}
+                    " beserta SELURUH data terkait: absensi, riwayat poin, izin, catatan gerbang, hafalan, dan tagihan. Tidak bisa dibatalkan. Untuk santri yang selesai mondok, cukup nonaktifkan akunnya."
+                </p>
+                <Show when=move || !hapus_buka.get()>
+                    <button
+                        class="w-full py-2.5 rounded-xl border border-error/60 text-error text-body-sm font-semibold press cursor-pointer disabled:opacity-50"
+                        prop:disabled=move || busy.get()
+                        on:click=move |_| hapus_buka.set(true)
+                    >
+                        "Hapus akun…"
+                    </button>
+                </Show>
+                <Show when=move || hapus_buka.get()>
+                    <input
+                        class="w-full bg-surface-container border-0 rounded-xl px-3 py-2.5 text-body-sm text-on-surface mb-2"
+                        r#type="text"
+                        placeholder="Ketik HAPUS untuk memastikan"
+                        prop:value=move || konfirmasi.get()
+                        on:input=move |ev| konfirmasi.set(event_target_value(&ev))
+                    />
+                    <div class="flex gap-2">
+                        <button
+                            class="flex-1 py-2.5 rounded-xl border border-outline-variant text-body-sm font-semibold text-on-surface press cursor-pointer"
+                            on:click=move |_| {
+                                hapus_buka.set(false);
+                                konfirmasi.set(String::new());
+                                hapus_err.set(String::new());
+                            }
+                        >
+                            "Batal"
+                        </button>
+                        <button
+                            class="flex-1 py-2.5 rounded-xl bg-error text-on-error text-body-sm font-semibold press cursor-pointer disabled:opacity-60"
+                            prop:disabled=move || busy.get() || konfirmasi.get().trim() != "HAPUS"
+                            on:click=hapus
+                        >
+                            {move || if busy.get() { "Menghapus…" } else { "Hapus permanen" }}
+                        </button>
+                    </div>
+                </Show>
+                <Show when=move || !hapus_err.get().is_empty()>
+                    <div class="mt-2 p-2.5 bg-error-container text-on-error-container rounded-lg text-body-sm">
+                        {move || hapus_err.get()}
+                    </div>
+                </Show>
+            </div>
+        </Show>
     }
 }
 

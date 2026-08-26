@@ -607,3 +607,63 @@ fn dua_query_sefungsi_dipasangkan_terpisah() {
     assert_eq!(placeholder(&petak[1].sql).into_iter().max(), Some(1));
     assert_eq!(cacah_elemen(slice_parameter(&petak[1].ekor).unwrap()), 1);
 }
+
+/// Menyerahkan jabatan ketua HARUS menurunkan yang lama sebelum mengangkat yang
+/// baru.
+///
+/// Bukan soal kerapian: `uq_users_satu_ketua` (migrasi 91) hanya mengizinkan
+/// satu baris ber-`role = 'ketua'`, jadi urutan terbalik menabrak index itu dan
+/// penyerahan jabatan GAGAL TOTAL — di produksi, pada satu-satunya aksi yang
+/// dipakai untuk berganti kepengurusan. Kompilator tak bisa melihat urutan dua
+/// string SQL di dalam satu transaksi; tes ini yang melihatnya.
+#[test]
+fn transfer_ketua_menurunkan_sebelum_mengangkat() {
+    let src = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/repository/users.rs"),
+    )
+    .expect("gagal membaca repository/users.rs");
+    let mulai = src
+        .find("pub async fn transfer_ketua")
+        .expect("fungsi `transfer_ketua` tak ditemukan — namanya berubah?");
+    let badan = &src[mulai..];
+    let akhir = badan.find("\n}\n").map(|i| i + 2).unwrap_or(badan.len());
+    let badan = &badan[..akhir];
+
+    let turun = badan
+        .find("role = 'admin'")
+        .expect("tak ada UPDATE yang menurunkan ketua lama jadi admin");
+    let naik = badan
+        .find("role = 'ketua'")
+        .expect("tak ada UPDATE yang mengangkat ketua baru");
+    assert!(
+        turun < naik,
+        "ketua lama harus DITURUNKAN dulu, baru yang baru diangkat — \
+         urutan terbalik menabrak uq_users_satu_ketua (migrasi 91)"
+    );
+
+    // Satu transaksi, kalau tidak penurunan bisa ter-commit sendirian dan
+    // pondok ini kehilangan ketuanya tanpa ada penggantinya.
+    assert!(
+        badan.contains("transaction()") && badan.contains("commit"),
+        "transfer_ketua harus berjalan dalam SATU transaksi"
+    );
+}
+
+/// Migrasi 91 harus benar-benar memasang penjaganya, bukan cuma menjelaskannya.
+#[test]
+fn migrasi_91_memasang_index_satu_ketua() {
+    let sql = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("migration/91_satu_ketua_saja.sql"),
+    )
+    .expect("migrasi 91 tak ada");
+    let rapat = rapikan(&sql).to_ascii_uppercase();
+    assert!(
+        rapat.contains("CREATE UNIQUE INDEX IF NOT EXISTS UQ_USERS_SATU_KETUA"),
+        "migrasi 91 tak membuat index uq_users_satu_ketua"
+    );
+    assert!(
+        rapat.contains("WHERE ROLE = 'KETUA'"),
+        "index-nya harus PARSIAL (WHERE role = 'ketua') — tanpa itu ia melarang \
+         peran lain punya lebih dari satu pemegang"
+    );
+}

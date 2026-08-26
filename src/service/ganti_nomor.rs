@@ -64,7 +64,11 @@ pub struct PengajuanTerkirim {
 ///
 /// Layar ini bisa terbuka di tempat umum, dan yang dibutuhkan pengguna cuma
 /// memastikan ia tak salah ketik — bukan membaca ulang nomornya sendiri.
-fn samarkan(nomor: &str) -> String {
+///
+/// Dipakai bersama `service::auth::forgot_password` — satu bentuk penyamaran
+/// untuk kedua layar, supaya nomor yang sama tak tampil berbeda tergantung dari
+/// mana ia dilihat.
+pub(crate) fn samarkan(nomor: &str) -> String {
     let n: Vec<char> = nomor.chars().collect();
     if n.len() <= 8 {
         return nomor.to_string();

@@ -11,11 +11,29 @@ pub struct LoginRow {
     pub phone_number: Option<String>,
 }
 
+/// Pencocokan NOMOR HP terhadap `users.phone_number` — SATU pola, dipakai
+/// login DAN lupa-sandi. `$1` = HP yang sudah dinormalkan (`628…`).
+///
+/// Bentuk tersimpan tak pernah seragam ('+62 858-…', '0858…', '858…', '628…' —
+/// seed lama, impor daftar induk, isian pengelola), jadi yang diadu adalah
+/// DIGITNYA, dalam TIGA bentuk sekaligus: `628…`, `0858…`, dan `858…` (tanpa
+/// awalan apa pun — bentuk yang lahir dari spreadsheet yang memperlakukan nomor
+/// sebagai bilangan dan memakan nol depannya).
+///
+/// DIPAKAI BERSAMA dengan sengaja. Sebelum ini `forgot_password` mencari lewat
+/// [`find_by_phone`] yang menyamakan TEKS mentah, sementara login memakai pola
+/// toleran ini. Untuk siapa pun yang nomornya tersimpan sebagai '0858…' kedua
+/// pintu itu tak pernah sepakat: resetnya tak menemukan siapa-siapa dan — karena
+/// jawabannya sengaja dibuat anti-enumerasi — tetap membalas "berhasil", jadi
+/// WA-nya tak pernah datang tanpa sepatah pun galat. Itulah "kadang masuk,
+/// kadang tidak" yang dilaporkan pengguna.
+const HP_COCOK_SQL: &str = "($1 <> '' AND (phone_number = $1 \
+     OR regexp_replace(coalesce(phone_number, ''), '\\D', '', 'g') \
+        IN ($1, '0' || substring($1 from 3), substring($1 from 3))))";
+
 /// Cari user untuk login — UTAMANYA nomor HP (login = phone), tetap dukung
 /// username/email/NIS sbg fallback (mis. admin seed). `login_phone` = HP hasil
-/// normalisasi 08→62. Pencocokan HP toleran terhadap format tersimpan yang
-/// kotor ('+62 858-…', '0858…'): digit-nya dibandingkan dengan bentuk 62.. dan
-/// 0.. — data lama/seed tidak ternormalisasi konsisten. ORDER BY + LIMIT
+/// normalisasi 08→62; pencocokannya di [`HP_COCOK_SQL`]. ORDER BY + LIMIT
 /// supaya deterministik bila identitas kebetulan cocok di >1 baris (mis. NIS
 /// satu santri sama dengan username user lain).
 pub async fn find_user_for_login(
@@ -24,17 +42,16 @@ pub async fn find_user_for_login(
     login_phone: &str,
 ) -> Result<Option<LoginRow>> {
     let c = pool.get().await?;
+    // $1 = HP ternormalisasi, $2 = apa yang diketik apa adanya.
+    let sql = format!(
+        "SELECT id, full_name, role, password_hash, phone_number FROM users \
+         WHERE (username = $2 OR email = $2 OR nis = $2 OR phone_number = $2 \
+                OR {HP_COCOK_SQL}) \
+           AND is_active = TRUE \
+         ORDER BY id LIMIT 1"
+    );
     let row = c
-        .query_opt(
-            "SELECT id, full_name, role, password_hash, phone_number FROM users \
-             WHERE (username = $1 OR email = $1 OR nis = $1 \
-                    OR phone_number = $1 OR phone_number = $2 \
-                    OR ($2 <> '' AND regexp_replace(coalesce(phone_number, ''), '\\D', '', 'g') \
-                        IN ($2, '0' || substring($2 from 3)))) \
-               AND is_active = TRUE \
-             ORDER BY id LIMIT 1",
-            &[&login, &login_phone],
-        )
+        .query_opt(&sql, &[&login_phone, &login])
         .await
         .context("find_user_for_login")?;
     Ok(row.map(|r| LoginRow {
@@ -445,6 +462,11 @@ const VALID_ROLES: &[&str] = &[
 // ── Registrasi via link undangan (migrasi 19) ───────────────────────────────
 
 /// Cek nomor HP sudah terdaftar atau belum (guard duplikat saat registrasi).
+///
+/// Sengaja SAMA PERSIS (`phone_number = $1`, tanpa saringan keaktifan): yang
+/// dijaga di sana adalah keunikan kolomnya, dan kolom itu memang dibandingkan
+/// apa adanya. Untuk MENEMUKAN orang lewat nomornya — login, lupa-sandi —
+/// pakai [`find_active_user_by_phone`], bukan ini.
 pub async fn find_by_phone(pool: &Pool, phone: &str) -> Result<Option<i64>> {
     let c = pool.get().await?;
     let row = c
@@ -452,6 +474,36 @@ pub async fn find_by_phone(pool: &Pool, phone: &str) -> Result<Option<i64>> {
         .await
         .context("find_by_phone")?;
     Ok(row.map(|r| r.get(0)))
+}
+
+/// Akun yang cocok dengan sebuah nomor HP → `(id, is_active)`.
+///
+/// Pola pencocokannya SAMA dengan login ([`HP_COCOK_SQL`]), dan kesamaan itu
+/// bukan kerapian melainkan syarat kebenaran lupa-sandi: sandi baru harus
+/// mendarat di BARIS YANG SAMA dengan yang nanti ditemukan login. Bila keduanya
+/// memilih baris berbeda — dan itu bisa terjadi begitu satu nomor tercatat di
+/// dua akun — sandi yang dikirim lewat WA benar-benar sah, hanya saja milik akun
+/// yang tak pernah dipakai masuk. Gejalanya persis yang dilaporkan: "sudah dapat
+/// sandi baru, tetap tidak bisa masuk".
+///
+/// `is_active` DIKEMBALIKAN, bukan disaring di sini, semata demi diagnosis.
+/// Akun nonaktif tak boleh menerima sandi baru — ia toh tak bisa masuk — tapi
+/// "nomornya tak ada" dan "nomornya ada tapi akunnya nonaktif" adalah dua sebab
+/// yang berbeda, dan tanpa membedakannya keduanya tampil sebagai gejala yang
+/// sama: WA yang tak pernah datang, tanpa satu pun galat.
+///
+/// `ORDER BY is_active DESC, id` — akun aktif didahulukan, jadi selama ada yang
+/// aktif hasilnya tetap sama dengan pilihan login.
+pub async fn find_account_by_phone(pool: &Pool, phone: &str) -> Result<Option<(i64, bool)>> {
+    let c = pool.get().await?;
+    let sql = format!(
+        "SELECT id, is_active FROM users WHERE {HP_COCOK_SQL}           ORDER BY is_active DESC, id LIMIT 1"
+    );
+    let row = c
+        .query_opt(&sql, &[&phone])
+        .await
+        .context("find_account_by_phone")?;
+    Ok(row.map(|r| (r.get(0), r.get(1))))
 }
 
 /// Nomor HP yang TERSIMPAN sekarang — bentuk `628…`, `None` bila belum ada.
@@ -545,7 +597,27 @@ pub async fn insert_registered_user(
             &[&name, &phone, &role, &password_hash, &gender, &campus, &major, &entry_year],
         )
         .await
-        .context("insert_registered_user")?;
+        .map_err(|e| {
+            // Nomor keburu diambil orang lain SELAMA jendela OTP 10 menit —
+            // pemeriksaan di `initiate_register` sudah lewat, dan yang menahan
+            // tinggal `uq_users_phone`. Jarang, tapi bukan mustahil, dan bila
+            // terjadi orangnya berhak tahu APA yang salah: tanpa pemetaan ini
+            // ia hanya melihat "Terjadi gangguan di server" setelah menunggu
+            // OTP, lalu mencoba lagi dari awal tanpa pernah tahu sebabnya.
+            if e.code() == Some(&tokio_postgres::error::SqlState::UNIQUE_VIOLATION) {
+                // `UserError`, BUKAN `anyhow!` biasa: hanya galat bertipe itu
+                // yang pesannya diteruskan apa adanya ke layar (lihat
+                // `web::api::err`). `anyhow!` polos akan tampil sebagai
+                // "Terjadi gangguan di server" SEKALIGUS membangunkan alarm
+                // Telegram — untuk nomor kembar, yang bukan insiden.
+                anyhow::Error::new(crate::service::UserError(
+                    "Nomor HP ini baru saja terdaftar. Silakan masuk lewat halaman Login."
+                        .to_string(),
+                ))
+            } else {
+                anyhow::Error::new(e).context("insert_registered_user")
+            }
+        })?;
     let id: i64 = row.get(0);
 
     // ── SALDO AWAL LEWAT BUKU BESAR, BUKAN DEFAULT KOLOM ─────────────────────
@@ -587,6 +659,68 @@ pub async fn insert_registered_user(
     }
     tx.commit().await.context("insert_registered_user commit")?;
     Ok(id)
+}
+
+/// Ada berapa akun ber-peran `ketua` sekarang.
+///
+/// Dipakai `service::admin::change_role` untuk satu hal saja: memutuskan apakah
+/// jabatannya masih KOSONG. Lihat di sana kenapa itu penting.
+pub async fn jumlah_ketua(pool: &Pool) -> Result<i64> {
+    let c = pool.get().await?;
+    let row = c
+        .query_one("SELECT count(*) FROM users WHERE role = 'ketua'", &[])
+        .await
+        .context("jumlah_ketua")?;
+    Ok(row.get(0))
+}
+
+/// Pindahkan jabatan ketua ke `user_id`: ia menjadi `ketua`, dan SETIAP ketua
+/// lain turun menjadi `admin`. Return `(berhasil, id yang diturunkan)`;
+/// `berhasil = false` bila akun tujuannya tak ada.
+///
+/// ── KENAPA PERPINDAHAN, BUKAN SEKADAR "SET PERAN" ────────────────────────────
+/// Ketua itu JABATAN, bukan tingkat wewenang: pondok ini punya satu ketua, dan
+/// dialah satu-satunya yang memegang keuangan serta boleh menghapus akun. Bila
+/// menunjuk ketua baru hanyalah menambah peran, yang terjadi bukan pergantian
+/// melainkan penggandaan — dua orang sama-sama berwenang penuh, dan tak satu
+/// pun catatan yang bisa menjawab siapa yang sebenarnya menjabat.
+///
+/// SATU TRANSAKSI, dan urutannya menentukan: yang lama diturunkan LEBIH DULU,
+/// baru yang baru diangkat. Terbalik, ia menabrak `uq_users_satu_ketua`
+/// (migrasi 91) — index yang menjaga invarian ini di tingkat basis data,
+/// sehingga jalur mana pun (termasuk SQL manual) tak bisa melanggarnya.
+pub async fn transfer_ketua(pool: &Pool, user_id: i64) -> Result<(bool, Vec<i64>)> {
+    let mut c = pool.get().await?;
+    let tx = c.transaction().await.context("transfer_ketua tx")?;
+
+    // `id <> $1` supaya calon yang KEBETULAN sudah ketua tak ikut diturunkan
+    // lalu diangkat lagi — itu akan mencatatkan pergantian yang tak pernah
+    // terjadi di jejak aktivitas.
+    let rows = tx
+        .query(
+            "UPDATE users SET role = 'admin', updated_at = NOW()               WHERE role = 'ketua' AND id <> $1 RETURNING id",
+            &[&user_id],
+        )
+        .await
+        .context("transfer_ketua turunkan")?;
+    let diturunkan: Vec<i64> = rows.iter().map(|r| r.get(0)).collect();
+
+    let n = tx
+        .execute(
+            "UPDATE users SET role = 'ketua', updated_at = NOW() WHERE id = $1",
+            &[&user_id],
+        )
+        .await
+        .context("transfer_ketua angkat")?;
+    if n == 0 {
+        // Akun tujuan tak ada → JANGAN commit penurunan di atas, kalau tidak
+        // pondok ini kehilangan ketuanya hanya karena satu id yang salah.
+        tx.rollback().await.ok();
+        return Ok((false, Vec::new()));
+    }
+
+    tx.commit().await.context("transfer_ketua commit")?;
+    Ok((true, diturunkan))
 }
 
 pub async fn set_role(pool: &Pool, user_id: i64, role: &str) -> Result<bool> {
@@ -933,10 +1067,140 @@ pub async fn update_user_profile(
                     .and_then(|d| d.constraint())
                     .map(|c| if c.contains("phone") { "Nomor HP" } else { "NIS" })
                     .unwrap_or("NIS/Nomor HP");
-                anyhow::anyhow!("{apa} itu sudah dipakai user lain.")
+                // `UserError` — sama alasannya dengan `insert_registered_user`
+                // di atas. Sebagai `anyhow!` polos, kalimat yang sudah ditulis
+                // rapi ini tak pernah sampai ke layar: pengelola cuma melihat
+                // "Terjadi gangguan di server" dan tak tahu bahwa yang perlu
+                // dibetulkan hanyalah satu nomor kembar.
+                anyhow::Error::new(crate::service::UserError(format!(
+                    "{apa} itu sudah dipakai user lain."
+                )))
             } else {
                 anyhow::Error::new(e).context("update_user_profile")
             }
         })?;
     Ok(n > 0)
+}
+
+// ── Hapus akun BESERTA seluruh datanya (ketua) ───────────────────────────────
+
+/// Ringkasan satu penghapusan akun.
+pub struct UserTerhapus {
+    pub full_name: String,
+    pub role: String,
+    /// `(tabel, jumlah baris)` yang benar-benar tersentuh — hanya yang > 0.
+    /// Dipakai untuk kalimat konfirmasi & jejak di `activity_logs`: sesudah ini
+    /// tak ada lagi tempat untuk menghitungnya.
+    pub baris: Vec<(String, i64)>,
+}
+
+/// FK satu-kolom yang menunjuk ke `users`, dibaca dari KATALOG.
+///
+/// Tidak ditulis tangan, dengan alasan yang sama seperti migrasi 70: daftar
+/// tetap di kode akan basi diam-diam pada tabel ke-42 yang ditambahkan
+/// belakangan, dan gejalanya bukan galat melainkan penghapusan yang gagal
+/// (RESTRICT) atau — lebih buruk — data yatim yang tak pernah ikut terhapus.
+const FK_KE_USERS_SQL: &str = "SELECT c.conrelid::regclass::text, quote_ident(a.attname), \
+            a.attnotnull, c.confdeltype::text \
+       FROM pg_constraint c \
+       JOIN pg_attribute a \
+         ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1] \
+      WHERE c.contype = 'f' \
+        AND c.confrelid = 'users'::regclass \
+        AND array_length(c.conkey, 1) = 1 \
+      ORDER BY 1, 2";
+
+/// Hapus satu akun beserta SELURUH data yang menunjuk kepadanya. `None` bila
+/// akunnya memang tak ada.
+///
+/// ── KENAPA PERLU FUNGSI SENDIRI, BUKAN `DELETE FROM users` ───────────────────
+/// Migrasi 70 sengaja mengubah FK riwayat (absensi, poin, izin, gerbang,
+/// hafalan, IPK, hadiah mingguan, tagihan) dari CASCADE menjadi RESTRICT,
+/// supaya satu salah klik tak bisa melenyapkan seluruh jejak seseorang. Akibat
+/// yang diinginkan: `DELETE FROM users` GAGAL selama riwayatnya masih ada, dan
+/// jalan biasanya memang `is_active = FALSE`.
+///
+/// Fungsi ini adalah pengecualian yang dinyatakan terang-terangan — bukan
+/// pelonggaran constraint-nya. Constraint tetap berdiri untuk semua jalur lain;
+/// di sini setiap tabel dibereskan SATU PER SATU dalam satu transaksi:
+///
+///   • kolom NOT NULL (subjek barisnya, mis. `attendances.user_id`) → barisnya
+///     DIHAPUS — tanpa orangnya, baris itu tak punya arti;
+///   • kolom nullable (pelakunya, mis. `class_sessions.teacher_id`) → cukup
+///     DILEPAS jadi NULL — barisnya milik kelas, bukan miliknya.
+///
+/// Yang FK-nya sudah CASCADE/SET NULL tak disentuh: basis data mengerjakannya
+/// sendiri saat baris `users` hilang.
+///
+/// Satu transaksi, jadi tak ada keadaan setengah jalan: entah orangnya hilang
+/// beserta seluruh datanya, atau tak ada yang berubah sama sekali.
+///
+/// TIDAK menyentuh berkas di penyimpanan objek (foto kegiatan, lampiran izin).
+/// Barisnya hilang; berkasnya menjadi sampah yang harus dibersihkan terpisah.
+pub async fn delete_user_cascade(pool: &Pool, user_id: i64) -> Result<Option<UserTerhapus>> {
+    let mut c = pool.get().await?;
+    let tx = c.transaction().await.context("delete_user_cascade tx")?;
+
+    let fks = tx
+        .query(FK_KE_USERS_SQL, &[])
+        .await
+        .context("delete_user_cascade katalog FK")?;
+
+    let mut baris: Vec<(String, i64)> = Vec::new();
+    // Dua lintasan: LEPASKAN dulu penunjuk yang boleh NULL, baru hapus barisnya.
+    // Urutan ini tak wajib pada skema sekarang (tak ada RESTRICT antar tabel
+    // selain dari `users`), tapi ia yang benar bila kelak ada — melepas
+    // penunjuk tak pernah bisa gagal karena baris lain.
+    for lepas_dulu in [true, false] {
+        for r in &fks {
+            let tabel: String = r.get(0);
+            let kolom: String = r.get(1);
+            let wajib_isi: bool = r.get(2);
+            let aksi: String = r.get(3);
+            // 'a' = NO ACTION, 'r' = RESTRICT → keduanya menghalangi DELETE dan
+            // harus dibereskan di sini. 'c'/'n'/'d' dikerjakan basis data.
+            if aksi != "a" && aksi != "r" {
+                continue;
+            }
+            if wajib_isi == lepas_dulu {
+                continue;
+            }
+            // Nama tabel & kolom datang dari katalog (regclass/quote_ident),
+            // bukan dari masukan siapa pun — jadi merangkainya aman.
+            let sql = if wajib_isi {
+                format!("DELETE FROM {tabel} WHERE {kolom} = $1")
+            } else {
+                format!("UPDATE {tabel} SET {kolom} = NULL WHERE {kolom} = $1")
+            };
+            let n = tx
+                .execute(&sql, &[&user_id])
+                .await
+                .with_context(|| format!("delete_user_cascade {tabel}.{kolom}"))?;
+            if n > 0 {
+                baris.push((format!("{tabel}.{kolom}"), n as i64));
+            }
+        }
+    }
+
+    let row = tx
+        .query_opt(
+            "DELETE FROM users WHERE id = $1 RETURNING full_name, role",
+            &[&user_id],
+        )
+        .await
+        .context("delete_user_cascade users")?;
+    let Some(row) = row else {
+        // Akun tak ada → JANGAN commit pembersihan di atas. Tanpa rollback,
+        // sebuah id yang salah ketik tetap menghapus baris yatim yang kebetulan
+        // menunjuk ke sana.
+        tx.rollback().await.ok();
+        return Ok(None);
+    };
+    let hasil = UserTerhapus {
+        full_name: row.get(0),
+        role: row.get(1),
+        baris,
+    };
+    tx.commit().await.context("delete_user_cascade commit")?;
+    Ok(Some(hasil))
 }

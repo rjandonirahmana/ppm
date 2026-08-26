@@ -276,10 +276,14 @@ pub async fn login_action(login: String, password: String) -> Result<String, Ser
     Ok(ok.redirect)
 }
 
-/// Lupa password: kirim password baru via WhatsApp ke nomor HP. Anti-enumerasi —
-/// SELALU sukses (tak bocorkan apakah nomor terdaftar).
+/// Lupa password: kirim password baru via WhatsApp ke nomor HP.
+///
+/// Return kalimat sukses; kegagalan (nomor tak terdaftar, akun nonaktif, batas
+/// laju, WA gagal) datang sebagai galat yang PESANNYA memang untuk dibaca
+/// pengguna — lihat `service::auth::forgot_password` untuk kenapa endpoint ini
+/// tak lagi menjawab "berhasil" apa pun kenyataannya.
 #[server(ForgotPassword, "/api-fn")]
-pub async fn forgot_password_action(phone: String) -> Result<(), ServerFnError> {
+pub async fn forgot_password_action(phone: String) -> Result<String, ServerFnError> {
     let state = app_state().await?;
     let mut redis = state.redis.clone();
     crate::service::auth::forgot_password(&state.pool, &mut redis, &state.http, &state.waha, &phone)
@@ -295,9 +299,16 @@ pub async fn change_password_action(
 ) -> Result<(), ServerFnError> {
     let sess = require_session().await?;
     let state = app_state().await?;
-    crate::service::auth::change_password(&state.pool, sess.id, &old_password, &new_password)
-        .await
-        .map_err(err)
+    let mut redis = state.redis.clone();
+    crate::service::auth::change_password(
+        &state.pool,
+        &mut redis,
+        sess.id,
+        &old_password,
+        &new_password,
+    )
+    .await
+    .map_err(err)
 }
 
 /// Ganti nomor WhatsApp — LANGKAH 1: kirim kode ke nomor BARU.
@@ -2682,11 +2693,22 @@ pub async fn toggle_user_active_action(user_id: i64, active: bool) -> Result<(),
 }
 
 /// Ganti peran user.
+///
+/// Penjaganya "admin" (ketua ikut lolos lewat `role_satisfies`), tapi peran
+/// KETUA sendiri hanya boleh diberikan/dicabut ketua — diuji di service dengan
+/// peran pemanggil, lihat `service::admin::change_role`.
+///
+/// Menunjuk seseorang jadi Ketua adalah PERPINDAHAN jabatan: ketua lama otomatis
+/// turun jadi admin. Kalimat yang dikembalikan menyebutkan itu, karena pemanggil
+/// biasanya baru saja menurunkan dirinya sendiri.
 #[server(ChangeUserRoleAction, "/api-fn")]
-pub async fn change_user_role_action(user_id: i64, new_role: String) -> Result<(), ServerFnError> {
+pub async fn change_user_role_action(
+    user_id: i64,
+    new_role: String,
+) -> Result<String, ServerFnError> {
     let sess = require_roles(&["admin"]).await?;
     let state = app_state().await?;
-    crate::service::admin::change_role(&state.pool, sess.id, user_id, &new_role)
+    crate::service::admin::change_role(&state.pool, sess.id, &sess.role, user_id, &new_role)
         .await
         .map_err(err)
 }
@@ -2985,6 +3007,29 @@ pub async fn update_managed_user_action(
         .map_err(err)
 }
 
+// KETUA SAJA — bukan admin. `role_satisfies` hanya memberi ketua hak admin,
+// tidak sebaliknya, jadi menulis "ketua" tanpa "admin" sudah menutup rapat
+// (pola sama BILL_ADMIN_ROLES di bagian keuangan).
+//
+// Menghapus akun adalah SATU-SATUNYA aksi di aplikasi ini yang tak bisa
+// dibatalkan: bersamanya ikut hilang absensi, riwayat poin, izin, catatan
+// gerbang, hafalan, dan tagihan orang itu. Menonaktifkan — yang tersedia untuk
+// admin — sudah menutup akses tanpa menghapus apa pun, dan itulah yang benar
+// untuk santri yang selesai mondok.
+#[cfg(feature = "ssr")]
+const USER_DELETE_ROLES: &[&str] = &["ketua"];
+
+/// Hapus akun beserta SELURUH data terkaitnya (ketua saja). Return kalimat
+/// ringkasan untuk ditampilkan.
+#[server(DeleteUserAction, "/api-fn")]
+pub async fn delete_user_action(user_id: i64) -> Result<String, ServerFnError> {
+    let sess = require_roles(USER_DELETE_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::admin::delete_user(&state.pool, sess.id, &sess.role, user_id)
+        .await
+        .map_err(err)
+}
+
 // ── Anak-anak sebuah akun orang tua (admin/ketua) ────────────────────────────
 //
 // Jalur normal koneksi ortu↔santri butuh persetujuan SANTRI (lihat
@@ -3196,6 +3241,30 @@ pub async fn server_status_data() -> Result<crate::models::ServerStatus, ServerF
     require_roles(&["admin", "ketua"]).await?;
     let state = app_state().await?;
     Ok(crate::service::server::status(&state.pool).await)
+}
+
+/// Status sambungan WhatsApp (WAHA) — kartu terpisah di /status-server.
+///
+/// Server fn SENDIRI, bukan medan tambahan di `server_status_data`: pemeriksaan
+/// ini menembak jaringan ke luar dan bisa menggantung sampai batas waktu 15
+/// detik. Menggabungkannya berarti seluruh halaman status — termasuk angka
+/// memori & disk yang justru dibuka saat server sedang bermasalah — ikut
+/// menunggu WAHA yang mati.
+#[server(WahaStatusData, "/api-fn")]
+pub async fn waha_status_data() -> Result<crate::models::WahaStatus, ServerFnError> {
+    require_roles(&["admin", "ketua"]).await?;
+    let state = app_state().await?;
+    let (terhubung, keterangan) =
+        match crate::service::registration::waha_status(&state.http, &state.waha).await {
+            Ok(status) => (true, status),
+            Err(alasan) => (false, alasan),
+        };
+    Ok(crate::models::WahaStatus {
+        terhubung,
+        keterangan,
+        base_url: state.waha.base_url.clone(),
+        session: state.waha.session.clone(),
+    })
 }
 
 // ── Buku tamu: layar PENJAGA (migrasi 83) ────────────────────────────────────

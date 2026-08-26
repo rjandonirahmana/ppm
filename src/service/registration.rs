@@ -204,7 +204,21 @@ pub async fn initiate_register(
         None
     };
 
-    if repo::find_by_phone(pool, &phone).await?.is_some() {
+    // PENJAGA DUPLIKAT — memakai pencocokan yang TOLERAN BENTUK
+    // (`find_account_by_phone`), bukan `find_by_phone` yang menyamakan teks
+    // mentah.
+    //
+    // Bedanya menentukan siapa yang memiliki sebuah nomor. Baris lama bisa
+    // tersimpan '0857…' sementara pendaftar mengetik nomor yang sama dan
+    // dinormalkan jadi '62857…'. Perbandingan teks menyatakan keduanya
+    // BERBEDA, `uq_users_phone` pun tak terusik karena stringnya memang tak
+    // sama — jadi pendaftaran lolos dan nomor yang sama berakhir di DUA akun.
+    // Sesudah itu login dan lupa-sandi harus menebak baris mana yang dimaksud,
+    // dan orang yang bukan pemilik nomor memegang akun kedua atas nomor itu.
+    //
+    // Akun NONAKTIF ikut dihitung: nonaktif bukan berarti nomornya bebas
+    // diambil orang lain — santri yang sedang cuti tetap pemiliknya.
+    if repo::find_account_by_phone(pool, &phone).await?.is_some() {
         bail_user!("Nomor HP ini sudah terdaftar. Silakan masuk lewat halaman Login.");
     }
 
@@ -413,15 +427,36 @@ pub async fn waha_status(http: &reqwest::Client, waha: &WahaConfig) -> Result<St
     }
 }
 
-/// Kirim pesan WhatsApp teks bebas via WAHA (`phone` = "62xxx" ternormalisasi).
-/// Dipakai OTP registrasi & pengingat sesi pamong (service::sessions).
+/// Kirim pesan WhatsApp teks bebas via WAHA.
+///
+/// ── NOMORNYA DINORMALKAN DI SINI, SEKALI, UNTUK SEMUA PEMANGGIL ──────────────
+/// Ini SATU-SATUNYA pintu keluar ke WhatsApp, dan ia pula yang menyusun
+/// chat-id — jadi di sinilah aturan bentuk nomor semestinya berlaku, bukan di
+/// tiap pemanggil.
+///
+/// Sebelum ini tiap pemanggil mengurusnya sendiri, dan hasilnya sudah menyimpang
+/// persis seperti yang diperingatkan `models::phone`: `service::finance` dan
+/// `service::permits` masing-masing punya salinan `wa_phone()` yang identik,
+/// sementara `service::calendar` mengirim NILAI MENTAH DARI BASIS DATA. Untuk
+/// baris yang tersimpan sebagai '0857…' — dan baris seperti itu ada, dari impor
+/// daftar induk maupun isian lama — chat-id yang terbentuk adalah
+/// `0857…@c.us`, yang bukan alamat siapa pun. WAHA menerimanya tanpa protes,
+/// mengembalikan sukses, dan pesannya tak pernah sampai ke mana-mana.
+///
+/// Nomor yang TAK BISA ditafsirkan kini menjadi `Err` dengan sebab yang jelas,
+/// bukan pesan yang dikirim ke alamat karangan: pemanggil sudah mencatat dan
+/// menghitung kegagalan, jadi galat di sini terlihat — sementara "terkirim"
+/// yang bohong tidak akan pernah terlihat.
+///
+/// Normalisasinya idempoten (lihat uji `idempoten` di `models::phone`), jadi
+/// pemanggil yang sudah menormalkan lebih dulu tak berubah perilakunya.
 pub async fn send_wa_text(
     http: &reqwest::Client,
     waha: &WahaConfig,
     phone: &str,
     text: &str,
 ) -> Result<()> {
-    let chat_id = format!("{phone}@c.us");
+    let chat_id = chat_id_untuk(phone)?;
     let body = serde_json::json!({
         "chatId": chat_id,
         "text": text,
@@ -439,6 +474,19 @@ pub async fn send_wa_text(
         anyhow::bail!("WAHA error {status}: {body}");
     }
     Ok(())
+}
+
+/// Chat-id WAHA dari nomor dalam BENTUK APA PUN ("0857…", "+62 857…", "857…").
+///
+/// Dipisah dari [`send_wa_text`] supaya bisa diuji tanpa jaringan — inilah
+/// bagian yang dulu diam-diam salah, dan bagian yang paling pantas dikunci tes.
+fn chat_id_untuk(phone: &str) -> Result<String> {
+    match crate::models::normalisasi_hp(phone) {
+        Some(hp) => Ok(crate::models::chat_id_wa(&hp)),
+        None => anyhow::bail!(
+            "Nomor WhatsApp tak bisa ditafsirkan: {phone:?}.              Betulkan nomornya di /manajemen-user."
+        ),
+    }
 }
 
 /// "08xxx"/"+62xxx"/"62xxx" → "62xxx" (dipakai sbg identitas HP tersimpan DAN
@@ -478,4 +526,37 @@ pub fn generate_random_password() -> String {
         pass.push(LOWER[rng.random_range(0..LOWER.len())] as char);
     }
     pass.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Yang dikunci di sini adalah PENYEBAB kegagalan diam-diam: chat-id yang
+    /// terbentuk dari nilai basis data apa adanya. WAHA menerima
+    /// `0857…@c.us` tanpa protes dan menjawab sukses, jadi tak ada satu pun
+    /// lapisan sesudahnya yang bisa menangkapnya.
+    #[test]
+    fn chat_id_selalu_bentuk_62_apa_pun_masukannya() {
+        let harapan = "6281234567890@c.us";
+        for masukan in [
+            "081234567890",
+            "6281234567890",
+            "+62 812-3456-7890",
+            "+62 0812 3456 7890",
+            "81234567890",
+            "  0812 3456 7890  ",
+        ] {
+            assert_eq!(chat_id_untuk(masukan).unwrap(), harapan, "masukan {masukan}");
+        }
+    }
+
+    #[test]
+    fn nomor_tak_tertafsirkan_jadi_galat_bukan_alamat_karangan() {
+        // Nomor rumah, potongan angka, kolom kosong — semuanya dulu berakhir
+        // sebagai chat-id yang tampak sah lalu hilang tanpa jejak.
+        for masukan in ["0217654321", "0812", "", "-"] {
+            assert!(chat_id_untuk(masukan).is_err(), "masukan {masukan:?} seharusnya ditolak");
+        }
+    }
 }

@@ -5,7 +5,9 @@
 //!   • quality_label / is_mengaji_category → label hafalan.
 //! Jalankan: `cargo test --test auth_and_labels`.
 
-use ppm::models::{is_mengaji_category, quality_label, role_home, role_label, role_satisfies};
+use ppm::models::{
+    can_change_role, is_mengaji_category, quality_label, role_home, role_label, role_satisfies,
+};
 use ppm::service::auth::normalize_phone;
 
 // ── normalize_phone (login by phone + forgot-password) ───────────────────────
@@ -104,6 +106,68 @@ fn role_biasa_cocok_persis() {
     assert!(role_satisfies("dewan_guru", &["dewan_guru", "admin"]));
     assert!(!role_satisfies("santri", &["admin"]));
     assert!(!role_satisfies("parent", &["santri"]));
+}
+
+// ── JWT: benar-benar DITANDATANGANI, bukan sekadar meng-compile ──────────────
+//
+// Tes ini ada karena satu kegagalan yang lolos `cargo check` DAN seluruh tes
+// lain: `jsonwebtoken` 11 tak lagi membawa penyedia kripto sendiri — fiturnya
+// harus dipilih (`rust_crypto`/`aws_lc_rs`). Tanpa itu kodenya compile mulus
+// lalu PANIC di `encode()` pertama, yaitu saat orang pertama menekan "Masuk",
+// sebagai 500 dari server fn login. Memanggil sign+verify sungguhan di sini
+// memindahkan kegagalan itu ke `cargo test`, tempat ia seharusnya ketahuan.
+
+#[test]
+fn jwt_sign_lalu_verify_mengembalikan_klaim_yang_sama() {
+    let jwt = ppm::auth::JwtService::new("rahasia-untuk-tes");
+    let token = jwt.sign(42, "Budi", "6281234567890", "ketua").expect("sign gagal");
+    let klaim = jwt.verify(&token).expect("verify gagal");
+    assert_eq!(klaim.user_id, 42);
+    assert_eq!(klaim.name, "Budi");
+    assert_eq!(klaim.phone, "6281234567890");
+    assert_eq!(klaim.role, "ketua");
+}
+
+#[test]
+fn jwt_token_asing_ditolak() {
+    let jwt = ppm::auth::JwtService::new("rahasia-untuk-tes");
+    let token = ppm::auth::JwtService::new("rahasia-lain")
+        .sign(1, "X", "628", "admin")
+        .expect("sign gagal");
+    // Tanda tangan dari secret lain → ditolak, bukan diterima diam-diam.
+    assert!(jwt.verify(&token).is_err());
+}
+
+// ── can_change_role (siapa boleh menunjuk ketua) ─────────────────────────────
+//
+// `role_satisfies` sengaja hanya berlaku SATU ARAH — ketua memenuhi "admin",
+// admin tidak memenuhi "ketua". Tanpa aturan tambahan di bawah, arah itu tak
+// menolong sama sekali di halaman peran: admin lolos penjaga `["admin"]`, lalu
+// bebas mengangkat siapa pun (termasuk akun keduanya sendiri) menjadi ketua —
+// dan sesudah itu seluruh pemisahan admin↔ketua di aplikasi ini tak berarti.
+
+#[test]
+fn hanya_ketua_yang_mengangkat_ketua() {
+    assert!(can_change_role("ketua", "santri", "ketua"));
+    assert!(!can_change_role("admin", "santri", "ketua"));
+    assert!(!can_change_role("dewan_guru", "santri", "ketua"));
+}
+
+#[test]
+fn hanya_ketua_yang_mencabut_peran_ketua() {
+    // Arah sebaliknya sama pentingnya: admin yang tak bisa mengangkat siapa pun
+    // tetap bisa MENYINGKIRKAN ketua yang ada bila arah ini dibiarkan terbuka.
+    assert!(can_change_role("ketua", "ketua", "santri"));
+    assert!(!can_change_role("admin", "ketua", "santri"));
+    assert!(!can_change_role("admin", "ketua", "admin"));
+}
+
+#[test]
+fn peran_selain_ketua_tetap_urusan_admin() {
+    // Yang dikunci HANYA peran ketua — pekerjaan harian admin tak berubah.
+    assert!(can_change_role("admin", "santri", "dewan_guru"));
+    assert!(can_change_role("admin", "dewan_guru", "admin"));
+    assert!(can_change_role("admin", "parent", "penjaga"));
 }
 
 // ── Label hafalan ────────────────────────────────────────────────────────────

@@ -20,6 +20,14 @@ pub fn LoginPage() -> impl IntoView {
     let info = RwSignal::new(Option::<String>::None);
 
     // Lupa password: pakai nomor HP yang sudah diketik → kirim password baru via WA.
+    //
+    // HASILNYA DIBACA. Sebelum ini balasannya dibuang (`let _ = …`) dan layar
+    // SELALU menampilkan "password baru dikirim, cek WA" — apa pun yang
+    // sebenarnya terjadi. Nomor salah ketik, akun nonaktif, WAHA mati, bahkan
+    // 500 dari server, semuanya tampil sebagai keberhasilan, dan orang menunggu
+    // WhatsApp yang tak akan pernah datang. Itulah kenapa "registrasi WA masuk,
+    // lupa sandi tidak" terasa seperti tak ada sebabnya: sebabnya ada, cuma tak
+    // pernah sampai ke layar.
     let on_forgot = move |ev: leptos::ev::MouseEvent| {
         ev.prevent_default();
         let l = login.get_untracked();
@@ -27,13 +35,22 @@ pub fn LoginPage() -> impl IntoView {
             error.set(Some("Isi nomor HP dulu untuk reset password.".into()));
             return;
         }
+        if busy.get_untracked() {
+            return;
+        }
         info.set(None);
         error.set(None);
+        busy.set(true);
         leptos::task::spawn_local(async move {
-            let _ = crate::web::api::forgot_password_action(l).await;
-            info.set(Some(
-                "Jika nomor terdaftar, password baru dikirim via WhatsApp. Cek WA Anda.".into(),
-            ));
+            let hasil = crate::web::api::forgot_password_action(l).await;
+            busy.set(false);
+            match hasil {
+                Ok(pesan) => info.set(Some(pesan)),
+                Err(e) => {
+                    let msg = e.to_string();
+                    error.set(Some(crate::web::components::pesan_galat(&msg)));
+                }
+            }
         });
     };
 
@@ -201,7 +218,18 @@ pub fn LoginPage() -> impl IntoView {
                             <div class="space-y-2">
                                 <div class="flex justify-between items-center px-1">
                                     <label class="text-label-md text-on-surface-variant" for="password">"Kata Sandi"</label>
-                                    <a class="text-label-md text-primary font-bold hover:underline cursor-pointer" href="#" on:click=on_forgot>"Lupa sandi?"</a>
+                                    // Berlabel "Mengirim…" selama permintaannya jalan. Tanpa penanda
+                                    // apa pun, tautan yang diklik lalu diam beberapa detik
+                                    // (bcrypt + panggilan WAHA) terbaca sebagai tak berfungsi,
+                                    // dan orang menekannya berkali-kali — yang justru menabrak
+                                    // batas laju 10 menit.
+                                    <a
+                                        class="text-label-md text-primary font-bold hover:underline cursor-pointer"
+                                        href="#"
+                                        on:click=on_forgot
+                                    >
+                                        {move || if busy.get() { "Mengirim…" } else { "Lupa sandi?" }}
+                                    </a>
                                 </div>
                                 <div class="relative group">
                                     <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">"lock"</span>

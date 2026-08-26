@@ -70,6 +70,31 @@ pub struct ServerStatus {
     pub pool_idle: usize,
 }
 
+/// Keadaan sambungan WhatsApp (WAHA) — kartu tersendiri di /status-server.
+///
+/// ── KENAPA INI LAYAK SATU KARTU SENDIRI ──────────────────────────────────────
+/// WAHA yang tak tersambung membuat SELURUH pemulihan akun berhenti bekerja —
+/// lupa sandi, OTP pendaftaran, ganti nomor — dan semuanya gagal DIAM-DIAM:
+/// jawaban ke pengguna sengaja dibuat tak membocorkan apa pun (anti-enumerasi),
+/// jadi yang terlihat hanya "WA-nya tidak datang". Sebelum kartu ini, satu-
+/// satunya cara memastikannya adalah SSH ke VPS lalu memanggil API WAHA sendiri
+/// — dan monitor Telegram di `main.rs` cuma hidup bila Telegram dikonfigurasi.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WahaStatus {
+    /// Sesi WAHA berstatus WORKING → pesan bisa terkirim.
+    pub terhubung: bool,
+    /// "WORKING", atau alasan gagalnya apa adanya (tak terjangkau, status
+    /// SCAN_QR_CODE/STOPPED, dsb.) — kalimat inilah yang menentukan tindakan
+    /// berikutnya, jadi ia ditampilkan utuh, bukan diringkas jadi "gagal".
+    pub keterangan: String,
+    /// Alamat & nama sesi yang BENAR-BENAR dipakai proses ini. Ditampilkan
+    /// supaya salah setel env terlihat langsung, bukan ditebak: WAHA yang
+    /// "sudah jalan" tapi ditunjuk di port keliru adalah kegagalan yang paling
+    /// sering dan paling lama dicari.
+    pub base_url: String,
+    pub session: String,
+}
+
 /// Ruang satu filesystem (SSD/NVMe VPS) — kartu "Penyimpanan" /status-server.
 ///
 /// Yang paling penting di halaman ini adalah [`tersedia`](Self::tersedia).

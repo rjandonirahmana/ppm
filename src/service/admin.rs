@@ -177,6 +177,7 @@ fn action_label(action: &str) -> String {
         "user.activate" => "Aktifkan Akun".into(),
         "user.deactivate" => "Nonaktifkan Akun".into(),
         "user.role_change" => "Ganti Peran".into(),
+        "user.delete" => "Hapus Akun".into(),
         other => other.into(),
     }
 }
@@ -256,14 +257,153 @@ pub async fn toggle_active(pool: &Pool, actor_id: i64, target_id: i64, active: b
     Ok(())
 }
 
-pub async fn change_role(pool: &Pool, actor_id: i64, target_id: i64, new_role: &str) -> Result<()> {
+/// Ganti peran seseorang. Return kalimat untuk ditampilkan ke pengelola.
+///
+/// `actor_role` = peran PEMANGGIL, dan ia menentukan — lihat
+/// [`crate::models::can_change_role`]: hanya ketua yang boleh mengangkat maupun
+/// mencabut peran ketua.
+///
+/// ── KETUA ITU SATU, DAN MENUNJUKNYA BERARTI MENYERAHKANNYA ───────────────────
+/// Memilih "Ketua" untuk orang lain bukan menambah ketua, melainkan
+/// MEMINDAHKAN jabatannya: yang ditunjuk naik, dan ketua lama — yaitu pemanggil
+/// sendiri, karena hanya ketua yang boleh menunjuk — otomatis turun jadi
+/// `admin`. Satu transaksi, lihat [`repo::transfer_ketua`].
+///
+/// ── SATU PENGECUALIAN: JABATAN YANG MASIH KOSONG ─────────────────────────────
+/// Bila BELUM ADA ketua sama sekali, admin biasa boleh menunjuk yang pertama.
+/// Tanpa jalan ini, instalasi baru terkunci selamanya: admin seed bukan ketua,
+/// dan aturan "hanya ketua yang menunjuk ketua" berarti tak seorang pun bisa
+/// mengangkat siapa pun — satu-satunya jalan keluarnya menulis SQL langsung ke
+/// produksi. Pengecualiannya sempit dan menutup dirinya sendiri: begitu ada
+/// satu ketua, pintu ini terkunci dan hanya dia yang bisa memindahkannya.
+pub async fn change_role(
+    pool: &Pool,
+    actor_id: i64,
+    actor_role: &str,
+    target_id: i64,
+    new_role: &str,
+) -> Result<String> {
     if actor_id == target_id {
         bail_user!("Tidak bisa mengubah peran akun sendiri.");
     }
+    // Peran SEKARANG dibaca segar dari DB, bukan dari baris yang kebetulan ada
+    // di layar pemanggil: daftar di layar bisa berumur beberapa menit, dan
+    // penjagaan yang bersandar pada data basi bisa dilewati hanya dengan
+    // membiarkan tab terbuka cukup lama.
+    let Some(peran_kini) = repo::role_of_user(pool, target_id).await? else {
+        bail_user!("Pengguna tidak ditemukan.");
+    };
+    if peran_kini == new_role {
+        bail_user!("Peran orang ini memang sudah {}.", role_label(new_role));
+    }
+
+    // Jabatan kosong → admin boleh mengangkat yang pertama (lihat catatan di
+    // atas). Diperiksa hanya bila memang perlu, supaya jalur biasa tak
+    // menambah query.
+    let boleh = crate::models::can_change_role(actor_role, &peran_kini, new_role)
+        || (new_role == "ketua" && repo::jumlah_ketua(pool).await? == 0);
+    if !boleh {
+        bail_user!(
+            "Hanya Ketua yang boleh mengangkat atau mencabut peran Ketua. \
+             Mintakan perubahan ini kepada Ketua."
+        );
+    }
+
+    if new_role == "ketua" {
+        return serahkan_ketua(pool, actor_id, target_id).await;
+    }
+
     if !repo::set_role(pool, target_id, new_role).await? {
         bail_user!("Peran tidak valid atau pengguna tidak ditemukan.");
     }
     let detail = format!("Peran baru: {}", role_label(new_role));
     let _ = repo::insert_log(pool, actor_id, Some(target_id), "user.role_change", Some(&detail)).await;
-    Ok(())
+    Ok(format!("Peran diubah menjadi {}.", role_label(new_role)))
+}
+
+/// Serahkan jabatan ketua ke `target_id` — dan catat KEDUA sisinya.
+///
+/// Jejaknya sengaja dua baris, bukan satu: enam bulan dari sekarang, pertanyaan
+/// yang muncul bukan "siapa yang diangkat" melainkan "sejak kapan si anu bukan
+/// ketua lagi", dan pertanyaan itu hanya terjawab bila penurunannya juga
+/// tercatat atas namanya sendiri.
+async fn serahkan_ketua(pool: &Pool, actor_id: i64, target_id: i64) -> Result<String> {
+    let (ok, diturunkan) = repo::transfer_ketua(pool, target_id).await?;
+    if !ok {
+        bail_user!("Pengguna tidak ditemukan.");
+    }
+
+    let detail_naik = "Peran baru: Ketua (jabatan diserahkan)";
+    let _ = repo::insert_log(pool, actor_id, Some(target_id), "user.role_change", Some(detail_naik))
+        .await;
+    for id in &diturunkan {
+        let _ = repo::insert_log(
+            pool,
+            actor_id,
+            Some(*id),
+            "user.role_change",
+            Some("Peran baru: Admin — jabatan Ketua diserahkan ke orang lain"),
+        )
+        .await;
+    }
+
+    Ok(if diturunkan.contains(&actor_id) {
+        "Jabatan Ketua diserahkan. Peran Anda sendiri kini Admin.".to_string()
+    } else if diturunkan.is_empty() {
+        "Ketua ditunjuk.".to_string()
+    } else {
+        "Jabatan Ketua dipindahkan; ketua sebelumnya kini Admin.".to_string()
+    })
+}
+
+/// Hapus satu akun BESERTA seluruh datanya. Return kalimat ringkasan untuk
+/// ditampilkan ke pengelola.
+///
+/// Wewenang KETUA saja, dan diperiksa lagi di sini meski endpoint-nya juga
+/// menjaga: ini satu-satunya aksi di aplikasi yang tak bisa dibatalkan, jadi ia
+/// tak boleh bersandar pada satu penjaga yang bisa hilang saat endpoint disalin.
+///
+/// Untuk santri yang selesai mondok, yang benar tetap NONAKTIFKAN — riwayat
+/// kehadiran, poin, dan tagihannya masih dirujuk laporan. Penghapusan ini untuk
+/// akun yang memang tak boleh ada: salah daftar, duplikat, atau orang yang
+/// memintanya.
+pub async fn delete_user(
+    pool: &Pool,
+    actor_id: i64,
+    actor_role: &str,
+    target_id: i64,
+) -> Result<String> {
+    if actor_role != "ketua" {
+        bail_user!("Hanya Ketua yang boleh menghapus akun beserta seluruh datanya.");
+    }
+    if actor_id == target_id {
+        bail_user!("Tidak bisa menghapus akun sendiri.");
+    }
+    let Some(hasil) = repo::delete_user_cascade(pool, target_id).await? else {
+        bail_user!("Pengguna tidak ditemukan.");
+    };
+
+    let total: i64 = hasil.baris.iter().map(|(_, n)| *n).sum();
+    let rincian = hasil
+        .baris
+        .iter()
+        .map(|(t, n)| format!("{t}: {n}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    // Jejaknya ditulis TANPA `target_user_id` — barisnya sudah tak ada, dan
+    // kolom itu ON DELETE SET NULL. Nama & peran karena itu ikut dititipkan ke
+    // `detail`: tanpa keduanya, log hanya bercerita bahwa "seseorang" dihapus.
+    let detail = format!(
+        "Hapus akun: {} ({}) — {total} baris data terkait{}",
+        hasil.full_name,
+        role_label(&hasil.role),
+        if rincian.is_empty() { String::new() } else { format!(" [{rincian}]") }
+    );
+    let _ = repo::insert_log(pool, actor_id, None, "user.delete", Some(&detail)).await;
+
+    Ok(format!(
+        "Akun {} dihapus beserta {total} baris data terkait.",
+        hasil.full_name
+    ))
 }

@@ -1,7 +1,17 @@
 [toolchain]
 # Pin nightly ke tanggal stabil untuk avoid regression di WASM32 atau linker.
 # Update manual saat ada breaking changes di nightly.
-channel = "nightly-2026-07-15"
+#
+# 17 Agu 2026: nightly-2026-07-15 (rustc 1.99.0) → nightly-2026-08-16
+# (rustc 1.100.0). Diverifikasi SEBELUM dipindahkan: `cargo check` SSR, `cargo
+# check --lib` wasm32 hydrate, dan `cargo test --lib` semuanya hijau di toolchain
+# baru — termasuk me-link `libppm.dylib` di macOS, satu-satunya langkah yang
+# pernah patah karena pergantian nightly di proyek ini (lihat .cargo/config.toml).
+#
+# Menaikkan tanggal ini berarti seluruh dependensi dikompilasi ulang dari nol;
+# sediakan waktu, dan jangan lakukan berbarengan dengan perubahan lain supaya
+# jelas siapa yang salah bila ada yang patah.
+channel = "nightly-2026-08-16"
 
 # Komponen yang wajib untuk SSR + WASM hydration.
 components = ["rustfmt", "clippy"]

@@ -22,12 +22,6 @@ use super::fmt::{fmt_rentang, fmt_when};
 use crate::models::{permit_kind_label, PermitQueueData, PermitReviewItem, SedangIzinItem};
 use crate::repository as repo;
 
-/// Normalisasi HP untuk chat-ID WAHA — satu aturan bersama
-/// ([`crate::models::normalisasi_hp`]).
-fn wa_phone(p: &str) -> String {
-    crate::models::normalisasi_hp(p).unwrap_or_default()
-}
-
 /// Kirim WA notifikasi izin baru ke penyetuju TIAP baris hasil pemecahan izin
 /// (migrasi 46). Best-effort — gagal WA tak menggagalkan pengajuan.
 ///
@@ -59,7 +53,7 @@ pub async fn notify_permit_splits(
             t.student_name, pemohon, kelas
         );
         if let Some(phone) = t.wali_phone.as_deref().filter(|p| !p.is_empty()) {
-            let _ = super::registration::send_wa_text(http, waha, &wa_phone(phone), &msg).await;
+            let _ = super::registration::send_wa_text(http, waha, phone, &msg).await;
         }
     }
 }
@@ -414,7 +408,7 @@ pub async fn ingatkan_wali_sesi(
              absensinya bisa diverifikasi petugas yang tepat.",
             s.class_name, s.title, s.jam
         );
-        if super::registration::send_wa_text(http, waha, &wa_phone(&s.wali_phone), &msg)
+        if super::registration::send_wa_text(http, waha, &s.wali_phone, &msg)
             .await
             .is_ok()
         {

@@ -678,7 +678,13 @@ pub(crate) fn points_lists(
     }
 }
 
-pub(crate) fn gate_status_card(gate_status: &str, gate_at_label: &str) -> impl IntoView {
+// `use<>` (tanpa parameter) WAJIB sejak edisi 2024: aturan penangkapan RPIT
+// berubah — `impl Trait` kini otomatis menangkap SEMUA parameter lifetime yang
+// terlihat, termasuk kedua `&str` di atas. Padahal nilai yang dikembalikan tak
+// menyimpan satu pun dari keduanya (isinya `String` hasil salinan), jadi
+// menangkapnya membuat pemanggil tak bisa memakai hasilnya melewati umur
+// argumennya. `use<>` menyatakan apa adanya: tak menangkap lifetime mana pun.
+pub(crate) fn gate_status_card(gate_status: &str, gate_at_label: &str) -> impl IntoView + use<> {
     let (label, icon, cls) = if gate_status == "out" {
         ("Sedang di Luar Pondok", "door_open", "bg-error-container text-error")
     } else {

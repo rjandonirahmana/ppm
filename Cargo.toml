@@ -6,7 +6,12 @@
 [package]
 name = "ppm"
 version = "0.1.0"
-edition = "2021"
+# Edisi 2024 (sejak Agustus 2026, dari 2021). Migrasinya diperiksa dengan
+# `cargo fix --edition`: satu-satunya perubahan yang benar-benar DIWAJIBKAN
+# compiler adalah `use<>` di `web::pages::laporan::gate_status_card` (aturan
+# penangkapan lifetime RPIT). Sisa saran otomatisnya sengaja TIDAK diambil —
+# lihat catatan di berkas itu dan di `service::mod::bail_user`.
+edition = "2024"
 
 [[bin]]
 name = "ppm"
@@ -170,11 +175,22 @@ postgres-types = { version = "0.2", features = ["derive"] }
 deadpool-postgres = "0.14"
 
 # Auth
-bcrypt = "0.15"
+bcrypt = "0.19"
 # SHA-256 utk kunci perangkat RFID: butuh hash CEPAT (dipanggil tiap tap kartu),
 # jadi BUKAN bcrypt yang sengaja lambat. Lihat service/admin.rs::hash_api_key.
-sha2 = "0.10"
-jsonwebtoken = "9"
+sha2 = "0.11"
+# `rust_crypto` WAJIB DITULIS. Sejak versi 11, jsonwebtoken tak lagi membawa
+# backend kripto sendiri: default-nya cuma `use_pem`, dan penyedia kripto harus
+# dipilih lewat fitur. Tanpa itu ia tetap COMPILE dengan mulus lalu PANIC pada
+# `encode()` pertama — artinya kegagalannya baru muncul saat orang pertama
+# menekan tombol Masuk ("Could not automatically determine the process-level
+# CryptoProvider"), sebagai 500 dari server fn login, bukan sebagai galat build.
+#
+# Dipilih `rust_crypto` (murni Rust), BUKAN `aws_lc_rs`: yang terakhir mengikat
+# build ke cmake + toolchain C, dan image Docker proyek ini sengaja dijaga tak
+# butuh keduanya. Token di sini HS256 (lihat src/auth.rs) — hmac+sha2 sudah
+# cukup; sisa algoritma yang ikut terbawa fitur ini tak dipakai.
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 
 # Export laporan: PDF (font base-14 bawaan PDF, TANPA file font eksternal —
 # lihat service/export.rs) + Excel (.xlsx, tanpa dependensi sistem).
@@ -182,8 +198,8 @@ jsonwebtoken = "9"
 # seluruh azul-layout + rust-fontconfig (engine layout HTML) yg TAK dipakai
 # sama sekali di sini (laporan = teks+tabel manual via Op::WriteText, bukan
 # render HTML→PDF). Build jauh lebih ringan tanpa fitur ini.
-printpdf = { version = "0.11", default-features = false }
-rust_xlsxwriter = "0.96"
+printpdf = { version = "0.12", default-features = false }
+rust_xlsxwriter = "0.98"
 
 # Storage rekaman → RustFS (S3-compatible), pola e-ticketing/wedding-web.
 aws-sdk-s3 = "1"
@@ -213,6 +229,24 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # ── WASM-only deps ─────────────────────────────────────────────────────────────
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
+# ⚠️ JANGAN NAIKKAN KE 0.4 — ini SAKELAR BACKEND, bukan dependensi biasa.
+#
+# Kode di sini tak pernah memanggil getrandom. Barisnya ada semata untuk
+# menyalakan fitur `wasm_js` pada salinan getrandom yang dipakai POHON WASM:
+#
+#     leptos 0.8 → rand 0.9 → rand_core 0.9 → getrandom 0.3
+#
+# Tanpa fitur itu, getrandom 0.3 tak punya sumber acak di
+# wasm32-unknown-unknown. Fiturnya HANYA ada di lini 0.3; getrandom 0.4 sama
+# sekali tak memilikinya (satu-satunya fiturnya `std`) karena di sana pemilihan
+# backend pindah ke cfg compiler. Menaikkan versi di sini berarti menambah
+# salinan 0.4 yang tak dipakai siapa pun SEKALIGUS mematikan backend pada 0.3
+# yang sebenarnya dibutuhkan — dan gejalanya baru muncul saat dijalankan.
+#
+# Angkanya baru boleh berubah kalau leptos sendiri pindah ke rand/getrandom
+# yang lebih baru. Periksa dengan:
+#     cargo tree --target wasm32-unknown-unknown --no-default-features \
+#                --features hydrate -i getrandom@0.3.4
 getrandom = { version = "0.3", features = ["wasm_js"] }
 # Klien siaran suara + SSE (pola dari e-ticketing live_stream.rs).
 send_wrapper = "0.6"

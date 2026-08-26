@@ -263,7 +263,7 @@ pub async fn kirim_pengingat(
         let pesan = pesan_pengingat(&t.student_name);
         let mut ada_yang_masuk = false;
         for nomor in &t.nomor {
-            match super::registration::send_wa_text(http, waha, &wa_phone(nomor), &pesan).await {
+            match super::registration::send_wa_text(http, waha, nomor, &pesan).await {
                 Ok(()) => {
                     terkirim += 1;
                     ada_yang_masuk = true;
@@ -323,23 +323,9 @@ fn ringkas_nama(nama: &[String]) -> String {
     format!("{}, +{} lainnya", nama[..3].join(", "), nama.len() - 3)
 }
 
-/// Normalisasi HP untuk chat-ID WAHA — satu aturan bersama
-/// ([`crate::models::normalisasi_hp`]). Kosong = nomor tak bisa ditafsirkan;
-/// pemanggil melewatinya alih-alih mengirim ke alamat yang tak sah.
-fn wa_phone(p: &str) -> String {
-    crate::models::normalisasi_hp(p).unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn nomor_dinormalkan_ke_62() {
-        assert_eq!(wa_phone("081234567890"), "6281234567890");
-        assert_eq!(wa_phone("+62 812-3456-7890"), "6281234567890");
-        assert_eq!(wa_phone("6281234567890"), "6281234567890");
-    }
 
     /// Nol berlebih pada isian nominal adalah salah ketik tersering di layar
     /// ini; pagar atasnya harus menangkapnya, bukan meneruskannya ke laporan.

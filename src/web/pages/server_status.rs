@@ -13,17 +13,22 @@
 use leptos::prelude::*;
 use leptos_meta::Title;
 
-use crate::models::{fmt_bytes, tingkat_pakai, ServerStatus};
-use crate::web::api::server_status_data;
+use crate::models::{fmt_bytes, tingkat_pakai, ServerStatus, WahaStatus};
+use crate::web::api::{server_status_data, waha_status_data};
 use crate::web::components::{DeviceFrame, FetchError, MobileHeader};
 
 #[component]
 pub fn StatusServerPage() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { server_status_data().await });
+    // Terpisah dari `data`: pemeriksaannya menembak jaringan ke WAHA dan bisa
+    // menggantung sampai 15 detik — angka memori & disk tak boleh ikut
+    // menunggunya. Kartunya punya <Suspense> sendiri di bawah.
+    let waha = Resource::new(|| (), |_| async move { waha_status_data().await });
     let memuat = RwSignal::new(false);
     let segarkan = move |_| {
         memuat.set(true);
         data.refetch();
+        waha.refetch();
     };
     // Penanda "sedang memuat" dimatikan begitu data baru tiba. Tanpa ini
     // tombolnya tinggal redup selamanya setelah sekali ditekan.
@@ -59,6 +64,20 @@ pub fn StatusServerPage() -> impl IntoView {
 
                     <Suspense fallback=|| {
                         view! {
+                            <div class="h-24 bg-surface-container rounded-2xl animate-pulse"></div>
+                        }
+                    }>
+                        {move || {
+                            waha.get()
+                                .map(|res| match res {
+                                    Err(e) => view! { <FetchError err=e.to_string() /> }.into_any(),
+                                    Ok(w) => view! { <KartuWaha w=w /> }.into_any(),
+                                })
+                        }}
+                    </Suspense>
+
+                    <Suspense fallback=|| {
+                        view! {
                             <div class="space-y-3 animate-pulse">
                                 <div class="h-28 bg-surface-container rounded-2xl"></div>
                                 <div class="h-28 bg-surface-container rounded-2xl"></div>
@@ -77,6 +96,37 @@ pub fn StatusServerPage() -> impl IntoView {
                 </div>
             </div>
         </DeviceFrame>
+    }
+}
+
+/// Kartu "WhatsApp (WAHA)" — lihat [`WahaStatus`] untuk kenapa ia ada.
+#[component]
+fn KartuWaha(w: WahaStatus) -> impl IntoView {
+    let terhubung = w.terhubung;
+    view! {
+        <div class="ppm-card p-4">
+            <div class="flex items-center justify-between gap-2 mb-1.5">
+                <p class="text-body-sm font-semibold text-on-background">"WhatsApp (WAHA)"</p>
+                <span class=if terhubung {
+                    "px-2 py-0.5 rounded-full bg-tertiary-container text-on-tertiary-container text-[11px] font-semibold"
+                } else {
+                    "px-2 py-0.5 rounded-full bg-error-container text-on-error-container text-[11px] font-semibold"
+                }>{if terhubung { "Tersambung" } else { "Tidak tersambung" }}</span>
+            </div>
+            <p class="text-body-sm text-on-surface-variant break-words">{w.keterangan}</p>
+            <p class="text-[11px] text-on-surface-variant mt-1.5 break-all">
+                {format!("{} · sesi \"{}\"", w.base_url, w.session)}
+            </p>
+            // Keterangan ini yang mengubah kartu dari angka jadi TINDAKAN:
+            // tanpa WAHA, tiga alur pemulihan akun berhenti bekerja dan
+            // semuanya gagal tanpa pesan apa pun ke penggunanya.
+            <Show when=move || !terhubung>
+                <p class="text-[11px] text-error mt-2">
+                    "Selama ini merah: lupa sandi, OTP pendaftaran, dan ganti nomor TIDAK terkirim — \
+                     dan pengguna tak melihat galat apa pun. Periksa kontainer WAHA & sesinya."
+                </p>
+            </Show>
+        </div>
     }
 }
 
