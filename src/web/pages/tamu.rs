@@ -14,23 +14,54 @@ pub fn TamuPage() -> impl IntoView {
     let f_name = RwSignal::new(String::new());
     let f_phone = RwSignal::new(String::new());
     let f_purpose = RwSignal::new(String::new());
-    let code = RwSignal::new(String::new());
+    // TIKET polling, bukan kode check-in — kodenya tak pernah sampai ke browser
+    // ini, dan itu yang membuat nomor HP-nya terbukti (lihat
+    // `models::GuestTicket`).
+    let tiket = RwSignal::new(String::new());
+    // Nomor tujuan yang sudah disamarkan, untuk ditampilkan.
+    let tujuan = RwSignal::new(String::new());
+    // false = yang dikirim kode LAMA yang masih berlaku (mendaftar dua kali
+    // dengan nomor yang sama).
+    let kode_baru = RwSignal::new(true);
     let tick = RwSignal::new(0u32);
     let submitting = RwSignal::new(false);
     let err = RwSignal::new(String::new());
 
-    // Polling status check-in: fetch saat `code` terisi, ulang tiap `tick`.
+    // Polling status check-in: fetch saat tiket terisi, ulang tiap `tick`.
     let status = Resource::new(
-        move || (code.get(), tick.get()),
-        |(c, _)| async move {
-            if c.is_empty() {
+        move || (tiket.get(), tick.get()),
+        |(t, _)| async move {
+            if t.is_empty() {
                 Ok::<Option<GuestCheckin>, ServerFnError>(None)
             } else {
-                guest_status_action(c).await
+                guest_status_action(t).await
             }
         },
     );
-    let checkin = move || status.get().and_then(|r| r.ok()).flatten();
+
+    // HASILNYA DISALIN KE SIGNAL LEWAT EFFECT, tidak dibaca langsung di view.
+    //
+    // Membaca resource di luar <Suspense/> membuat Leptos memperingatkan
+    // hydration mismatch — dan peringatannya benar: bila server dan klien
+    // menyimpulkan keadaan yang berbeda, DOM hasil hidrasi tak lagi sepadan
+    // dengan yang di-render server, dan halaman ini justru yang paling rugi
+    // (tombolnya berhenti bekerja di tengah antrean gerbang).
+    //
+    // Membungkusnya dengan <Suspense/> bukan jawaban yang tepat di sini:
+    // halaman ini mesin tiga keadaan yang DUA di antaranya (formulir dan
+    // "menunggu mesin") tak bergantung pada resource sama sekali, dan
+    // fallback-nya hanya akan mengedipkan seluruh halaman tiap polling.
+    //
+    // Effect hanya jalan di KLIEN pasca-hidrasi, jadi server selalu merender
+    // keadaan 1 (formulir) — yang memang satu-satunya keadaan benar di sana,
+    // karena saat SSR belum ada tiket apa pun. Pola sama `pages/galeri.rs`.
+    let checkin_data = RwSignal::new(None::<GuestCheckin>);
+    Effect::new(move |_| {
+        if let Some(Ok(Some(c))) = status.get() {
+            checkin_data.set(Some(c));
+        }
+    });
+    let checkin = move || checkin_data.get();
 
     // Interval polling (WASM) — mulai saat kode ada, berhenti saat sudah ✅.
     // Hanya dibaca oleh Effect di bawah yang khusus wasm; di build SSR memang
@@ -49,7 +80,7 @@ pub fn TamuPage() -> impl IntoView {
     Effect::new(move |_| {
         use wasm_bindgen::closure::Closure;
         use wasm_bindgen::JsCast;
-        let has_code = !code.get().is_empty();
+        let has_code = !tiket.get().is_empty();
         let done = checkin().is_some();
         let win = web_sys::window();
         if has_code && !done && interval_id.get_value().is_none() {
@@ -96,8 +127,16 @@ pub fn TamuPage() -> impl IntoView {
         err.set(String::new());
         leptos::task::spawn_local(async move {
             match register_guest_action(n, p, k).await {
-                Ok(c) => code.set(c),
-                Err(e) => err.set(e.to_string()),
+                Ok(hasil) => {
+                    tujuan.set(hasil.tujuan);
+                    kode_baru.set(hasil.kode_baru);
+                    tiket.set(hasil.ticket);
+                }
+                // Galatnya DITAMPILKAN, termasuk "kode gagal dikirim ke
+                // WhatsApp": di alur ini kegagalan kirim berarti tamu tak punya
+                // kode sama sekali, jadi ia tak boleh berakhir sebagai layar
+                // "menunggu mesin" yang tak akan pernah berubah.
+                Err(e) => err.set(crate::web::components::pesan_galat(&e.to_string())),
             }
             submitting.set(false);
         });
@@ -140,19 +179,39 @@ pub fn TamuPage() -> impl IntoView {
                             </div>
                         }
                             .into_any()
-                    } else if !code.get().is_empty() {
-                        // ── STATE 2: tampilkan kode + tunggu mesin ────────────
+                    } else if !tiket.get().is_empty() {
+                        // ── STATE 2: kode ada di WhatsApp, tunggu mesin ───────
+                        //
+                        // Kodenya SENGAJA tak ditampilkan di sini. Halaman ini
+                        // bisa terbuka di HP siapa saja; yang membuktikan tamu
+                        // memegang nomor yang ia tulis justru bahwa kodenya
+                        // hanya ada di WhatsApp nomor itu.
                         view! {
                             <div class="ppm-card p-6 text-center space-y-4 anim-in">
-                                <p class="text-body-sm text-on-surface-variant">"Ketik kode ini di mesin, lalu tatap kamera:"</p>
-                                <p class="text-[44px] leading-none font-bold tracking-[0.3em] text-primary">
-                                    {move || code.get()}
+                                <span class="material-symbols-outlined text-primary text-5xl">"forum"</span>
+                                <h2 class="text-headline-sm font-bold text-on-background">
+                                    {move || {
+                                        if kode_baru.get() {
+                                            "Kode dikirim ke WhatsApp"
+                                        } else {
+                                            "Kode sebelumnya masih berlaku"
+                                        }
+                                    }}
+                                </h2>
+                                <p class="text-body-md text-on-surface-variant">
+                                    "Buka WhatsApp "
+                                    <span class="font-semibold text-on-background">
+                                        {move || tujuan.get()}
+                                    </span>
+                                    ", lalu ketik kodenya di mesin buku tamu di gerbang dan tatap kamera."
                                 </p>
                                 <div class="flex items-center justify-center gap-2 text-on-surface-variant">
                                     <span class="material-symbols-outlined animate-spin text-[18px]">"autorenew"</span>
                                     <span class="text-body-sm">"Menunggu konfirmasi mesin…"</span>
                                 </div>
-                                <p class="text-[11px] text-on-surface-variant/70">"Kode berlaku hari ini. Jangan tutup halaman ini."</p>
+                                <p class="text-[11px] text-on-surface-variant/70">
+                                    "Kode berlaku hari ini. Belum menerima pesan? Pastikan nomornya benar dan aktif di WhatsApp."
+                                </p>
                             </div>
                         }
                             .into_any()

@@ -2,23 +2,50 @@
 //!
 //! Alur:
 //!   1. Tamu isi /tamu → `register_guest` → kode 6-digit disimpan
-//!      `tamu:code:{kode}` = JSON data tamu (TTL 12 jam ≈ "hari itu").
+//!      `tamu:code:{kode}` = JSON data tamu (TTL 12 jam ≈ "hari itu"), lalu
+//!      kodenya DIKIRIM KE WHATSAPP nomor yang ia tulis. Layar hanya menerima
+//!      `tamu:tiket:{tiket}` — pengenal acak untuk menunggu konfirmasi.
 //!   2. Tamu ketik kode di mesin IoT → mesin kirim {api_key, code, foto} →
 //!      `consume_guest` cari kode → hapus → (handler) simpan kunjungan+wajah →
 //!      `mark_done` set `tamu:done:{kode}` (TTL 10 mnt) untuk polling HP.
-//!   3. Halaman /tamu polling `check_status` → tampil ✅ + wajah saat done.
+//!   3. Halaman /tamu polling `check_status` dengan TIKET → tampil ✅ + wajah.
+//!
+//! ── KENAPA KODENYA TAK BOLEH TAMPIL DI LAYAR ─────────────────────────────────
+//! Rancangan pertama memajang kodenya di halaman tamu. Akibatnya isian "Nomor
+//! HP" tak membuktikan apa pun: siapa pun bisa menulis nomor karangan — atau
+//! nomor orang lain — lalu tetap masuk. Untuk sebuah buku tamu, nomor yang tak
+//! bisa dihubungi sama nilainya dengan kolom kosong; yang tersisa hanyalah rasa
+//! aman bahwa "datanya ada".
+//!
+//! Dengan kode hanya lewat WhatsApp, mengetiknya di gerbang OTOMATIS menjadi
+//! bukti bahwa tamu memegang nomor itu. Tak ada langkah verifikasi tambahan
+//! yang perlu dijalani siapa pun — pembuktiannya menyatu dengan langkah yang
+//! toh harus ia lakukan.
 
 use anyhow::Result;
 use rand::RngExt;
 use redis::{aio::ConnectionManager, AsyncCommands};
 use serde::{Deserialize, Serialize};
 
-use crate::models::GuestCheckin;
+use crate::models::{GuestCheckin, GuestTicket};
 
 /// TTL kode tamu: 12 jam (cukup untuk satu hari kunjungan).
 const CODE_TTL: u64 = 12 * 3600;
 /// TTL penanda "sukses" agar HP tamu sempat polling & lihat ✅.
 const DONE_TTL: u64 = 600;
+
+/// Jeda minimum antar pengiriman WA ke SATU nomor tamu (detik).
+///
+/// /tamu adalah endpoint PUBLIK tanpa login — siapa pun di internet bisa
+/// memanggilnya dengan nomor siapa pun. Tanpa batas ini, ia adalah alat kirim
+/// WhatsApp gratis ke nomor mana saja, sebanyak yang diinginkan penyerang, atas
+/// nama pondok — dan yang menanggung akibatnya nomor WAHA pondok sendiri, yang
+/// bisa diblokir WhatsApp karena dianggap spam.
+///
+/// KODENYA TETAP DIBUAT saat batas ini kena; yang ditahan hanya pesannya.
+/// Tamu sungguhan yang mengisi ulang formulir tetap bisa check-in — kodenya
+/// ada di layarnya.
+const WA_JEDA_DETIK: u64 = 600;
 
 #[derive(Serialize, Deserialize)]
 pub struct PendingGuest {
@@ -34,17 +61,49 @@ fn done_key(code: &str) -> String {
     format!("tamu:done:{code}")
 }
 
+/// Tiket polling → kode check-in. Dipegang browser tamu; tak berguna di gerbang.
+fn tiket_key(ticket: &str) -> String {
+    format!("tamu:tiket:{ticket}")
+}
+
+/// Nomor tamu → kode yang masih berlaku untuknya. SATU kode aktif per nomor.
+///
+/// Tanpa ini, tamu yang mengisi formulir dua kali (salah ketik nama, halaman
+/// ter-refresh, jaringan putus) mendapat kode kedua sementara yang pertama
+/// masih hidup 12 jam — dua kode sah untuk satu orang, dan yang di WhatsApp-nya
+/// belum tentu yang ia coba ketik di gerbang.
+fn hp_key(phone: &str) -> String {
+    format!("tamu:hp:{phone}")
+}
+
+fn gen_tiket() -> String {
+    let mut b = [0u8; 16];
+    rand::rng().fill(&mut b);
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
 fn gen_code() -> String {
     format!("{:06}", rand::rng().random_range(0..=999_999))
 }
 
-/// Daftarkan tamu → kode unik 6-digit. Retry bila tabrakan kode.
+/// Daftarkan tamu → kode unik 6-digit, sekaligus kirim kodenya lewat WhatsApp.
+/// Retry bila tabrakan kode.
+///
+/// ── WHATSAPP DI SINI BEST-EFFORT, BEDA DARI ALUR LAIN ────────────────────────
+/// Pada registrasi akun dan lupa-sandi, WhatsApp adalah SATU-SATUNYA jalan
+/// kodenya sampai — gagal kirim berarti alurnya berhenti. Di sini tidak:
+/// kodenya sudah tampil di layar tamu sebelum WhatsApp disentuh sama sekali.
+/// Karena itu kegagalan WA TIDAK menggagalkan pendaftaran — ia hanya dilaporkan
+/// (log + alarm), dan layar diberi tahu lewat `wa_terkirim` supaya tak
+/// menjanjikan pesan yang tak pernah dikirim.
 pub async fn register_guest(
     redis: &mut ConnectionManager,
+    http: &reqwest::Client,
+    waha: &crate::config::WahaConfig,
     name: &str,
     phone: &str,
     purpose: &str,
-) -> Result<String> {
+) -> Result<GuestTicket> {
     let name = name.trim();
     if name.is_empty() {
         bail_user!("Nama wajib diisi.");
@@ -65,17 +124,144 @@ pub async fn register_guest(
         phone,
         purpose: purpose.trim().to_string(),
     };
+    let nomor = g.phone.clone();
+    let nama = g.name.clone();
     let json = serde_json::to_string(&g)?;
-    for _ in 0..12 {
-        let code = gen_code();
-        let exists: bool = redis.exists(code_key(&code)).await.unwrap_or(false);
-        if exists {
-            continue;
+
+    // Sudah punya kode yang masih hidup? Pakai yang itu — lihat [`hp_key`].
+    // Isinya tetap DIPERBARUI: nama/keperluan yang baru diketik yang benar.
+    let kode_lama: Option<String> = redis.get(hp_key(&nomor)).await.unwrap_or(None);
+    let (code, kode_baru) = match kode_lama {
+        Some(c) => {
+            let _: () = redis.set_ex(code_key(&c), &json, CODE_TTL).await?;
+            (c, false)
         }
-        let _: () = redis.set_ex(code_key(&code), &json, CODE_TTL).await?;
-        return Ok(code);
+        None => {
+            let mut dibuat = None;
+            for _ in 0..12 {
+                let c = gen_code();
+                // NX: baru dianggap milik kita bila benar-benar belum dipakai.
+                // Versi lama memeriksa EXISTS lalu SET terpisah — dua tamu yang
+                // mendaftar pada detik yang sama bisa sama-sama lolos
+                // pemeriksaan, dan yang kedua menimpa data yang pertama.
+                let ambil: Option<bool> = redis
+                    .set_options(
+                        code_key(&c),
+                        &json,
+                        redis::SetOptions::default()
+                            .conditional_set(redis::ExistenceCheck::NX)
+                            .with_expiration(redis::SetExpiry::EX(CODE_TTL)),
+                    )
+                    .await
+                    .unwrap_or(None);
+                if ambil.is_some() {
+                    dibuat = Some(c);
+                    break;
+                }
+            }
+            let Some(c) = dibuat else {
+                bail_user!("Gagal membuat kode unik, coba lagi.");
+            };
+            (c, true)
+        }
+    };
+    let _: () = redis.set_ex(hp_key(&nomor), &code, CODE_TTL).await?;
+
+    // ── PENGIRIMAN WA ADALAH SYARAT, BUKAN PELENGKAP ─────────────────────────
+    // Kode ini tak pernah tampil di layar, jadi WhatsApp satu-satunya jalannya
+    // sampai. Gagal kirim = tamu tak punya kode, dan itu HARUS jadi galat yang
+    // terlihat — bukan halaman "menunggu mesin" yang tak akan pernah berubah.
+    let terkirim = kirim_kode_wa(redis, http, waha, &nomor, &nama, &code).await;
+    match terkirim {
+        Kirim::Terkirim => {}
+        // Kode lama + baru saja dikirim → tak apa-apa, pesannya sudah ada di
+        // WhatsApp tamu. Yang salah justru mengirim ulang tanpa henti.
+        Kirim::DitahanBatasLaju if !kode_baru => {}
+        Kirim::DitahanBatasLaju => {
+            bail_user!(
+                "Kode untuk nomor ini baru saja dikirim. Periksa WhatsApp Anda, \
+                 atau coba lagi beberapa menit."
+            );
+        }
+        Kirim::Gagal => {
+            // Kode baru yang tak sampai ke siapa pun jangan ditinggalkan hidup
+            // 12 jam — ia hanya menghalangi percobaan berikutnya lewat `hp_key`.
+            if kode_baru {
+                let _: () = redis.del(code_key(&code)).await.unwrap_or(());
+                let _: () = redis.del(hp_key(&nomor)).await.unwrap_or(());
+            }
+            bail_user!(
+                "Kode gagal dikirim ke WhatsApp {}. Pastikan nomornya benar dan \
+                 aktif di WhatsApp, lalu coba lagi.",
+                super::ganti_nomor::samarkan(&nomor)
+            );
+        }
     }
-    bail_user!("Gagal membuat kode unik, coba lagi.");
+
+    let ticket = gen_tiket();
+    let _: () = redis.set_ex(tiket_key(&ticket), &code, CODE_TTL).await?;
+    Ok(GuestTicket {
+        ticket,
+        tujuan: super::ganti_nomor::samarkan(&nomor),
+        kode_baru,
+    })
+}
+
+/// Hasil percobaan kirim WA — tiga keadaan yang perlakuannya berbeda.
+enum Kirim {
+    Terkirim,
+    DitahanBatasLaju,
+    Gagal,
+}
+
+/// Kirim kode check-in ke WhatsApp tamu.
+async fn kirim_kode_wa(
+    redis: &mut ConnectionManager,
+    http: &reqwest::Client,
+    waha: &crate::config::WahaConfig,
+    phone: &str,
+    nama: &str,
+    code: &str,
+) -> Kirim {
+    // Batas laju per NOMOR — lihat [`WA_JEDA_DETIK`] untuk kenapa endpoint
+    // publik ini tak boleh mengirim tanpa rem.
+    let boleh: Option<bool> = redis
+        .set_options(
+            format!("tamu:wa:{phone}"),
+            1i32,
+            redis::SetOptions::default()
+                .conditional_set(redis::ExistenceCheck::NX)
+                .with_expiration(redis::SetExpiry::EX(WA_JEDA_DETIK)),
+        )
+        .await
+        .unwrap_or(None);
+    if boleh.is_none() {
+        tracing::info!("buku tamu: WA ke {phone} ditahan batas laju");
+        return Kirim::DitahanBatasLaju;
+    }
+
+    let pesan = format!(
+        "🕌 *Buku Tamu PPM Al-Faqih Mandiri*\n\nAssalamu'alaikum {nama},\n\
+         Kode check-in Anda: *{code}*\n\n\
+         Ketik kode ini di mesin buku tamu di gerbang, lalu tatap kamera. \
+         Berlaku hari ini."
+    );
+    match crate::service::registration::send_wa_text(http, waha, phone, &pesan).await {
+        Ok(()) => Kirim::Terkirim,
+        Err(e) => {
+            // Tak menggagalkan pendaftaran, tapi juga tak didiamkan: bila WAHA
+            // mati, ini salah satu tempat pertama yang menunjukkannya.
+            tracing::warn!("buku tamu: WA kode gagal ke {phone}: {e:#}");
+            crate::service::telegram::report_background_error(
+                "Buku tamu: WA gagal",
+                format!("Tujuan {phone}: {e:#}"),
+            );
+            // Jatah batas laju dikembalikan: percobaan yang GAGAL tak boleh
+            // menghabiskan jendela 10 menit milik percobaan berikutnya.
+            let _: () = redis.del(format!("tamu:wa:{phone}")).await.unwrap_or(());
+            Kirim::Gagal
+        }
+    }
 }
 
 /// Cari kode → data tamu, lalu HAPUS kode (sekali pakai). None = tak ada/kadaluarsa.
@@ -95,7 +281,13 @@ pub async fn consume_guest(
     let Some(json) = json else {
         return Ok(None);
     };
-    Ok(Some(serde_json::from_str(&json)?))
+    let g: PendingGuest = serde_json::from_str(&json)?;
+    // Lepas juga penanda "nomor ini punya kode aktif". Tanpa ini, tamu yang
+    // datang DUA KALI dalam hari yang sama dikirimi kode yang sudah dipakai
+    // (dan sudah dihapus di atas) — mesin gerbang akan menolaknya, dan tak ada
+    // yang bisa ia lakukan sampai penanda itu kedaluwarsa 12 jam kemudian.
+    let _: () = redis.del(hp_key(&g.phone)).await.unwrap_or(());
+    Ok(Some(g))
 }
 
 /// Tandai kode sukses check-in (untuk polling HP tamu).
@@ -112,9 +304,16 @@ pub async fn mark_done(
 /// Status untuk halaman /tamu: Some = sudah di-check-in mesin (tampil ✅).
 pub async fn check_status(
     redis: &mut ConnectionManager,
-    code: &str,
+    ticket: &str,
 ) -> Result<Option<GuestCheckin>> {
-    let json: Option<String> = redis.get(done_key(code)).await?;
+    // Browser tamu memegang TIKET, bukan kode. Penerjemahannya di sini, di sisi
+    // server — sehingga halaman bisa menunggu konfirmasi mesin tanpa pernah
+    // mengetahui kode yang membuktikan ia pemilik nomornya.
+    let code: Option<String> = redis.get(tiket_key(ticket)).await?;
+    let Some(code) = code else {
+        return Ok(None);
+    };
+    let json: Option<String> = redis.get(done_key(&code)).await?;
     match json {
         Some(j) => Ok(Some(serde_json::from_str(&j)?)),
         None => Ok(None),

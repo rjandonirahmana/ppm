@@ -301,3 +301,32 @@ pub struct GuestCheckin {
     pub name: String,
     pub face_url: String,
 }
+
+/// Hasil pendaftaran tamu di /tamu.
+///
+/// ── KODENYA TIDAK ADA DI SINI, DAN ITU INTINYA ───────────────────────────────
+/// Kode check-in hanya dikirim ke WhatsApp nomor yang diketik tamu — tak pernah
+/// dikembalikan ke browser. Justru itulah yang membuat nomornya TERBUKTI: siapa
+/// pun bisa mengetik nomor orang lain di formulir, tapi hanya pemegang nomor itu
+/// yang menerima kodenya, dan tanpa kode ia tak bisa check-in di gerbang.
+///
+/// Menampilkan kodenya di layar — seperti rancangan pertama buku tamu ini —
+/// membuat isian nomor HP sekadar hiasan: tamu bisa menulis nomor asal-asalan,
+/// atau nomor orang lain, dan tetap masuk. Untuk catatan siapa-masuk-pondok,
+/// nomor yang tak bisa dihubungi sama saja dengan tak ada nomor.
+///
+/// Yang dibawa ke layar hanya `ticket` — pengenal acak untuk MENUNGGU
+/// konfirmasi mesin (polling), bukan untuk check-in. Mengetahuinya tak memberi
+/// kemampuan apa pun di gerbang.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GuestTicket {
+    /// Pengenal acak untuk polling status. BUKAN kode check-in.
+    pub ticket: String,
+    /// Nomor tujuan yang sudah disamarkan (`62812••••890`) — supaya tamu bisa
+    /// memastikan ia tak salah ketik, tanpa layar ikut memajang nomor utuh.
+    pub tujuan: String,
+    /// `false` = kode yang dikirim adalah kode LAMA yang masih berlaku (tamu
+    /// mendaftar dua kali dengan nomor sama), jadi layar bisa mengarahkannya ke
+    /// pesan WhatsApp yang sudah ada alih-alih menyuruhnya menunggu yang baru.
+    pub kode_baru: bool,
+}

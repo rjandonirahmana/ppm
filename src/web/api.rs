@@ -1948,22 +1948,33 @@ pub async fn register_guest_action(
     name: String,
     phone: String,
     purpose: String,
-) -> Result<String, ServerFnError> {
+) -> Result<crate::models::GuestTicket, ServerFnError> {
     let state = app_state().await?;
     let mut redis = state.redis.clone();
-    crate::service::guest::register_guest(&mut redis, &name, &phone, &purpose)
-        .await
-        .map_err(err)
+    crate::service::guest::register_guest(
+        &mut redis,
+        &state.http,
+        &state.waha,
+        &name,
+        &phone,
+        &purpose,
+    )
+    .await
+    .map_err(err)
 }
 
 /// Polling status check-in tamu. Some = mesin sudah konfirmasi (tampil ✅ + wajah).
+///
+/// Parameternya TIKET, bukan kode check-in — lihat `models::GuestTicket`.
+/// Endpoint ini publik (tamu belum punya sesi), jadi apa pun yang diterimanya
+/// harus tak berguna di gerbang.
 #[server(GuestStatus, "/api-fn")]
 pub async fn guest_status_action(
-    code: String,
+    ticket: String,
 ) -> Result<Option<crate::models::GuestCheckin>, ServerFnError> {
     let state = app_state().await?;
     let mut redis = state.redis.clone();
-    crate::service::guest::check_status(&mut redis, &code)
+    crate::service::guest::check_status(&mut redis, &ticket)
         .await
         .map_err(err)
 }
