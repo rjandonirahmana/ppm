@@ -289,23 +289,111 @@ pub fn MobileHeader(
     }
 }
 
-/// Lonceng notifikasi: klik → popover kecil. (Feed notifikasi asli menyusul;
-/// popover jujur menampilkan "belum ada notifikasi".)
+/// Ikon & warna untuk tiap jenis notifikasi.
+///
+/// Ditaruh DI SINI, bukan di `models::notifikasi` yang lebih rapi secara
+/// domain, karena `scripts/fetch-icons.sh` menyusun subset font hanya dari
+/// token yang ditemukannya di `src/web`. Nama ikon yang hidup di luar direktori
+/// itu tak pernah masuk subset, dan ikon yang tak ada di subset TIDAK tampil
+/// sebagai kotak kosong — ia tampil sebagai TULISAN "check_circle" di tengah
+/// daftar. Kerapian domain tak sebanding dengan cara gagal seperti itu.
+///
+/// Menambah baris di sini = jalankan `./scripts/fetch-icons.sh`.
+fn ikon_notif(kind: &str) -> (&'static str, &'static str) {
+    use crate::models::notifikasi::jenis;
+    match kind {
+        jenis::IZIN_DISETUJUI => ("check_circle", "text-tertiary"),
+        jenis::IZIN_DITOLAK => ("cancel", "text-error"),
+        _ => ("mail", "text-primary"),
+    }
+}
+
+/// Lonceng notifikasi: klik → popover berisi feed sungguhan.
+///
+/// Resource-nya TIDAK dibuat di sini melainkan diambil dari konteks (lihat
+/// `web::app::App`): komponen ini dirender dua kali per halaman — versi ponsel
+/// dan versi desktop — dan resource per-komponen berarti dua permintaan untuk
+/// jawaban yang sama.
 #[component]
 pub fn NotifBell() -> impl IntoView {
     let open = RwSignal::new(false);
+    let notif = use_context::<Resource<crate::models::NotifData>>();
+
+    // DUA pembaca untuk sumber yang sama, dan perbedaannya penting.
+    //
+    // `belum` dibaca saat RENDER, jadi ia harus berlangganan — dan karena itu
+    // pula ia WAJIB berada di dalam `<Transition/>`. Membaca resource saat
+    // render di luar Suspense/Transition membuat Leptos memperingatkan
+    // kemungkinan hydration mismatch: server merender dengan data yang belum
+    // ada, klien merender dengan data yang sudah ada, dan kedua pohon DOM itu
+    // tak lagi cocok.
+    //
+    // `belum_kini` dibaca dari PENANGAN PERISTIWA, yang berjalan jauh setelah
+    // render selesai. Di sana berlangganan tak ada gunanya — tak ada yang perlu
+    // dirender ulang karena sebuah klik — dan `get_untracked` menyatakan itu
+    // alih-alih membuat langganan yang menggantung.
+    let belum = move || notif.and_then(|n| n.get()).map(|d| d.belum_dibaca).unwrap_or(0);
+    let belum_kini =
+        move || notif.and_then(|n| n.get_untracked()).map(|d| d.belum_dibaca).unwrap_or(0);
+
+    // Menandai terbaca dilakukan saat lonceng DITUTUP, bukan saat dibuka.
+    //
+    // Kalau ditandai saat dibuka, `refetch` yang menyusul mengembalikan semuanya
+    // sebagai "sudah dibaca" dan sorotan yang membedakan mana yang baru hilang
+    // tepat pada detik orang mulai membacanya — persis informasi yang ia buka
+    // loncengnya untuk mencarinya. Ditunda sampai ditutup, sorotannya bertahan
+    // selama panel terbuka, lalu bersih untuk kunjungan berikutnya.
+    let tandai_semua = move || {
+        let Some(res) = notif else { return };
+        leptos::task::spawn_local(async move {
+            if crate::web::api::tandai_semua_notifikasi().await.is_ok() {
+                res.refetch();
+            }
+        });
+    };
+
+    // Ditutup dari tiga tempat — ikon lonceng, backdrop, tombol silang — dan
+    // ketiganya harus ikut menandai terbaca. Disatukan supaya menambah jalan
+    // keluar keempat tak diam-diam melewatkannya.
+    let tutup = move || {
+        open.set(false);
+        if belum_kini() > 0 {
+            tandai_semua();
+        }
+    };
+
     view! {
         <div class="ppm-bell">
             <button
                 class="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container relative"
-                on:click=move |_| open.update(|o| *o = !*o)
+                on:click=move |_| {
+                    if open.get_untracked() {
+                        tutup();
+                    } else {
+                        open.set(true);
+                        // Isi lonceng diambil sekali saat halaman dimuat; kalau
+                        // ada yang datang sesudah itu, inilah saat yang tepat
+                        // untuk menyusul — orangnya memang sedang bertanya
+                        // "apa yang baru?".
+                        if let Some(res) = notif {
+                            res.refetch();
+                        }
+                    }
+                }
                 aria-label="Notifikasi"
             >
                 <span class="material-symbols-outlined">"notifications"</span>
-                // Titik dulu `absolute top-2 right-2 w-2 h-2` — menggantung
-                // separuh di luar ikon dan menempel pada garis loncengnya.
-                // `.ppm-badge` memberinya cincin sewarna latar sebagai pemisah.
-                <span class="ppm-badge pulse-dot"></span>
+                // Titik HANYA muncul kalau memang ada yang belum dibaca. Dulu ia
+                // menyala permanen, dan penanda yang selalu menyala tak
+                // memberitahu apa-apa — ia hanya melatih orang mengabaikannya.
+                //
+                // `fallback=|| ()` — sebelum datanya ada, TIDAK ADA titik. Itu
+                // jawaban yang benar untuk "ada yang baru?" saat kita belum
+                // tahu: penanda yang menyala lalu padam sendiri lebih buruk
+                // daripada yang terlambat sedetik.
+                <Transition fallback=|| ()>
+                    {move || (belum() > 0).then(|| view! { <span class="ppm-badge pulse-dot"></span> })}
+                </Transition>
             </button>
             {move || {
                 open.get()
@@ -314,7 +402,7 @@ pub fn NotifBell() -> impl IntoView {
                             // Backdrop transparan: klik di luar menutup popover.
                             // z tinggi (55/60) supaya popover PASTI di atas ikon/
                             // elemen lain di header (header sendiri sudah z-40).
-                            <div class="fixed inset-0 z-[55]" on:click=move |_| open.set(false)></div>
+                            <div class="fixed inset-0 z-[55]" on:click=move |_| tutup()></div>
                             // `.ppm-notif-panel` (position:fixed di CSS), BUKAN
                             // `absolute` di dalam lonceng: header memakai
                             // `backdrop-blur` yang membentuk stacking context,
@@ -327,22 +415,140 @@ pub fn NotifBell() -> impl IntoView {
                                     <p class="text-body-md font-bold text-on-background">"Notifikasi"</p>
                                     <button
                                         class="w-7 h-7 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container"
-                                        on:click=move |_| open.set(false)
+                                        on:click=move |_| tutup()
                                     >
                                         <span class="material-symbols-outlined text-lg">"close"</span>
                                     </button>
                                 </div>
-                                <div class="py-6 text-center text-on-surface-variant">
-                                    <span class="material-symbols-outlined text-4xl opacity-60">
-                                        "notifications_off"
-                                    </span>
-                                    <p class="text-body-sm mt-2">"Belum ada notifikasi baru."</p>
-                                </div>
+                                // Isi daftar dibaca DI DALAM Transition — lihat
+                                // catatan di `belum` di atas. Kerangkanya (judul
+                                // + tombol tutup) sengaja di LUAR: ia tak
+                                // bergantung pada data, dan menaruhnya di dalam
+                                // berarti panel yang baru dibuka sempat tampil
+                                // tanpa cara menutupnya.
+                                <Transition fallback=|| {
+                                    view! {
+                                        <p class="py-6 text-center text-body-sm text-on-surface-variant">
+                                            "Memuat…"
+                                        </p>
+                                    }
+                                }>
+                                    {move || {
+                                        let items = notif
+                                            .and_then(|n| n.get())
+                                            .map(|d| d.items)
+                                            .unwrap_or_default();
+                                        if items.is_empty() {
+                                            view! {
+                                                <div class="py-6 text-center text-on-surface-variant">
+                                                    <span class="material-symbols-outlined text-4xl opacity-60">
+                                                        "notifications_off"
+                                                    </span>
+                                                    <p class="text-body-sm mt-2">"Belum ada notifikasi baru."</p>
+                                                </div>
+                                            }
+                                                .into_any()
+                                        } else {
+                                            view! {
+                                                <div class="ppm-notif-list">
+                                                    {items
+                                                        .into_iter()
+                                                        .map(|n| {
+                                                            let (ikon, warna) = ikon_notif(&n.kind);
+                                                            // Tautan kosong tetap dirender sebagai <a> tanpa href
+                                                            // supaya susunannya tak berubah antar-jenis.
+                                                            let href = (!n.link.is_empty()).then_some(n.link.clone());
+                                                            view! {
+                                                                <a
+                                                                    href=href
+                                                                    class="ppm-notif-item"
+                                                                    class:ppm-notif-item--baru=!n.dibaca
+                                                                >
+                                                                    <span class=format!(
+                                                                        "material-symbols-outlined {warna}",
+                                                                    )>{ikon}</span>
+                                                                    <span class="min-w-0">
+                                                                        <span class="ppm-notif-judul">{n.title}</span>
+                                                                        // `white-space: pre-line` di CSS —
+                                                                        // body-nya memang ditulis multi-baris
+                                                                        // (nama, rentang, pengaju).
+                                                                        <span class="ppm-notif-isi">{n.body}</span>
+                                                                        <span class="ppm-notif-waktu">{n.waktu_label}</span>
+                                                                    </span>
+                                                                </a>
+                                                            }
+                                                        })
+                                                        .collect_view()}
+                                                </div>
+                                            }
+                                                .into_any()
+                                        }
+                                    }}
+                                </Transition>
                             </div>
                         }
                     })
             }}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests_notif {
+    use super::*;
+    use crate::models::notifikasi::jenis;
+
+    /// Tiap jenis punya ikon & warnanya sendiri — kalau dua jenis berbagi ikon,
+    /// daftar notifikasi berhenti bisa dipindai sekilas.
+    #[test]
+    fn tiap_jenis_punya_ikon_sendiri() {
+        assert_eq!(ikon_notif(jenis::IZIN_DISETUJUI), ("check_circle", "text-tertiary"));
+        assert_eq!(ikon_notif(jenis::IZIN_DITOLAK), ("cancel", "text-error"));
+        assert_eq!(ikon_notif(jenis::IZIN_BARU), ("mail", "text-primary"));
+    }
+
+    /// Jenis yang belum dikenal — notifikasi lama sesudah jenis baru
+    /// ditambahkan, atau sebaliknya — tetap dapat ikon yang masuk akal, bukan
+    /// baris tanpa ikon sama sekali.
+    #[test]
+    fn jenis_tak_dikenal_jatuh_ke_ikon_bawaan() {
+        assert_eq!(ikon_notif("jenis_masa_depan"), ("mail", "text-primary"));
+        assert_eq!(ikon_notif(""), ("mail", "text-primary"));
+    }
+
+    /// Nama ikon HARUS berupa token Material Symbols yang bisa ditemukan
+    /// `scripts/fetch-icons.sh` — huruf kecil, angka, garis bawah. Nama dengan
+    /// spasi atau huruf besar tak pernah masuk subset, dan ikonnya tampil
+    /// sebagai TULISAN di tengah daftar.
+    #[test]
+    fn nama_ikon_berbentuk_token_yang_terpindai() {
+        for kind in [jenis::IZIN_BARU, jenis::IZIN_DISETUJUI, jenis::IZIN_DITOLAK, "lain"] {
+            let (ikon, _) = ikon_notif(kind);
+            assert!(!ikon.is_empty(), "ikon kosong untuk {kind}");
+            assert!(
+                ikon.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "`{ikon}` bukan token ikon yang sah — lihat scripts/fetch-icons.sh"
+            );
+        }
+    }
+
+    /// Pemetaan ikon HARUS hidup di `src/web`, karena hanya direktori itu yang
+    /// dipindai `scripts/fetch-icons.sh` (lihat catatan di `ikon_notif`).
+    /// Tes ini ada di berkas yang sama dengan fungsinya — memindahkan fungsinya
+    /// keluar dari `src/web` akan membawa tes ini ikut keluar, dan itu satu-
+    /// satunya cara ia bisa gagal. Yang dijaga di sini: nama ikonnya benar-benar
+    /// muncul sebagai literal di berkas ini, sehingga ekstraktor menemukannya.
+    #[test]
+    fn nama_ikon_ada_sebagai_literal_di_berkas_ini() {
+        let sumber = include_str!("components.rs");
+        for kind in [jenis::IZIN_BARU, jenis::IZIN_DISETUJUI, jenis::IZIN_DITOLAK] {
+            let (ikon, _) = ikon_notif(kind);
+            assert!(
+                sumber.contains(&format!("\"{ikon}\"")),
+                "`{ikon}` tak muncul sebagai literal di src/web/components.rs — \
+                 scripts/fetch-icons.sh tak akan menemukannya dan ikonnya jadi TULISAN"
+            );
+        }
     }
 }
 

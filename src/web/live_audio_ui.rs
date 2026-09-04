@@ -242,9 +242,39 @@ mod wasm {
         _on_data: Closure<dyn FnMut(BlobEvent)>,
     }
 
+    /// Berapa detik audio yang SUDAH LEWAT tetap disimpan di buffer.
+    ///
+    /// MediaSource tak pernah membuang apa pun sendiri: tiap potongan yang
+    /// di-`append` menumpuk di memori sampai tab-nya ditutup. Untuk pengajian
+    /// 90 menit itu berarti seluruh 90 menit audio ikut dibawa — puluhan MB di
+    /// ponsel yang RAM-nya paling sedikit di ruangan. Ujungnya bukan sekadar
+    /// boros: begitu kuota buffer peramban penuh, `append` gagal dan siarannya
+    /// MATI di tengah dengan pesan galat umum.
+    ///
+    /// 60 detik dipilih supaya perilaku yang sah tetap utuh — pendengar yang
+    /// tertinggal karena jaringan tersendat masih punya seluruh menit terakhir
+    /// untuk mengejar (lompatan "terlalu jauh" di bawah dipicu pada 25 detik,
+    /// jadi ambang ini di atasnya dengan jarak aman).
+    const SIMPAN_DETIK: f64 = 60.0;
+
+    /// Sumber daya satu sesi mendengarkan yang harus DILEPAS saat berhenti.
+    ///
+    /// Dulu yang disimpan hanya benderanya. Akibatnya `stop_listen` cuma
+    /// menyuruh loop berhenti, sementara elemen audio tetap memegang `src`
+    /// blob-nya, dan blob URL itu sendiri tak pernah dicabut — dan blob URL
+    /// yang masih terdaftar MENAHAN MediaSource beserta seluruh isi buffernya
+    /// tetap hidup. Satu sesi mendengarkan karena itu tak pernah benar-benar
+    /// dilepas; menyalakan dan mematikan siaran sepuluh kali meninggalkan
+    /// sepuluh salinan di memori.
+    struct ListenHandle {
+        alive: Rc<Cell<bool>>,
+        url: String,
+        audio: HtmlAudioElement,
+    }
+
     thread_local! {
         static BROADCAST: RefCell<Option<BroadcastHandle>> = const { RefCell::new(None) };
-        static LISTENER: RefCell<Option<Rc<Cell<bool>>>> = const { RefCell::new(None) };
+        static LISTENER: RefCell<Option<ListenHandle>> = const { RefCell::new(None) };
     }
 
     // ── Guru: siaran ─────────────────────────────────────────────────────────
@@ -444,21 +474,38 @@ mod wasm {
         let _ = audio.play();
 
         let alive = Rc::new(Cell::new(true));
-        LISTENER.with(|l| *l.borrow_mut() = Some(alive.clone()));
+        LISTENER.with(|l| {
+            *l.borrow_mut() =
+                Some(ListenHandle { alive: alive.clone(), url, audio: audio.clone() })
+        });
         let _ = on.try_set(true);
         let _ = status.try_set("Menyambungkan…".into());
         spawn_local(async move {
             if let Err(e) = listen_loop(session_id, audio, source, alive, status).await {
                 let _ = status.try_set(e);
             }
+            // Loop berhenti karena galat, bukan karena `stop_listen` — lepaskan
+            // sumber dayanya di sini juga. Tanpa ini, sesi yang mati sendiri
+            // (siaran di-restart guru, codec tak didukung) meninggalkan blob
+            // URL yang sama seperti sebelumnya.
+            stop_listen();
         });
     }
 
     pub fn stop_listen() {
         LISTENER.with(|l| {
-            if let Some(alive) = l.borrow_mut().take() {
-                alive.set(false);
-            }
+            let Some(h) = l.borrow_mut().take() else { return };
+            h.alive.set(false);
+
+            // Urutannya penting. Elemen audio harus dilepas dari blob-nya LEBIH
+            // DULU: mencabut URL sementara ia masih dipakai sebagai `src` membuat
+            // sebagian peramban menahan sumbernya sampai elemen itu sendiri
+            // dibuang, dan di situlah bocornya.
+            h.audio.pause().ok();
+            h.audio.remove_attribute("src").ok();
+            h.audio.load();
+
+            let _ = web_sys::Url::revoke_object_url(&h.url);
         });
     }
 
@@ -506,7 +553,16 @@ mod wasm {
                         break;
                     }
                     if sb.append_buffer_with_u8_array(&mut bytes).is_err() {
-                        return Err("Gagal memutar audio siaran".into());
+                        // Nyaris selalu QuotaExceededError: buffernya penuh.
+                        // Dulu ini langsung mengakhiri siaran, dan dari sisi
+                        // pendengar pengajian putus di tengah tanpa sebab yang
+                        // bisa dimengerti. Kosongkan paksa apa yang sudah lewat,
+                        // lalu coba SEKALI lagi — kalau tetap gagal, barulah itu
+                        // galat sungguhan.
+                        pangkas(&sb, &audio, 5.0).await;
+                        if sb.append_buffer_with_u8_array(&mut bytes).is_err() {
+                            return Err("Gagal memutar audio siaran".into());
+                        }
                     }
                     from = next;
                     if !playing {
@@ -524,6 +580,10 @@ mod wasm {
                             }
                         }
                     }
+                    // Buang audio yang sudah lewat sebelum ia menumpuk. Lihat
+                    // catatan di `SIMPAN_DETIK`.
+                    pangkas(&sb, &audio, SIMPAN_DETIK).await;
+
                     // Potongan penuh (1MB) = sedang mengejar → langsung lanjut.
                     TimeoutFuture::new(if got >= 900_000 { 200 } else { 2_500 }).await;
                 }
@@ -540,6 +600,42 @@ mod wasm {
             }
         }
         Ok(())
+    }
+
+    /// Buang audio yang posisinya lebih dari `simpan` detik di belakang titik
+    /// putar sekarang.
+    ///
+    /// Best-effort dengan sengaja: `remove` gagal bila buffernya sedang sibuk
+    /// atau rentangnya kosong, dan tak satu pun dari itu perlu menghentikan
+    /// siaran. Yang penting ia berhasil CUKUP SERING — dan ia dipanggil tiap
+    /// potongan, jadi satu kegagalan tertutup oleh percobaan empat detik lagi.
+    ///
+    /// Menunggu `updating()` selesai setelah `remove` itu wajib: `append`
+    /// berikutnya akan gagal bila buffernya masih sibuk memproses penghapusan.
+    async fn pangkas(sb: &web_sys::SourceBuffer, audio: &HtmlAudioElement, simpan: f64) {
+        let batas = audio.current_time() - simpan;
+        if batas <= 0.0 {
+            return;
+        }
+        // Hanya buang yang benar-benar ada di buffer; `remove` di rentang yang
+        // tak terisi melempar galat, dan awal buffer belum tentu 0 karena
+        // pemangkasan sebelumnya sudah menggesernya.
+        let buffered = audio.buffered();
+        if buffered.length() == 0 {
+            return;
+        }
+        let Ok(awal) = buffered.start(0) else { return };
+        if batas <= awal {
+            return;
+        }
+        while sb.updating() {
+            TimeoutFuture::new(40).await;
+        }
+        if sb.remove(awal, batas).is_ok() {
+            while sb.updating() {
+                TimeoutFuture::new(40).await;
+            }
+        }
     }
 
     enum Fetched {

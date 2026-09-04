@@ -139,6 +139,43 @@ html, body { overflow-x: clip; }
 }
 @media (prefers-reduced-motion: reduce) { .ppm-notif-panel { animation: none } }
 
+/* ── Isi lonceng ──────────────────────────────────────────────────────────
+   Daftar notifikasi di dalam `.ppm-notif-panel`. Panel yang menggulir, bukan
+   daftarnya — jadi tak ada dua area gulir bersarang yang saling merebut
+   sentuhan di ponsel. */
+.ppm-notif-list { display: flex; flex-direction: column; gap: .25rem; }
+
+.ppm-notif-item {
+  display: flex; gap: .75rem; align-items: flex-start;
+  padding: .625rem .5rem; border-radius: .75rem;
+  color: inherit; text-decoration: none;
+  transition: background-color .15s;
+}
+.ppm-notif-item:hover { background: #f1f2f7; }
+.ppm-notif-item:active { background: #e8e9f0; }
+
+/* Yang belum dibaca ditandai LATAR, bukan huruf tebal: seluruh judul di daftar
+   ini sudah tebal, jadi menebalkannya lagi tak membedakan apa pun. */
+.ppm-notif-item--baru { background: rgba(0, 53, 39, .06); }
+.ppm-notif-item--baru:hover { background: rgba(0, 53, 39, .1); }
+
+.ppm-notif-judul {
+  display: block; font-size: .875rem; font-weight: 700; color: #1a1c1e;
+}
+.ppm-notif-isi {
+  display: block; font-size: .8125rem; color: #43474e; margin-top: .125rem;
+  /* Isinya ditulis multi-baris di server (nama, rentang, pengaju) — hormati
+     baris barunya alih-alih meleburnya jadi satu kalimat panjang. */
+  white-space: pre-line;
+}
+.ppm-notif-waktu {
+  display: block; font-size: .6875rem; color: #73777f; margin-top: .25rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ppm-notif-item { transition: none; }
+}
+
 /* Ruang napas di dasar konten: bilah bawah (nav ±64px + safe-area) menutupi
    isi terakhir halaman — di form izin, field tanggal terakhir tertutup nav. */
 .ppm-content { padding-bottom: calc(5.5rem + env(safe-area-inset-bottom)); }

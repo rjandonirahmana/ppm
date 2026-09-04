@@ -161,6 +161,36 @@ fn setiap_endpoint_terjaga_kecuali_yang_sengaja_publik() {
     assert!(basi.is_empty(), "sudah dijaga tapi masih terdaftar PUBLIK: {basi:?}");
 }
 
+/// Notifikasi dijaga LOGIN, bukan PERAN — dan itu bukan kelonggaran.
+///
+/// Yang menentukan seseorang boleh melihat sebuah notifikasi bukanlah perannya,
+/// melainkan apakah notifikasi itu ditujukan kepadanya; penyaringnya ada di
+/// query (`WHERE user_id = $1`, lihat `repository::notifications`). Memasang
+/// `require_roles` di sini justru MERUSAK fiturnya: santri adalah penerima
+/// terbesar notifikasi keputusan izin, dan daftar peran mana pun yang ditulis
+/// orang berikutnya hampir pasti tak akan memuatnya.
+///
+/// Dikunci sebagai tes karena kesalahannya sunyi: endpoint yang tiba-tiba
+/// menuntut peran tidak melempar galat apa pun, loncengnya hanya berhenti
+/// berisi untuk sebagian orang.
+#[test]
+fn notifikasi_dijaga_login_bukan_peran() {
+    let eps = endpoints();
+    for nama in ["notifikasi_data", "tandai_notifikasi", "tandai_semua_notifikasi"] {
+        let e = cari(&eps, nama);
+        assert_eq!(
+            e.penjaga.as_deref(),
+            Some("login"),
+            "`{nama}` harus dijaga require_login, bukan {:?} — lihat catatan di atas",
+            e.penjaga
+        );
+        assert!(
+            e.peran.is_empty(),
+            "`{nama}` tak boleh menyaring peran; kepemilikan ditegakkan di query"
+        );
+    }
+}
+
 /// SPEK A — perizinan bukan urusan ketua/admin.
 ///
 /// Izin diputuskan orang yang mengenal santrinya, yaitu wali kelas KBM-nya.

@@ -60,6 +60,7 @@ pub mod ics;
 pub mod kelas;
 pub mod laporan;
 pub mod materials;
+pub mod notifications;
 pub mod parent;
 pub mod permits;
 pub mod recording;

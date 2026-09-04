@@ -671,6 +671,12 @@ pub async fn submit_permit_action(
         &state.http, &state.waha, &state.pool, sess.id, &splits, false,
     )
     .await;
+    // Notifikasi DI DALAM aplikasi — melengkapi WA di atas, bukan
+    // menggantikannya: WA membangunkan wali kelas, ini yang membuat admin ikut
+    // melihat dan riwayatnya bisa dibaca ulang di lonceng. Best-effort; lihat
+    // catatan di `service::notifications`.
+    let ids: Vec<i64> = splits.iter().map(|s| s.permit_id).collect();
+    crate::service::notifications::izin_diajukan(&state.pool, &ids).await;
     Ok(())
 }
 
@@ -701,6 +707,40 @@ pub async fn permit_queue_data() -> Result<PermitQueueData, ServerFnError> {
         .map_err(err)
 }
 
+// ── Notifikasi dalam aplikasi ────────────────────────────────────────────────
+
+/// Isi lonceng: 30 notifikasi terbaru + jumlah yang belum dibaca.
+///
+/// Terbuka untuk SIAPA PUN yang sudah masuk, tanpa penyaring peran. Itu bukan
+/// kelonggaran: penyaringnya ada di query (`WHERE user_id = $1`), dan yang
+/// menentukan seseorang boleh melihat sebuah notifikasi bukanlah perannya
+/// melainkan apakah notifikasi itu ditujukan kepadanya.
+#[server(GetNotifikasi, "/api-fn")]
+pub async fn notifikasi_data() -> Result<crate::models::NotifData, ServerFnError> {
+    let sess = require_login().await?;
+    let state = app_state().await?;
+    crate::service::notifications::feed(&state.pool, sess.id).await.map_err(err)
+}
+
+/// Tandai satu notifikasi terbaca.
+#[server(TandaiNotifikasi, "/api-fn")]
+pub async fn tandai_notifikasi(id: i64) -> Result<(), ServerFnError> {
+    let sess = require_login().await?;
+    let state = app_state().await?;
+    // Kepemilikan ditegakkan di WHERE query, bukan di sini — lihat
+    // `repository::notifications::mark_read`.
+    crate::repository::notif_mark_read(&state.pool, sess.id, id).await.map_err(err)
+}
+
+/// Tandai semua terbaca — tombol "tandai semua" di lonceng.
+#[server(TandaiSemuaNotifikasi, "/api-fn")]
+pub async fn tandai_semua_notifikasi() -> Result<(), ServerFnError> {
+    let sess = require_login().await?;
+    let state = app_state().await?;
+    crate::repository::notif_mark_all_read(&state.pool, sess.id).await.map_err(err)?;
+    Ok(())
+}
+
 /// Setujui/tolak izin — tahapnya ditentukan hubungan pemutus dengan kelas
 /// acuan izin itu, bukan oleh layar yang memanggilnya.
 #[server(DecidePermitAction, "/api-fn")]
@@ -715,7 +755,11 @@ pub async fn decide_permit_action(permit_id: i64, approve: bool) -> Result<(), S
     let state = app_state().await?;
     crate::service::permits::decide_permit(&state.pool, permit_id, approve, sess.id)
         .await
-        .map_err(err)
+        .map_err(err)?;
+    // SESUDAH keputusannya tercatat, tak sebelumnya: santri tak boleh menerima
+    // kabar tentang keputusan yang ternyata gagal disimpan.
+    crate::service::notifications::izin_diputuskan(&state.pool, permit_id, approve).await;
+    Ok(())
 }
 
 /// Reset saldo poin semua santri ke 300 (awal semester, admin/ketua). Return
@@ -1068,6 +1112,8 @@ pub async fn submit_child_permit_action(
         &state.http, &state.waha, &state.pool, child_id, &splits, true,
     )
     .await;
+    let ids: Vec<i64> = splits.iter().map(|s| s.permit_id).collect();
+    crate::service::notifications::izin_diajukan(&state.pool, &ids).await;
     Ok(())
 }
 
@@ -2121,7 +2167,9 @@ pub async fn delete_bill_action(bill_id: i64) -> Result<(), ServerFnError> {
 pub async fn my_bills_data() -> Result<Vec<crate::models::BillItem>, ServerFnError> {
     let sess = require_roles(&["santri", "santri_finance"]).await?;
     let state = app_state().await?;
-    crate::repository::list_for_user(&state.pool, sess.id).await.map_err(err)
+    // Modul dieja lengkap: `repository` memakai glob re-export, dan nama
+    // sepolos `list_for_user` mudah bertabrakan dengan domain lain di sana.
+    crate::repository::finance::list_for_user(&state.pool, sess.id).await.map_err(err)
 }
 
 // ── Pengajuan pembayaran & verifikasinya (migrasi 75) ────────────────────────

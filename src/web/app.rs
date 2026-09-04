@@ -93,12 +93,39 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
     el.setAttribute('data-counted','1');
     var target=parseInt(el.getAttribute('data-count'),10);
     if(isNaN(target)||reduce){ return; }
+    /* ── JANGAN PERNAH MENULIS textContent DI ELEMEN MILIK LEPTOS ──────────
+       `el.textContent = x` MEMBUANG seluruh anak simpul lalu memasang simpul
+       teks BARU. Catatan panjang di bawah sudah menyebut bahayanya saat
+       hidrasi — tapi bahayanya tidak berhenti di situ, dan itu yang terlewat.
+
+       `start()` memasang MutationObserver pada document.body. Navigasi SPA
+       Leptos memicunya, `scan()` menemukan [data-count] yang baru muncul, dan
+       countUp berjalan LAGI — kali ini jauh sesudah hidrasi, jadi penjagaan
+       "hanya panggil dari Rust" tak menolong sama sekali.
+
+       Yang dirusaknya: [data-count] selalu berisi angka dinamis dari Leptos
+       (profil.rs, kelas.rs, ortu_riwayat.rs). Simpul teks yang dibuang itu
+       PERSIS simpul yang dipegang Leptos sebagai jangkar untuk elemen itu.
+       Sesudah dibuang, jangkarnya menunjuk simpul yang tak lagi ada di
+       dokumen — dan setiap penulisan berikutnya, termasuk pemasangan view
+       rute baru yang memakai jangkar itu, menulis ke luar dokumen. Layarnya
+       diam, URL-nya sudah berganti, dan hanya muat ulang yang memulihkan.
+
+       `tn.data = …` mengubah ISI simpul teks yang sudah ada, di tempat. Tak
+       ada simpul yang lahir atau mati, jadi semua jangkar Leptos tetap sah.
+
+       Bila isinya ternyata bukan satu simpul teks tunggal, animasinya
+       DILEWATI: angka tujuannya sudah tertulis benar dari SSR, jadi yang
+       hilang cuma animasi — jauh lebih murah daripada menebak-nebak struktur
+       milik orang lain lalu merusaknya. */
+    var tn=el.firstChild;
+    if(!tn||tn.nodeType!==3||tn!==el.lastChild) return;
     var dur=700, t0=null;
     function step(t){
       if(!t0) t0=t;
       var p=Math.min((t-t0)/dur,1);
       p=1-Math.pow(1-p,3); /* ease-out */
-      el.textContent=Math.round(target*p);
+      tn.data=String(p<1?Math.round(target*p):target);
       if(p<1) requestAnimationFrame(step);
     }
     requestAnimationFrame(step);
@@ -160,7 +187,11 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
      baru hidrasi selesai. Persis balapan yang hendak dicegah, dan penjelasan
      kenapa "kadang tak bisa diklik" muncul hilang-timbul tanpa pola.
 
-     Sekarang: count-up HANYA dari Rust, tanpa batas waktu apa pun. Yang
+     Sekarang: count-up HANYA dari Rust, tanpa batas waktu apa pun. Itu
+     menutup balapan SAAT HIDRASI, tapi TIDAK menutup pemanggilan ulang lewat
+     MutationObserver pada setiap navigasi SPA — penjagaan untuk yang itu ada
+     di dalam `countUp` sendiri (mutasi simpul teks di tempat, bukan
+     `textContent`). Yang
      hilang bila hidrasi tak pernah datang cuma animasinya — angka tujuannya
      sudah tertulis sebagai teks di HTML server, jadi pembaca tetap melihat
      angka yang benar. Yang tak boleh hilang (reveal) punya jalur cadangannya
@@ -228,6 +259,24 @@ pub fn App() -> impl IntoView {
     // (key `()`), jadi tak refetch saat pindah halaman → navbar tak berubah.
     let session = Resource::new_blocking(|| (), |_| async move { get_session().await.ok().flatten() });
     provide_context(session);
+
+    // Notifikasi GLOBAL — disediakan DI SINI, bukan di dalam `<NotifBell/>`.
+    //
+    // Loncengnya dirender DUA KALI di tiap halaman (satu versi ponsel, satu
+    // versi desktop; lihat `components::PageHeader`). Resource yang lahir di
+    // dalam komponennya berarti dua resource, dua permintaan jaringan, dan dua
+    // query database untuk jawaban yang sama persis — di setiap pemuatan
+    // halaman, oleh setiap orang yang sedang masuk. Satu di sini, dibagi lewat
+    // konteks, membuatnya satu.
+    //
+    // `Resource::new` (bukan `new_blocking`): lonceng bukan isi halaman. Menahan
+    // HTML pertama demi menghitung notifikasi berarti memperlambat SETIAP
+    // halaman demi hiasan di pojok kanan atas.
+    let notif = Resource::new(
+        || (),
+        |_| async move { crate::web::api::notifikasi_data().await.unwrap_or_default() },
+    );
+    provide_context(notif);
 
     // Jejak halaman yang sudah dilalui, untuk tombol kembali (lihat
     // `components::RiwayatNav`). Disediakan DI SINI — konteks hanya menurun ke

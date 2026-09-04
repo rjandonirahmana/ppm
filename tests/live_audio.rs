@@ -48,7 +48,16 @@ async fn alur_siaran_chunk_data_download() {
     // uji satu binary secara paralel, dan `RECORDINGS_DIR` dibaca handler dari
     // env global. Kalau perlu uji kedua, buat berkas tests/ baru.
     let dir = std::env::temp_dir().join(format!("ppm-rec-test-{}", std::process::id()));
-    std::env::set_var("RECORDINGS_DIR", &dir);
+    // SAFETY: edisi 2024 menjadikan `set_var` unsafe karena ia mengubah keadaan
+    // global proses sementara pustaka C lain bisa membaca `environ` dari thread
+    // lain tanpa penguncian. Tiga syarat di atas — satu binary, satu uji, diset
+    // sebelum thread lain ada — persis yang membuat balapan itu mustahil di
+    // sini. Blok `unsafe` ini menuliskannya, bukan melonggarkannya: kalau uji
+    // kedua ditambahkan ke berkas ini, syaratnya batal dan blok ini menjadi
+    // salah, bukan sekadar berisik.
+    unsafe {
+        std::env::set_var("RECORDINGS_DIR", &dir);
+    }
 
     // Pool valid secara struktur tapi menunjuk port mati → tiap akses DB gagal
     // cepat; handler harus tetap berfungsi (kolom rekaman diisi best-effort).
