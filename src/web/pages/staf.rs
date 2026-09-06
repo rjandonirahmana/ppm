@@ -155,23 +155,41 @@ fn StafBody(d: StafHome) -> impl IntoView {
                         <p class="text-2xl font-bold text-on-background mt-3">{live.len()}</p>
                         <p class="text-body-sm text-on-surface-variant">"Sesi Hari Ini"</p>
                     </div>
-                    // Kartu ini dulu TAUTAN ke /izin-staf. Sejak izin santri jadi
-                    // wewenang pamong & wali kelas saja, admin yang mengkliknya
-                    // hanya menemui halaman tanpa isi. Kini sekadar RINGKASAN —
-                    // tak bisa diklik, dan angkanya memakai predikat yang sama
-                    // dengan antrean supaya tak lagi bercerita beda.
-                    <div class="col-span-2 md:col-span-1 bg-surface-container rounded-2xl p-4">
+                    // Menuju /izin-aktif, BUKAN /izin-staf.
+                    //
+                    // /izin-staf adalah antrean KEPUTUSAN dan sengaja tertutup
+                    // untuk admin & ketua (spek A): dulu kartu ini menunjuk ke
+                    // sana, dan yang mengkliknya hanya menemui halaman kosong.
+                    // Kartunya lalu dimatikan sama sekali — yang menyelesaikan
+                    // halaman kosongnya, tapi meninggalkan angka yang tak bisa
+                    // ditelusuri sama sekali.
+                    //
+                    // /izin-aktif memuat keduanya: yang MENUNGGU keputusan
+                    // (bagian baru, tanpa tombol) dan yang SEDANG berlaku hari
+                    // ini. Itu yang sebenarnya dicari pengawas saat melihat
+                    // angka ini — bukan tombol setuju, melainkan "yang mana,
+                    // dan sudah berapa lama menggantung".
+                    <a
+                        href="/izin-aktif"
+                        class="col-span-2 md:col-span-1 bg-surface-container rounded-2xl p-4 press"
+                    >
                         <div class="flex items-center justify-between h-full">
                             <div>
                                 <p class="text-body-sm text-on-surface-variant">"Permohonan Izin"</p>
                                 <p class="text-xl font-bold text-on-background">{format!("{izin_pending} Menunggu")}</p>
+                                // "pamong" DIBUANG: perannya sudah tak ada sejak
+                                // migrasi 84, dan menyebut peran yang tak lagi
+                                // ada membuat pembacanya mencari orang yang
+                                // mustahil ditemukan. Kalimatnya juga menjawab
+                                // sekalian kenapa kartu ini tak bisa diklik —
+                                // admin & ketua memang hanya menonton di sini.
                                 <p class="text-[10px] text-on-surface-variant mt-0.5">
-                                    "Diputuskan pamong & wali kelas"
+                                    "Diputuskan wali kelas — ketuk untuk melihat"
                                 </p>
                             </div>
                             <span class="material-symbols-outlined text-on-surface-variant">"pending_actions"</span>
                         </div>
-                    </div>
+                    </a>
                 </div>
 
                 // ── Hero: Kehadiran Hari Ini (kartu gradien mockup) ──────

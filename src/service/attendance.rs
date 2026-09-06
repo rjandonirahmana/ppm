@@ -342,9 +342,13 @@ pub async fn correct_attendance(
         bail_user!("Status koreksi tidak valid.");
     }
     if !repo::correct_attendance(pool, att_id, new_status, actor_id).await? {
+        // "pamong" DIBUANG — perannya tak ada lagi sejak migrasi 84. Pesan
+        // galat yang menyebut peran yang tak pernah bisa ditemui membuat
+        // pembacanya mencari orang yang tak ada, alih-alih menghubungi wali
+        // kelasnya.
         bail_user!(
-            "Tidak bisa dikoreksi: statusnya sudah sama, atau Anda bukan guru/pamong \
-             yang bertugas di sesi ini."
+            "Tidak bisa dikoreksi: statusnya sudah sama, atau Anda bukan guru \
+             yang bertugas di sesi ini maupun wali kelasnya."
         );
     }
     Ok(())

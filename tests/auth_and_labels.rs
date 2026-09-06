@@ -350,9 +350,19 @@ fn undangan_peran_berkunci_sekali_pakai() {
         reg.contains("if SEKALI_PAKAI_ROLES.contains(&role) { 1 } else { 1000 }"),
         "kuota tak lagi dipaksa 1 untuk peran berkunci"
     );
-    for r in ["dewan_guru_finance", "dewan_guru_absensi"] {
-        let blok = reg.split("SEKALI_PAKAI_ROLES: &[&str] = &[").nth(1).expect("daftar");
-        let blok = &blok[..blok.find("];").unwrap_or(blok.len())];
+    // Dipotong dari NAMA konstantanya, bukan dari tanda tangan lengkapnya.
+    //
+    // Versi pertama mencari `"SEKALI_PAKAI_ROLES: &[&str] = &["` sebagai satu
+    // baris utuh — dan pecah begitu daftarnya bertambah panjang sehingga
+    // rustfmt memindahkan `&[` ke baris berikutnya. Uji yang gagal karena
+    // PEMFORMATAN, bukan karena aturannya berubah, adalah uji yang lama-lama
+    // dimatikan orang.
+    let blok = reg
+        .split("pub const SEKALI_PAKAI_ROLES")
+        .nth(1)
+        .expect("SEKALI_PAKAI_ROLES tak ditemukan");
+    let blok = &blok[..blok.find("];").unwrap_or(blok.len())];
+    for r in TUGAS_TAMBAHAN {
         assert!(blok.contains(r), "{r} harus sekali pakai");
     }
 }

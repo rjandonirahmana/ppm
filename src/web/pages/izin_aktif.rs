@@ -17,7 +17,7 @@ use leptos::prelude::*;
 use leptos_meta::Title;
 
 use crate::models::SedangIzinItem;
-use crate::web::api::sedang_izin_data;
+use crate::web::api::{izin_menunggu_data, sedang_izin_data};
 use crate::web::components::{
     kartu_grid, DeviceFrame, EmptyState, FetchError, MobileHeader, Skeleton,
 };
@@ -25,6 +25,10 @@ use crate::web::components::{
 #[component]
 pub fn IzinAktifPage() -> impl IntoView {
     let data = Resource::new(|| (), |_| async move { sedang_izin_data().await });
+    // Antrean yang MENUNGGU keputusan — bacaan, tanpa tombol setuju/tolak.
+    // Angkanya sudah lama tampil di beranda staf ("N Menunggu") tanpa satu pun
+    // cara melihat isinya; di sinilah isinya.
+    let menunggu = Resource::new(|| (), |_| async move { izin_menunggu_data().await });
 
     crate::web::components::guard_sesi(data);
 
@@ -44,6 +48,74 @@ pub fn IzinAktifPage() -> impl IntoView {
                 />
 
                 <div class="px-5 pt-5 space-y-4 stagger">
+                    // ── Menunggu keputusan ───────────────────────────────────
+                    //
+                    // TANPA tombol setuju/tolak, dan itu bukan kelalaian:
+                    // perizinan diputuskan wali kelas KBM santrinya — orang yang
+                    // mengenal santrinya. Yang dijawab bagian ini pertanyaan
+                    // lain, yang selama ini tak terjawab di mana pun: adakah
+                    // pengajuan yang menggantung, dan sejak kapan.
+                    <Transition fallback=|| ()>
+                        {move || {
+                            let daftar = menunggu.get().and_then(|r| r.ok()).unwrap_or_default();
+                            (!daftar.is_empty())
+                                .then(|| {
+                                    let n = daftar.len();
+                                    view! {
+                                        <div class="ppm-card p-4 space-y-3">
+                                            <div class="flex items-center gap-2">
+                                                <span class="material-symbols-outlined text-warning">
+                                                    "pending_actions"
+                                                </span>
+                                                <p class="text-body-md font-bold text-on-background">
+                                                    {format!("{n} Menunggu Keputusan")}
+                                                </p>
+                                            </div>
+                                            <p class="text-body-sm text-on-surface-variant">
+                                                "Diputuskan wali kelas KBM masing-masing santri. Daftar ini untuk memantau yang menggantung — bukan untuk memutuskan."
+                                            </p>
+                                            <div class="space-y-2">
+                                                {daftar
+                                                    .into_iter()
+                                                    .map(|p| {
+                                                        let meta = format!(
+                                                            "{} · {} · {}",
+                                                            p.nis,
+                                                            p.class_name,
+                                                            p.kind_label,
+                                                        );
+                                                        view! {
+                                                            <div class="border-t border-outline-variant/40 pt-2">
+                                                                <div class="flex items-start justify-between gap-2">
+                                                                    <div class="min-w-0">
+                                                                        <p class="text-body-sm font-bold text-on-background truncate">
+                                                                            {p.student_name}
+                                                                        </p>
+                                                                        <p class="text-[11px] text-on-surface-variant truncate">
+                                                                            {meta}
+                                                                        </p>
+                                                                    </div>
+                                                                    // Sejak kapan ia menggantung — satu-satunya
+                                                                    // angka yang menentukan perlu tidaknya
+                                                                    // pengawas menegur seseorang.
+                                                                    <span class="text-[11px] text-on-surface-variant shrink-0">
+                                                                        {p.when_label}
+                                                                    </span>
+                                                                </div>
+                                                                <p class="text-[11px] text-on-surface-variant mt-0.5">
+                                                                    {p.range_label}
+                                                                </p>
+                                                            </div>
+                                                        }
+                                                    })
+                                                    .collect_view()}
+                                            </div>
+                                        </div>
+                                    }
+                                })
+                        }}
+                    </Transition>
+
                     <input
                         type="search"
                         class="w-full bg-surface-container border-0 rounded-xl px-4 py-3 text-body-sm text-on-surface md:max-w-md"

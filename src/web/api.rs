@@ -680,6 +680,22 @@ pub async fn submit_permit_action(
     Ok(())
 }
 
+/// Izin yang MENUNGGU keputusan — BACAAN untuk pengawas.
+///
+/// Sengaja terpisah dari `permit_queue_data`, dan daftar perannya justru
+/// KEBALIKANNYA: yang di sana ditutup (admin, ketua) di sini dibuka, karena
+/// yang dilakukan di sini menonton, bukan memutuskan. Tak ada server fn
+/// keputusan yang menerima peran ini — lihat `decide_permit_action`.
+///
+/// Dewan guru ikut: ia melihat antrean kelasnya sendiri di /izin-staf, tapi
+/// tak punya cara melihat apakah ada izin pesantren yang menggantung.
+#[server(GetIzinMenunggu, "/api-fn")]
+pub async fn izin_menunggu_data() -> Result<Vec<crate::models::PermitReviewItem>, ServerFnError> {
+    require_roles(&["admin", "ketua", "dewan_guru"]).await?;
+    let state = app_state().await?;
+    crate::service::permits::izin_menunggu(&state.pool).await.map_err(err)
+}
+
 /// Santri yang SEDANG izin/sakit hari ini — pantauan /izin-aktif.
 ///
 /// Berbeda dari antrean /izin-staf: ini bacaan, bukan keputusan. Karena itu

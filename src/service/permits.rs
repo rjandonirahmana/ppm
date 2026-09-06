@@ -159,6 +159,27 @@ pub async fn permit_queue(pool: &Pool, user_id: i64) -> Result<PermitQueueData> 
     })
 }
 
+/// Izin yang MENUNGGU keputusan, seluruh pesantren — untuk DIBACA, bukan
+/// diputuskan.
+///
+/// ── KENAPA FUNGSI SENDIRI, BUKAN `permit_queue` DENGAN PERAN DILONGGARKAN ──
+/// `permit_queue` adalah ANTREAN KERJA: isinya baris yang orang itu boleh dan
+/// harus putuskan, dan ia sengaja tertutup untuk admin & ketua (spek A —
+/// perizinan diputuskan orang yang mengenal santrinya). Melonggarkan perannya
+/// akan menaruh admin di dalam antrean yang tombolnya pasti menolaknya.
+///
+/// Yang dibutuhkan admin & ketua berbeda: melihat apakah ada pengajuan yang
+/// MENGGANTUNG, dan sudah berapa lama. Itu pengawasan, bukan keputusan — dan
+/// selama ini angkanya ada di beranda tanpa satu pun cara melihat isinya.
+///
+/// Dipisah juga supaya pemisahannya TERJAGA: gerbang keputusan tetap satu
+/// tempat, dan tak ada jalan pintas yang diam-diam membuka keduanya sekaligus.
+pub async fn izin_menunggu(pool: &Pool) -> Result<Vec<PermitReviewItem>> {
+    // `None` = tanpa batas wali; inilah satu-satunya pemanggil yang memakainya.
+    let pending = repo::pending_guru_permits(pool, None, 100).await?;
+    Ok(to_review_items(pool, pending).await)
+}
+
 /// Izin ini tersimpan sebagai sehari penuh (00:00 → 23:59:59)?
 pub(crate) fn sehari_penuh(
     mulai: chrono::NaiveDateTime,

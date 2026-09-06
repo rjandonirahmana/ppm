@@ -307,22 +307,12 @@ pub async fn mark_bulk(
 // CATATAN: suara online (WebRTC SFU) BELUM ada — halaman ini menyiapkan ruang
 // (status live + chat); audio dicolok menyusul (butuh subsistem WS+SFU).
 
-/// `role_satisfies`, BUKAN `matches!` harfiah.
+/// Alias lokal ke satu-satunya definisi (`models::is_staf_pengajar`).
 ///
-/// Daftar harfiah tak mengenal peran yang MENCAKUPI `dewan_guru` —
-/// `dewan_guru_finance` dan `dewan_guru_absensi` (migrasi 93), dan sebelumnya
-/// `teacher`. Semuanya dewan guru sepenuhnya, tapi di daftar harfiah mereka
-/// ditolak diam-diam: tak ada galat, layarnya hanya kosong atau tombolnya tak
-/// pernah muncul.
-///
-/// Itu persis kesalahan yang catatan `role_satisfies` sendiri peringatkan —
-/// "cara lama membuat delapan endpoint lupa menulisnya" — dan ia terulang di
-/// tujuh tempat begitu dua peran baru ditambahkan. Satu pintu, satu aturan.
-fn is_staff(role: &str) -> bool {
-    // `ketua` sengaja TIDAK termasuk — daftar aslinya pun tidak memuatnya, dan
-    // memperluas wewenang bukan tujuan perbaikan ini.
-    role == "admin" || crate::models::role_satisfies(role, &["dewan_guru"])
-}
+/// Dibiarkan sebagai `use` beralias, bukan dieja panjang di tiap pemanggil:
+/// pemanggilnya di berkas ini menyebut "is_staff" belasan kali, dan nama
+/// pendeknya sudah menjadi bahasa berkas ini.
+use crate::models::is_staf_pengajar as is_staff;
 
 /// Akses ruang live: staf ATAU santri peserta kelas sesi tsb.
 async fn guard_live_access(

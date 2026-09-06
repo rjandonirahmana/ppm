@@ -262,6 +262,9 @@ fn KartuSarana(
     // memindahkan tangkapannya hanya `FnOnce`, sementara sebuah tombol harus
     // bisa diketuk lebih dari sekali. `StoredValue` itu `Copy`, jadi `hapus`
     // ikut `Copy` dan boleh dipasang berkali-kali.
+    // Hanya DIBACA di cabang wasm (dialog konfirmasi); di build SSR ia memang
+    // tak terpakai. Pola `cfg_attr` yang sama dipakai `pages/students.rs`.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
     let nama = StoredValue::new(i.nama.clone());
     // Draf disiapkan DI MUKA dan disimpan di `StoredValue`.
     //

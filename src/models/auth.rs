@@ -117,6 +117,26 @@ pub fn role_label(role: &str) -> &'static str {
     }
 }
 
+/// Staf PENGAJAR: admin, atau siapa pun yang memenuhi `dewan_guru`.
+///
+/// ── KENAPA DI SINI ─────────────────────────────────────────────────────────
+/// Predikat ini pernah ditulis TIGA KALI dengan badan identik —
+/// `service::hafalan`, `service::sessions`, dan `web::live_audio` — masing-masing
+/// sebagai `fn is_staff` privat. Ketiganya sempat berbunyi
+/// `matches!(role, "admin" | "dewan_guru" | "teacher")`, dan ketiganya harus
+/// disunting bersamaan setiap kali ada peran dewan guru baru. Sekali saja satu
+/// terlewat, wewenangnya timpang di satu subsistem dan utuh di dua lainnya —
+/// bentuk kesalahan yang tak melempar galat apa pun.
+///
+/// `ketua` sengaja TIDAK termasuk: ketiga daftar aslinya pun tidak memuatnya,
+/// dan menyatukan fungsi bukan alasan untuk memperluas wewenang.
+///
+/// Tinggal di `models` bersama `role_satisfies`, `role_label`, dan `can_invite`
+/// — satu tempat untuk semua aturan peran, seperti yang sudah dianut berkas ini.
+pub fn is_staf_pengajar(role: &str) -> bool {
+    role == "admin" || role_satisfies(role, &["dewan_guru"])
+}
+
 /// true bila peran ini santri → wajib melengkapi profil mahasiswa saat daftar
 /// (gender, kampus, jurusan, tahun masuk PPM). Santri PPM = mahasiswa kampus
 /// sekitar, jadi data ini bagian dari identitas dasarnya, bukan pelengkap.
