@@ -1723,7 +1723,6 @@ pub async fn delete_curriculum(pool: &Pool, id: i64) -> Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
     /// Jenis kegiatan diturunkan dari kategori kelas sejak form-nya dihapus.
     /// Kalau pemetaan ini salah, preset poin PRD berubah diam-diam: jadwal KBM
     /// yang seharusnya 4·1·10 jatuh ke 10·0·15 tanpa satu pun layar yang

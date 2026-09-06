@@ -99,7 +99,12 @@ pub fn GaleriPage() -> impl IntoView {
         let m = session
             .and_then(|s| s.get())
             .flatten()
-            .map(|u| matches!(u.role.as_str(), "admin" | "ketua" | "dewan_guru"))
+            .map(|u| {
+                // `role_satisfies`, bukan daftar harfiah — lihat catatan di
+                // `web/live_audio.rs::is_staff`.
+                crate::models::role_satisfies(&u.role, &["admin"])
+                    || crate::models::role_satisfies(&u.role, &["dewan_guru"])
+            })
             .unwrap_or(false);
         manage.set(m);
     });

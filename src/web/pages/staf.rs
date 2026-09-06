@@ -84,7 +84,11 @@ const ALAT: &[(&str, &str, &str, &[&str])] = &[
     ("event_busy", "Sedang Izin", "/izin-aktif", &[]),
     // KETUA saja, bukan admin — lihat alasannya di blok tagihan `web/api.rs`:
     // siapa yang sudah/belum menyetor adalah urusan keluarga santri.
-    ("payments", "Pembayaran", "/tagihan", &["ketua"]),
+    ("payments", "Pembayaran", "/tagihan", &["ketua", "dewan_guru_finance"]),
+    // Sarana & prasarana: dibaca semua staf, diubah admin/ketua (gerbangnya di
+    // `web/api.rs`). Petaknya terbuka untuk semua karena membacanya memang
+    // berguna bagi siapa pun yang mengajar di ruangannya.
+    ("inventory_2", "Sarana", "/sarana", &[]),
     ("grid_on", "Galeri", "/galeri", &[]),
     ("article", "Artikel", "/kelola-artikel", &[]),
     ("shield", "Kontrol", "/kontrol-pengguna", &["admin", "ketua"]),

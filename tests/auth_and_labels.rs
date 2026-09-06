@@ -72,6 +72,302 @@ fn role_home_tiap_peran() {
     assert_eq!(role_home("parent"), "/orang-tua");
 }
 
+/// Dua peran dewan guru bertugas-tambahan (migrasi 93) mendarat di beranda
+/// dewan guru — BUKAN jatuh ke `/menu` lewat cabang tak-dikenal, yang membuat
+/// mereka mulai hari di layar yang bukan miliknya.
+#[test]
+fn role_home_dewan_guru_bertugas_tambahan() {
+    assert_eq!(role_home("dewan_guru_finance"), "/dewan-guru");
+    assert_eq!(role_home("dewan_guru_absensi"), "/dewan-guru");
+}
+
+/// Label menyebut tugas tambahannya, supaya pengelola tahu siapa memegang apa
+/// dari daftar pengguna tanpa membuka layar lain.
+#[test]
+fn label_dewan_guru_bertugas_tambahan() {
+    assert_eq!(role_label("dewan_guru_finance"), "Dewan Guru (Finance)");
+    assert_eq!(role_label("dewan_guru_absensi"), "Dewan Guru (Absensi)");
+    // Bukan jatuh ke "Pengguna".
+    assert_ne!(role_label("dewan_guru_finance"), "Pengguna");
+}
+
+/// Keduanya adalah dewan guru SEPENUHNYA — tugas tambahannya menambah, tak
+/// menggantikan. Kalau ini putus, mereka kehilangan seluruh layar dewan guru
+/// dan yang tersisa hanya tugas tambahannya.
+#[test]
+fn dewan_guru_bertugas_tambahan_memenuhi_dewan_guru() {
+    for r in ["dewan_guru_finance", "dewan_guru_absensi"] {
+        assert!(role_satisfies(r, &["dewan_guru"]), "{r}");
+        assert!(role_satisfies(r, &["admin", "dewan_guru"]), "{r}");
+        assert!(role_satisfies(r, &[r]), "{r} cocok dengan namanya sendiri");
+    }
+}
+
+/// Tapi TIDAK naik jadi admin. Mengurus uang atau mengesahkan absensi bukan
+/// alasan untuk menata kelas, menunjuk wali, atau menyunting pengguna.
+#[test]
+fn dewan_guru_bertugas_tambahan_bukan_admin() {
+    for r in ["dewan_guru_finance", "dewan_guru_absensi"] {
+        assert!(!role_satisfies(r, &["admin"]), "{r} tak boleh setara admin");
+        assert!(!role_satisfies(r, &["ketua"]), "{r}");
+        assert!(!role_satisfies(r, &["santri"]), "{r}");
+    }
+}
+
+/// Keduanya BERBEDA satu sama lain. Tugas tambahan yang satu bukan milik yang
+/// lain — dan gerbang yang menyebut salah satunya tak boleh meloloskan keduanya.
+#[test]
+fn dua_tugas_tambahan_tak_saling_mencakup() {
+    assert!(!role_satisfies("dewan_guru_absensi", &["dewan_guru_finance"]));
+    assert!(!role_satisfies("dewan_guru_finance", &["dewan_guru_absensi"]));
+    // Dewan guru biasa tak mendapat keduanya hanya karena namanya mirip.
+    assert!(!role_satisfies("dewan_guru", &["dewan_guru_finance"]));
+    assert!(!role_satisfies("dewan_guru", &["dewan_guru_absensi"]));
+}
+
+/// Peran barunya harus SAH di kolom `users.role`, kalau tidak ia bisa dipilih
+/// di layar tapi ditolak database saat disimpan.
+#[test]
+fn peran_baru_sah_di_migrasi() {
+    // Migrasi TERBARU yang menulis ulang CHECK — 95, bukan 93. CHECK ditulis
+    // utuh tiap kali, jadi yang berlaku selalu yang terakhir.
+    let m = std::fs::read_to_string("migration/95_peran_dewan_guru_sarpras.sql")
+        .expect("migration/95 hilang");
+    assert!(m.contains("'dewan_guru_finance'"), "peran tak ada di CHECK");
+    assert!(m.contains("'dewan_guru_absensi'"), "peran tak ada di CHECK");
+    // Peran lama tak boleh ikut hilang saat CHECK-nya ditulis ulang.
+    for lama in ["'admin'", "'ketua'", "'dewan_guru'", "'santri'", "'santri_finance'",
+                 "'parent'", "'penjaga'"] {
+        assert!(m.contains(lama), "{lama} hilang dari CHECK — akun lama jadi tak sah");
+    }
+}
+
+/// Peran dewan guru bertugas-tambahan diuji sebagai SATU KELUARGA.
+///
+/// Daftarnya ditulis sekali di sini lalu dipakai seluruh uji di bawah. Menambah
+/// peran keempat berarti menambah SATU baris — dan kalau ada daftar di kode yang
+/// terlewat, uji-uji itu langsung menyebut peran mana dan daftar mana.
+const TUGAS_TAMBAHAN: &[&str] =
+    &["dewan_guru_finance", "dewan_guru_absensi", "dewan_guru_sarpras"];
+
+/// `dewan_guru_sarpras` (migrasi 95) mengurus sarana, dan HANYA itu.
+///
+/// Ia tak boleh diam-diam ikut memegang uang: mendata kursi patah dan melihat
+/// siapa menunggak adalah dua kepercayaan yang berbeda.
+#[test]
+fn sarpras_mengurus_sarana_bukan_uang() {
+    let api = std::fs::read_to_string("src/web/api.rs").expect("api.rs");
+
+    let ambil = |nama: &str| -> Vec<String> {
+        let blok = api
+            .split(&format!("const {nama}: &[&str] = &["))
+            .nth(1)
+            .unwrap_or_else(|| panic!("{nama} tak ditemukan"));
+        let blok = &blok[..blok.find("];").expect("penutup daftar")];
+        blok.split('"').skip(1).step_by(2).map(|x| x.to_string()).collect()
+    };
+
+    let sarana = ambil("SARANA_MANAGE_ROLES");
+    assert!(
+        sarana.iter().any(|r| r == "dewan_guru_sarpras"),
+        "sarpras harus boleh menata sarana: {sarana:?}"
+    );
+
+    for daftar in ["FINANCE_ROLES", "BILL_ADMIN_ROLES"] {
+        let isi = ambil(daftar);
+        assert!(
+            !isi.iter().any(|r| r == "dewan_guru_sarpras"),
+            "sarpras TIDAK boleh masuk {daftar}: {isi:?}"
+        );
+    }
+}
+
+/// Tugas tambahan tak saling mencakup — tiga peran, tiga kepercayaan terpisah.
+#[test]
+fn tugas_tambahan_saling_asing() {
+    for a in TUGAS_TAMBAHAN {
+        for b in TUGAS_TAMBAHAN {
+            if a == b {
+                continue;
+            }
+            assert!(!role_satisfies(a, &[b]), "{a} tak boleh memenuhi {b}");
+        }
+        // Semuanya dewan guru penuh, tapi tak satu pun naik jadi admin.
+        assert!(role_satisfies(a, &["dewan_guru"]), "{a} harus dewan guru");
+        assert!(!role_satisfies(a, &["admin"]), "{a} bukan admin");
+        // Dan dewan guru polos tak mendapat tugas tambahan siapa pun.
+        assert!(!role_satisfies("dewan_guru", &[a]), "dewan_guru bukan {a}");
+    }
+}
+
+/// Seluruh keluarga hadir di SETIAP daftar peran yang ada di kode.
+///
+/// Inventarisnya lahir dari tiga laporan bug berturut-turut, masing-masing
+/// karena satu daftar terlewat. Ditulis sebagai satu uji supaya peran berikutnya
+/// tak perlu menemukannya lagi lewat cara yang sama.
+#[test]
+fn keluarga_tugas_tambahan_lengkap_di_semua_daftar() {
+    let berkas: &[(&str, &str)] = &[
+        ("VALID_ROLES", "src/repository/users.rs"),
+        ("INVITABLE_ROLES", "src/service/registration.rs"),
+        ("SEKALI_PAKAI_ROLES", "src/service/registration.rs"),
+        ("STAFF_INVITABLE_ROLES", "src/models/auth.rs"),
+        ("PERAN (manajemen_user)", "src/web/pages/manajemen_user.rs"),
+        ("ROLES (kontrol_pengguna)", "src/web/pages/kontrol_pengguna.rs"),
+        ("nav_for", "src/web/components.rs"),
+        ("role_home/role_label/role_satisfies", "src/models/auth.rs"),
+    ];
+    for (nama, path) in berkas {
+        let isi = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        for r in TUGAS_TAMBAHAN {
+            assert!(
+                isi.contains(&format!("\"{r}\"")),
+                "`{r}` tak disebut di {nama} ({path}) — peran itu akan gagal diam-diam di sana"
+            );
+        }
+    }
+}
+
+/// `VALID_ROLES` di repository HARUS sepadan persis dengan CHECK di migrasi.
+///
+/// Ini pagar terakhir sebelum `UPDATE users SET role`, dan ia pernah tertinggal:
+/// peran barunya sudah sah di database dan sudah muncul di semua dropdown, tapi
+/// menyimpannya dijawab "Peran tidak valid atau pengguna tidak ditemukan" —
+/// kalimat yang menuduh datanya, padahal daftarnya yang kurang.
+///
+/// Diadu DUA ARAH dengan sengaja. Peran yang ada di CHECK tapi tak di sini
+/// mustahil diberikan; yang ada di sini tapi tak di CHECK lolos sampai database
+/// lalu gagal dengan galat constraint mentah. Keduanya sunyi.
+#[test]
+fn valid_roles_sepadan_dengan_check_migrasi() {
+    // Migrasi TERBARU yang menulis ulang CHECK. Ia ditulis utuh tiap kali, jadi
+    // yang berlaku di database selalu yang terakhir — menunjuk migrasi lama di
+    // sini membuat uji ini membandingkan dengan aturan yang sudah tak berlaku.
+    let m = std::fs::read_to_string("migration/95_peran_dewan_guru_sarpras.sql")
+        .expect("migration/95 hilang");
+
+    // Ambil isi CHECK (role IN ( … )) apa adanya, lalu petik tiap literalnya.
+    let dalam = m
+        .split("CHECK (role IN (")
+        .nth(1)
+        .expect("CHECK (role IN ( … ) tak ditemukan di migrasi 95");
+    let dalam = &dalam[..dalam.find("))").expect("penutup CHECK tak ditemukan")];
+    let mut di_migrasi: Vec<String> = dalam
+        .split('\'')
+        .skip(1)
+        .step_by(2)
+        .map(|x| x.to_string())
+        .collect();
+    di_migrasi.sort();
+    assert!(!di_migrasi.is_empty(), "parser gagal membaca daftar peran migrasi");
+
+    let mut di_kode: Vec<String> =
+        ppm::repository::VALID_ROLES.iter().map(|r| r.to_string()).collect();
+    di_kode.sort();
+
+    assert_eq!(
+        di_kode, di_migrasi,
+        "VALID_ROLES (repository/users.rs) tak sepadan dengan CHECK di migrasi 93.\n\
+         Hanya di kode: {:?}\nHanya di migrasi: {:?}",
+        di_kode.iter().filter(|r| !di_migrasi.contains(r)).collect::<Vec<_>>(),
+        di_migrasi.iter().filter(|r| !di_kode.contains(r)).collect::<Vec<_>>(),
+    );
+}
+
+/// Tiap peran yang bisa DIPILIH di layar harus bisa DISIMPAN.
+///
+/// Menutup celah yang menghasilkan laporan tadi dari sisi lain: dropdown yang
+/// menawarkan peran yang ditolak `set_role` adalah janji yang tak ditepati, dan
+/// orang baru mengetahuinya setelah menekan simpan.
+#[test]
+fn setiap_peran_yang_ditawarkan_layar_bisa_disimpan() {
+    for (berkas, isi) in [
+        ("manajemen_user.rs", include_str!("../src/web/pages/manajemen_user.rs")),
+        ("kontrol_pengguna.rs", include_str!("../src/web/pages/kontrol_pengguna.rs")),
+    ] {
+        for r in ["dewan_guru_finance", "dewan_guru_absensi"] {
+            if isi.contains(&format!("\"{r}\"")) {
+                assert!(
+                    ppm::repository::VALID_ROLES.contains(&r),
+                    "{berkas} menawarkan `{r}` tapi VALID_ROLES menolaknya"
+                );
+            }
+        }
+    }
+}
+
+/// Peran baru bisa DIDAFTARKAN lewat undangan — TIGA daftar, semuanya wajib.
+///
+/// Ketiganya terpisah dan gampang lupa salah satu:
+///   • `INVITABLE_ROLES`  (service) — server menolak "Peran tidak valid" tanpanya;
+///   • `ROLES`            (layar kontrol pengguna) — tanpanya tak ada pilihannya;
+///   • `STAFF_INVITABLE_ROLES` (models) — tanpanya `can_invite` menganggapnya
+///     peran biasa, dan pagar "hanya admin" tak berlaku untuknya.
+///
+/// Uji ini lahir dari kejadian nyata: peran barunya sudah bisa DIBERIKAN dari
+/// /manajemen-user tapi tak muncul sama sekali saat membuat user baru, karena
+/// layar undangan memakai daftar peran SENDIRI.
+#[test]
+fn peran_baru_bisa_diundang_di_ketiga_daftar() {
+    let reg = std::fs::read_to_string("src/service/registration.rs").expect("registration.rs");
+    let layar =
+        std::fs::read_to_string("src/web/pages/kontrol_pengguna.rs").expect("kontrol_pengguna.rs");
+
+    for r in ["dewan_guru_finance", "dewan_guru_absensi"] {
+        assert!(reg.contains(&format!("\"{r}\"")), "{r} tak ada di INVITABLE_ROLES");
+        assert!(layar.contains(&format!("\"{r}\"")), "{r} tak ada di ROLES layar undangan");
+        assert!(
+            ppm::models::is_staff_invite(r),
+            "{r} harus dianggap peran STAF — kalau tidak, bukan-admin boleh mencetak undangannya"
+        );
+    }
+}
+
+/// Hanya admin yang boleh mencetak undangan untuk peran barunya.
+///
+/// Undangan adalah TAUTAN: ia bisa diteruskan, disalin, dan dipakai orang yang
+/// tak pernah dimaksud. Untuk peran yang memegang kunci keuangan atau
+/// pengesahan kehadiran lintas kelas, siapa yang boleh mencetaknya adalah
+/// keputusan pengurus — bukan efek samping dari seseorang yang kebetulan punya
+/// tombol undangan.
+#[test]
+fn undangan_peran_baru_hanya_oleh_admin() {
+    for r in ["dewan_guru_finance", "dewan_guru_absensi"] {
+        assert!(ppm::models::can_invite("admin", r), "admin boleh: {r}");
+        assert!(ppm::models::can_invite("ketua", r), "ketua mencakup admin: {r}");
+        assert!(!ppm::models::can_invite("dewan_guru", r), "dewan guru TAK boleh: {r}");
+        assert!(!ppm::models::can_invite("santri", r), "{r}");
+    }
+}
+
+/// Peran berkunci tak boleh punya undangan berkuota banyak — satu tautan bocor
+/// tak boleh menghasilkan sejumlah petugas keuangan.
+#[test]
+fn undangan_peran_berkunci_sekali_pakai() {
+    let reg = std::fs::read_to_string("src/service/registration.rs").expect("registration.rs");
+    assert!(reg.contains("SEKALI_PAKAI_ROLES"), "pagar kuota hilang");
+    assert!(
+        reg.contains("if SEKALI_PAKAI_ROLES.contains(&role) { 1 } else { 1000 }"),
+        "kuota tak lagi dipaksa 1 untuk peran berkunci"
+    );
+    for r in ["dewan_guru_finance", "dewan_guru_absensi"] {
+        let blok = reg.split("SEKALI_PAKAI_ROLES: &[&str] = &[").nth(1).expect("daftar");
+        let blok = &blok[..blok.find("];").unwrap_or(blok.len())];
+        assert!(blok.contains(r), "{r} harus sekali pakai");
+    }
+}
+
+/// Peran barunya bisa DIBERIKAN dari /manajemen-user. Tanpa baris di daftar
+/// itu, perannya ada di database tapi tak ada layar yang bisa memasangnya —
+/// persis yang sempat terjadi pada penjaga.
+#[test]
+fn peran_baru_bisa_dipilih_di_manajemen_user() {
+    let src = std::fs::read_to_string("src/web/pages/manajemen_user.rs")
+        .expect("manajemen_user.rs hilang");
+    assert!(src.contains("\"dewan_guru_finance\""));
+    assert!(src.contains("\"dewan_guru_absensi\""));
+}
+
 #[test]
 fn role_home_tak_dikenal_ke_menu() {
     assert_eq!(role_home(""), "/menu");

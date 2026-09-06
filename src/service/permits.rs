@@ -450,8 +450,11 @@ pub async fn permit_detail(
         bail_user!("Pengajuan izin tidak ditemukan.");
     };
 
+    // `role_satisfies`, bukan `==`: perbandingan harfiah membuat tiap peran
+    // dewan guru bertugas-tambahan (migrasi 93) diam-diam kehilangan akses baca
+    // yang dimiliki dewan guru biasa.
     let pengawas = crate::models::role_satisfies(viewer_role, &["admin"])
-        || viewer_role == "dewan_guru";
+        || crate::models::role_satisfies(viewer_role, &["dewan_guru"]);
     let pemilik = d.user_id == viewer_id;
     let wali = d.wali_kelas_id == Some(viewer_id);
     let ortu = !pemilik

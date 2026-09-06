@@ -54,6 +54,18 @@ pub fn role_satisfies(role: &str, allowed: &[&str]) -> bool {
         // ('supervisor' — bekas pamong — dibuang seluruhnya: migrasi 84 sudah
         // mengubah akunnya jadi 'dewan_guru', dan peran dibaca segar dari DB.)
         || (role == "teacher" && allowed.contains(&"dewan_guru"))
+        // Dua peran dewan guru bertugas-tambahan (migrasi 93). Keduanya dewan
+        // guru SEPENUHNYA — tugas tambahannya menambah, tak menggantikan.
+        //
+        // Dinyatakan DI SINI, satu baris, bukan dengan menuliskan namanya di
+        // puluhan daftar peran yang sudah ada. Cara kedua itulah yang dulu
+        // membuat 'teacher' diterima di sebagian layar dan ditolak di sebagian
+        // lain (lihat catatan di atas), dan dua peran sekaligus akan
+        // melipatgandakan peluang yang sama.
+        || (matches!(
+            role,
+            "dewan_guru_finance" | "dewan_guru_absensi" | "dewan_guru_sarpras"
+        ) && allowed.contains(&"dewan_guru"))
 }
 
 pub fn role_home(role: &str) -> &'static str {
@@ -62,7 +74,13 @@ pub fn role_home(role: &str) -> &'static str {
         "admin" | "ketua" => "/staf",
         // 'teacher' digabung ke 'dewan_guru' (migrasi 36) — arahkan ke dashboard
         // yang sama bila ada sisa data lama.
-        "teacher" | "dewan_guru" => "/dewan-guru",
+        // Dua peran bertugas-tambahan mendarat di beranda yang sama: tugasnya
+        // tambahan, harinya tetap hari seorang dewan guru.
+        "teacher"
+        | "dewan_guru"
+        | "dewan_guru_finance"
+        | "dewan_guru_absensi"
+        | "dewan_guru_sarpras" => "/dewan-guru",
         // santri_finance = santri pemegang kunci finance → dashboard santri.
         "santri" | "santri_finance" => "/santri",
         "parent" => "/orang-tua",
@@ -86,6 +104,11 @@ pub fn role_label(role: &str) -> &'static str {
         // 'teacher' digabung ke 'dewan_guru' (migrasi 36); sisa data lama tetap
         // diberi label yang benar alih-alih jatuh ke "Pengguna".
         "teacher" | "dewan_guru" => "Dewan Guru",
+        // Tugas tambahannya disebut supaya pengelola tahu siapa yang memegang
+        // apa tanpa membuka layar lain — persis alasan "Santri (Finance)" ada.
+        "dewan_guru_finance" => "Dewan Guru (Finance)",
+        "dewan_guru_absensi" => "Dewan Guru (Absensi)",
+        "dewan_guru_sarpras" => "Dewan Guru (Sarpras)",
         "santri" => "Santri",
         "santri_finance" => "Santri (Finance)",
         "parent" => "Orang Tua",
@@ -123,7 +146,13 @@ pub struct InviteInfo {
 /// pamong/dewan guru mencetaknya bukan besarnya wewenang, melainkan bahwa
 /// menambah petugas adalah keputusan pengurus — bukan efek samping dari
 /// seseorang yang kebetulan punya tombol undangan.
-pub const STAFF_INVITABLE_ROLES: &[&str] = &["dewan_guru", "penjaga"];
+pub const STAFF_INVITABLE_ROLES: &[&str] = &[
+    "dewan_guru",
+    "dewan_guru_finance",
+    "dewan_guru_absensi",
+    "dewan_guru_sarpras",
+    "penjaga",
+];
 
 /// true bila `target_role` termasuk peran staf (khusus admin yang mengundang).
 pub fn is_staff_invite(target_role: &str) -> bool {

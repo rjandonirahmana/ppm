@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use leptos::portal::Portal;
 use leptos::prelude::*;
 use leptos_router::hooks::use_location;
 
@@ -399,9 +400,31 @@ pub fn NotifBell() -> impl IntoView {
                 open.get()
                     .then(|| {
                         view! {
+                            // ── DIPINDAH KE <body> LEWAT PORTAL ──────────────
+                            //
+                            // `position: fixed` saja TIDAK CUKUP, dan komentar
+                            // lama di sini keliru menyangka begitu. `fixed`
+                            // hanya melepaskan POSISI dari ancestor; ia tidak
+                            // melepaskan STACKING CONTEXT. Header memakai
+                            // `backdrop-blur`, dan properti itu membentuk
+                            // stacking context baru — jadi panel yang lahir di
+                            // dalamnya tetap TERKURUNG di lapisan header
+                            // (z-40), berapa pun z-index yang diberikan
+                            // kepadanya. Apa pun yang datang sesudah header
+                            // dengan lapisan lebih tinggi akan menutupinya, dan
+                            // itulah "kadang terhalang container lain".
+                            //
+                            // Portal memasangnya sebagai anak `<body>`. Di sana
+                            // tak ada ancestor ber-transform/blur/filter sama
+                            // sekali, jadi z-index-nya akhirnya berlaku apa
+                            // adanya: 60 — di atas sheet modal (50), di bawah
+                            // penanda pratinjau (70).
+                            //
+                            // Aman untuk SSR: blok ini hanya lahir saat `open`
+                            // bernilai benar, yang cuma terjadi setelah ada
+                            // yang mengetuk di peramban.
+                            <Portal>
                             // Backdrop transparan: klik di luar menutup popover.
-                            // z tinggi (55/60) supaya popover PASTI di atas ikon/
-                            // elemen lain di header (header sendiri sudah z-40).
                             <div class="fixed inset-0 z-[55]" on:click=move |_| tutup()></div>
                             // `.ppm-notif-panel` (position:fixed di CSS), BUKAN
                             // `absolute` di dalam lonceng: header memakai
@@ -486,6 +509,7 @@ pub fn NotifBell() -> impl IntoView {
                                     }}
                                 </Transition>
                             </div>
+                            </Portal>
                         }
                     })
             }}
@@ -570,6 +594,12 @@ fn nav_visible(path: &str) -> bool {
         "/akademik", "/kalender", "/izin-staf", "/izin-aktif", "/materi", "/rekap-mingguan",
         "/galeri", "/tagihan", "/tagihan-saya", "/kelola-artikel", "/manajemen-user",
         "/status-server",
+        // Sarana & prasarana (migrasi 94). Terlewat saat halamannya dibuat, dan
+        // gejalanya persis seperti `/tamu-masuk` di bawah: di desktop ia tampil
+        // sebagai kolom ponsel selebar 28rem, karena kanvas lebar digerbangi
+        // `data-open="1"` pada sidebar — dan sidebar melapor "0" untuk path yang
+        // tak ada di daftar ini.
+        "/sarana",
         // Beranda peran PENJAGA. Sempat terlewat: tanpa prefix ini, satu-satunya
         // halamannya tampil TANPA navbar sama sekali (dan tanpa kanvas lebar di
         // desktop) — lihat catatan `nav_visible` di atas.
@@ -990,7 +1020,14 @@ pub fn nav_for(role: &str) -> &'static [NavDef] {
     match role {
         "parent" => NAV_ORTU,
         "teacher" => NAV_DEWAN, // 'teacher' digabung ke dewan_guru (migrasi 36)
-        "dewan_guru" => NAV_DEWAN,
+        // Dua peran bertugas-tambahan (migrasi 93) HARUS disebut. Cabang `_` di
+        // bawah jatuh ke NAV_SANTRI — navbar santri untuk seorang dewan guru,
+        // kesalahan yang tak melempar galat apa pun dan hanya terlihat sebagai
+        // "menunya salah".
+        "dewan_guru"
+        | "dewan_guru_finance"
+        | "dewan_guru_absensi"
+        | "dewan_guru_sarpras" => NAV_DEWAN,
         "admin" | "ketua" => NAV_STAF, // ketua = admin + finance
         "penjaga" => NAV_PENJAGA,
         // santri_finance = navbar SAMA PERSIS dengan santri. Akses kelola
@@ -1993,6 +2030,96 @@ pub fn KotakCari(
 /// `order` hanya memindahkan yang TERLIHAT. Pembaca layar serta urutan Tab
 /// mengikuti DOM, jadi keduanya membacakan 1,3,5,2,4 sementara mata melihat
 /// 1,2,3,4,5. Di sini urutan DOM = urutan baca = urutan tampil.
+/// Pasang pengamat "gulir tak berujung" pada sebuah sentinel.
+///
+/// ── KENAPA JADI SATU FUNGSI ────────────────────────────────────────────────
+/// Blok ini pernah ditulis EMPAT KALI, identik baris demi baris: `/students`,
+/// `/poin` (dua daftar), dan `/tamu-masuk`. Keempatnya membuat
+/// `IntersectionObserver` dengan `root_margin: 400px`, memeriksa
+/// `is_intersecting`, lalu memanggil pemuat halaman berikutnya.
+///
+/// ── DAN KENAPA IA BOCOR ────────────────────────────────────────────────────
+/// Keempatnya diakhiri `cb.forget()` + `std::mem::forget(obs)`, dengan komentar
+/// yang berbunyi "halaman ini tak pernah di-mount ulang tanpa memuat ulang
+/// data". Kalimat itu TIDAK BENAR di aplikasi satu-halaman: berpindah dari
+/// `/poin` ke `/students` lalu kembali me-mount ulang komponennya, dan setiap
+/// kunjungan meninggalkan satu closure + satu observer yang hidup selamanya —
+/// mengamati simpul DOM yang sudah tercabut, sambil menahan sinyal-sinyal yang
+/// ditangkapnya (dan lewat itu, seluruh subgraf reaktif halaman lama).
+///
+/// Kebocorannya tak pernah terlihat dalam satu kunjungan. Ia terlihat pada
+/// pengurus yang membuka aplikasi ini sepanjang hari dan berpindah puluhan kali
+/// antar-daftar — persis pemakaian yang sebenarnya.
+///
+/// Di sini keduanya DIPEGANG, lalu dilepas di `on_cleanup`: pola yang sudah
+/// dianut `pages/tamu.rs` dan `live_audio_ui.rs` ("closure DI-HOLD, bukan
+/// .forget()") — tinggal diberlakukan juga di sini.
+///
+/// `saat_terlihat` dipanggil TIAP KALI sentinel masuk pandang. Penjagaan
+/// "sudah habis" / "masih memuat" tetap milik pemanggil: hanya ia yang tahu
+/// bentuk datanya.
+pub fn pasang_sentinel_gulir(
+    sentinel: NodeRef<leptos::html::Div>,
+    saat_terlihat: impl Fn() + Copy + Send + Sync + 'static,
+) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (sentinel, saat_terlihat);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use send_wrapper::SendWrapper;
+        use wasm_bindgen::closure::Closure;
+        use wasm_bindgen::JsCast;
+
+        type Pegangan = (Closure<dyn FnMut(js_sys::Array)>, web_sys::IntersectionObserver);
+        let pegangan: StoredValue<Option<SendWrapper<Pegangan>>> = StoredValue::new(None);
+
+        // Dipasang SEKALI, sesudah sentinelnya benar-benar ada di DOM. Nilai
+        // balik `true` = sudah terpasang, jangan ulangi.
+        Effect::new(move |sudah: Option<bool>| {
+            if sudah == Some(true) {
+                return true;
+            }
+            let Some(el) = sentinel.get() else { return false };
+
+            let cb = Closure::<dyn FnMut(js_sys::Array)>::new(move |entries: js_sys::Array| {
+                let terlihat = entries.iter().any(|e| {
+                    e.dyn_into::<web_sys::IntersectionObserverEntry>()
+                        .map(|e| e.is_intersecting())
+                        .unwrap_or(false)
+                });
+                if terlihat {
+                    saat_terlihat();
+                }
+            });
+
+            let opts = web_sys::IntersectionObserverInit::new();
+            opts.set_root_margin("400px");
+            let Ok(obs) = web_sys::IntersectionObserver::new_with_options(
+                cb.as_ref().unchecked_ref(),
+                &opts,
+            ) else {
+                // Peramban tanpa IntersectionObserver: gulir tak berujungnya
+                // mati, sisa halamannya tetap jalan. Jangan coba lagi.
+                return true;
+            };
+            obs.observe(&el);
+            pegangan.set_value(Some(SendWrapper::new((cb, obs))));
+            true
+        });
+
+        on_cleanup(move || {
+            let Some(Some(p)) = pegangan.try_update_value(|o| o.take()) else { return };
+            let (cb, obs) = p.take();
+            // `disconnect` lebih dulu: sesudahnya observer tak lagi memegang
+            // closure-nya, jadi menjatuhkannya benar-benar membebaskan memori.
+            obs.disconnect();
+            drop(cb);
+        });
+    }
+}
+
 pub fn kartu_grid(kartu: Vec<AnyView>) -> impl IntoView {
     view! { <div class="ppm-card-grid">{kartu}</div> }
 }

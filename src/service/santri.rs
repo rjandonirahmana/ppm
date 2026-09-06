@@ -354,7 +354,11 @@ pub async fn profil(pool: &Pool, user_id: i64) -> Result<ProfilData> {
     };
     let role_label = match p.role.as_str() {
         "admin" => "ADMIN",
-        "teacher" | "dewan_guru" => "DEWAN GURU",
+        "teacher"
+        | "dewan_guru"
+        | "dewan_guru_finance"
+        | "dewan_guru_absensi"
+        | "dewan_guru_sarpras" => "DEWAN GURU",
         "santri" => "SANTRI",
         "parent" => "ORANG TUA",
         _ => "PENGGUNA",

@@ -200,38 +200,14 @@ fn PapanPoin(
     // Sentinel gulir: IntersectionObserver, bukan listener `scroll` (yang
     // terakhir menyala puluhan kali per detik dan harus di-throttle sendiri).
     let sentinel: NodeRef<leptos::html::Div> = NodeRef::new();
-    #[cfg(target_arch = "wasm32")]
-    Effect::new(move |sudah: Option<bool>| {
-        if sudah == Some(true) {
-            return true;
+    // Satu helper bersama yang MEMEGANG closure & observer lalu
+    // melepasnya di `on_cleanup` — lihat `pasang_sentinel_gulir`.
+    crate::web::components::pasang_sentinel_gulir(sentinel, move || {
+        // Sentinel tetap terlihat SELAMA pemuatan; tanpa penjagaan ini
+        // ia menembakkan permintaan beruntun untuk offset yang sama.
+        if !habis.get_untracked() && !memuat.get_untracked() {
+            ambil(baris.get_untracked().len() as i64);
         }
-        let Some(el) = sentinel.get() else { return false };
-        use wasm_bindgen::closure::Closure;
-        use wasm_bindgen::JsCast;
-        let cb = Closure::<dyn FnMut(js_sys::Array)>::new(move |entries: js_sys::Array| {
-            let terlihat = entries.iter().any(|e| {
-                e.dyn_into::<web_sys::IntersectionObserverEntry>()
-                    .map(|e| e.is_intersecting())
-                    .unwrap_or(false)
-            });
-            // Sentinel tetap terlihat SELAMA pemuatan; tanpa penjagaan ini ia
-            // menembakkan permintaan beruntun untuk offset yang sama.
-            if terlihat && !habis.get_untracked() && !memuat.get_untracked() {
-                ambil(baris.get_untracked().len() as i64);
-            }
-        });
-        let opts = web_sys::IntersectionObserverInit::new();
-        opts.set_root_margin("400px");
-        if let Ok(obs) =
-            web_sys::IntersectionObserver::new_with_options(cb.as_ref().unchecked_ref(), &opts)
-        {
-            obs.observe(&el);
-            // Sengaja dibocorkan: keduanya harus hidup selama halaman terbuka,
-            // dan halaman ini tak pernah di-mount ulang tanpa memuat ulang data.
-            cb.forget();
-            std::mem::forget(obs);
-        }
-        true
     });
 
     let apply_delta = move |student_id: i64, delta: i32, reason: String| {
@@ -689,35 +665,15 @@ fn RiwayatPoin(
     };
 
     let sentinel: NodeRef<leptos::html::Div> = NodeRef::new();
-    #[cfg(target_arch = "wasm32")]
-    Effect::new(move |sudah: Option<bool>| {
-        if sudah == Some(true) {
-            return true;
+    // Satu helper bersama yang MEMEGANG closure & observer lalu
+    // melepasnya di `on_cleanup` — lihat `pasang_sentinel_gulir`.
+    crate::web::components::pasang_sentinel_gulir(sentinel, move || {
+        // Sentinel tetap terlihat SELAMA pemuatan; tanpa penjagaan ini
+        // ia menembakkan permintaan beruntun untuk offset yang sama.
+        if !habis.get_untracked() && !memuat.get_untracked() {
+            let sudah_ada = awal.with_value(|v| v.len()) + tambahan.get_untracked().len();
+            ambil(sudah_ada as i64);
         }
-        let Some(el) = sentinel.get() else { return false };
-        use wasm_bindgen::closure::Closure;
-        use wasm_bindgen::JsCast;
-        let cb = Closure::<dyn FnMut(js_sys::Array)>::new(move |entries: js_sys::Array| {
-            let terlihat = entries.iter().any(|e| {
-                e.dyn_into::<web_sys::IntersectionObserverEntry>()
-                    .map(|e| e.is_intersecting())
-                    .unwrap_or(false)
-            });
-            if terlihat && !habis.get_untracked() && !memuat.get_untracked() {
-                let sudah_ada = awal.with_value(|v| v.len()) + tambahan.get_untracked().len();
-                ambil(sudah_ada as i64);
-            }
-        });
-        let opts = web_sys::IntersectionObserverInit::new();
-        opts.set_root_margin("400px");
-        if let Ok(obs) =
-            web_sys::IntersectionObserver::new_with_options(cb.as_ref().unchecked_ref(), &opts)
-        {
-            obs.observe(&el);
-            cb.forget();
-            std::mem::forget(obs);
-        }
-        true
     });
 
     view! {

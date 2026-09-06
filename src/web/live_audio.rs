@@ -50,13 +50,28 @@ pub(crate) fn auth(state: &AppState, headers: &HeaderMap) -> Result<Claims, Stat
     state.jwt.verify(token).map_err(|_| StatusCode::UNAUTHORIZED)
 }
 
+/// `role_satisfies`, BUKAN `matches!` harfiah.
+///
+/// Daftar harfiah tak mengenal peran yang MENCAKUPI `dewan_guru` —
+/// `dewan_guru_finance` dan `dewan_guru_absensi` (migrasi 93), dan sebelumnya
+/// `teacher`. Semuanya dewan guru sepenuhnya, tapi di daftar harfiah mereka
+/// ditolak diam-diam: tak ada galat, layarnya hanya kosong atau tombolnya tak
+/// pernah muncul.
+///
+/// Itu persis kesalahan yang catatan `role_satisfies` sendiri peringatkan —
+/// "cara lama membuat delapan endpoint lupa menulisnya" — dan ia terulang di
+/// tujuh tempat begitu dua peran baru ditambahkan. Satu pintu, satu aturan.
 fn is_staff(role: &str) -> bool {
-    matches!(role, "admin" | "dewan_guru" | "teacher")
+    // `ketua` sengaja TIDAK termasuk — daftar aslinya pun tidak memuatnya, dan
+    // memperluas wewenang bukan tujuan perbaikan ini.
+    role == "admin" || crate::models::role_satisfies(role, &["dewan_guru"])
 }
 
 /// Peran yang memang mengawasi SELURUH kelas — tak perlu keterkaitan data.
 fn is_pengawas(role: &str) -> bool {
-    matches!(role, "admin" | "ketua" | "dewan_guru")
+    // Lihat catatan di `is_staff` di atas — alasan yang sama.
+    crate::models::role_satisfies(role, &["admin"])
+        || crate::models::role_satisfies(role, &["dewan_guru"])
 }
 
 /// Gerbang tunggal semua pintu sesi: siaran, dengar, unduh.

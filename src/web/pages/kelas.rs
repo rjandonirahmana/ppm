@@ -700,6 +700,47 @@ fn BookRow(b: BookItem, can_manage: bool, refetch: impl Fn() + Copy + Send + 'st
     }
 }
 
+/// Satu baris surat dari kolom isian, bila keduanya terisi sah.
+///
+/// `None` = belum lengkap (nama kosong, atau jumlah ayat bukan angka positif).
+fn baris_surat(nama: &str, ayat: &str) -> Option<(String, i32)> {
+    let n = nama.trim();
+    let a: i32 = ayat.trim().parse().ok()?;
+    if n.is_empty() || a <= 0 {
+        return None;
+    }
+    Some((n.to_string(), a))
+}
+
+/// Daftar surat yang BENAR-BENAR diserahkan saat menyimpan: yang sudah dikomit
+/// lewat tombol "+", DITAMBAH baris yang masih tertinggal di kolom isian.
+///
+/// ── KENAPA BARIS TERTINGGAL IKUT DIHITUNG ──────────────────────────────────
+/// Formnya menuntut dua langkah: ketik nama & jumlah ayat, lalu tekan "+" untuk
+/// memasukkannya ke daftar. Untuk materi bersurat satu — dan itu kasus yang
+/// paling sering — langkah kedua tak terasa perlu sama sekali: kolomnya sudah
+/// terisi di depan mata, tombol simpan ada di bawahnya.
+///
+/// Yang terjadi dulu: `submit` hanya membaca daftar yang dikomit, jadi isian
+/// yang terlihat jelas di layar diabaikan dan pengguna dijawab "Tambahkan
+/// minimal satu surat (nama + jumlah ayat)" — kalimat yang menyuruhnya
+/// melakukan hal yang menurut matanya sudah ia lakukan. Tak ada cara menebak
+/// bahwa yang kurang adalah menekan "+".
+///
+/// Menyerahkan apa yang terisi jauh lebih benar daripada membuangnya: tombol
+/// "+" tetap berguna untuk surat KEDUA dan seterusnya, sementara surat terakhir
+/// tak lagi hilang hanya karena tak dikomit.
+fn surat_final(
+    mut sudah: Vec<(String, i32)>,
+    nama_pending: &str,
+    ayat_pending: &str,
+) -> Vec<(String, i32)> {
+    if let Some(baris) = baris_surat(nama_pending, ayat_pending) {
+        sudah.push(baris);
+    }
+    sudah
+}
+
 #[component]
 fn BookForm(
     edit_id: Option<i64>,
@@ -722,12 +763,10 @@ fn BookForm(
     let msg = RwSignal::new(Option::<(bool, String)>::None);
 
     let add_surah = move |_| {
-        let n = s_name.get_untracked().trim().to_string();
-        let a: i32 = s_ayat.get_untracked().trim().parse().unwrap_or(0);
-        if n.is_empty() || a <= 0 {
+        let Some(baris) = baris_surat(&s_name.get_untracked(), &s_ayat.get_untracked()) else {
             return;
-        }
-        surahs.update(|v| v.push((n, a)));
+        };
+        surahs.update(|v| v.push(baris));
         s_name.set(String::new());
         s_ayat.set(String::new());
     };
@@ -741,11 +780,16 @@ fn BookForm(
         msg.set(None);
         let (t, cat, p) = (title.get_untracked(), category.get_untracked(), pages.get_untracked());
         let surahs_json = if cat == "quran" {
-            let arr: Vec<_> = surahs
-                .get_untracked()
-                .iter()
-                .map(|(n, a)| serde_json::json!({"name": n, "ayat": a}))
-                .collect();
+            // Baris yang MASIH di kolom isian ikut diserahkan — lihat
+            // `surat_final`.
+            let arr: Vec<_> = surat_final(
+                surahs.get_untracked(),
+                &s_name.get_untracked(),
+                &s_ayat.get_untracked(),
+            )
+            .iter()
+            .map(|(n, a)| serde_json::json!({"name": n, "ayat": a}))
+            .collect();
             serde_json::to_string(&arr).unwrap_or_else(|_| "[]".into())
         } else {
             String::new()
@@ -764,6 +808,11 @@ fn BookForm(
                         title.set(String::new());
                         pages.set(String::new());
                         surahs.set(Vec::new());
+                        // Kolom isian ikut dikosongkan: isinya sudah ikut
+                        // tersimpan, jadi membiarkannya berarti surat yang sama
+                        // ikut lagi ke materi berikutnya.
+                        s_name.set(String::new());
+                        s_ayat.set(String::new());
                     }
                 }
                 Err(e) => {
@@ -1008,5 +1057,78 @@ fn AcademicAuditRow(s: StudentAcademicItem, expanded: RwSignal<Option<i64>>) -> 
                 })
             }}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests_form_kitab {
+    use super::{baris_surat, surat_final};
+
+    /// WORST CASE yang benar-benar dilaporkan: satu surat diketik di kolom
+    /// isian, tombol "+" TIDAK ditekan, lalu Simpan. Dulu dijawab "Tambahkan
+    /// minimal satu surat" padahal isiannya terlihat jelas di layar.
+    #[test]
+    fn surat_yang_belum_dikomit_ikut_tersimpan() {
+        let hasil = surat_final(Vec::new(), "Al baqoroh", "286");
+        assert_eq!(hasil, vec![("Al baqoroh".to_string(), 286)]);
+    }
+
+    /// Surat yang sudah dikomit tetap ikut, dan yang tertinggal menyusul di
+    /// URUTAN TERAKHIR — sesuai urutan orang mengetiknya.
+    #[test]
+    fn yang_dikomit_dan_yang_tertinggal_digabung_berurutan() {
+        let sudah = vec![("Al fatihah".to_string(), 7)];
+        let hasil = surat_final(sudah, "Al baqoroh", "286");
+        assert_eq!(
+            hasil,
+            vec![("Al fatihah".to_string(), 7), ("Al baqoroh".to_string(), 286)]
+        );
+    }
+
+    /// Kolom isian kosong (semua surat sudah dikomit lewat "+") — tak boleh
+    /// menambah baris hantu.
+    #[test]
+    fn kolom_kosong_tak_menambah_baris() {
+        let sudah = vec![("Al fatihah".to_string(), 7)];
+        assert_eq!(surat_final(sudah.clone(), "", ""), sudah);
+        assert_eq!(surat_final(sudah.clone(), "   ", "  "), sudah);
+    }
+
+    /// Isian SETENGAH JADI tak boleh diselundupkan. Nama tanpa jumlah ayat
+    /// bukan surat, dan menyimpannya sebagai 0 ayat merusak hitungan total.
+    #[test]
+    fn isian_setengah_jadi_diabaikan() {
+        assert!(surat_final(Vec::new(), "Al baqoroh", "").is_empty());
+        assert!(surat_final(Vec::new(), "", "286").is_empty());
+        assert!(surat_final(Vec::new(), "Al baqoroh", "0").is_empty());
+        assert!(surat_final(Vec::new(), "Al baqoroh", "-5").is_empty());
+        assert!(surat_final(Vec::new(), "Al baqoroh", "abc").is_empty());
+    }
+
+    /// Spasi di ujung nama dibersihkan — kalau tidak, "Al baqoroh " dan
+    /// "Al baqoroh" jadi dua surat berbeda di daftar yang sama.
+    #[test]
+    fn nama_surat_dibersihkan_spasinya() {
+        assert_eq!(
+            baris_surat("  Al baqoroh  ", " 286 "),
+            Some(("Al baqoroh".to_string(), 286))
+        );
+    }
+
+    /// WORST CASE — angka ayat yang tak masuk akal tak boleh memanik.
+    #[test]
+    fn jumlah_ayat_ekstrem_tak_memanik() {
+        assert!(baris_surat("X", "99999999999999999999").is_none(), "melampaui i32");
+        assert!(baris_surat("X", &i32::MAX.to_string()).is_some());
+        assert!(baris_surat("X", "1.5").is_none());
+        assert!(baris_surat("X", "286 ayat").is_none());
+        assert!(baris_surat("X", "٢٨٦").is_none(), "angka Arab bukan i32 yang sah");
+    }
+
+    /// Nama surat berhuruf Arab sah — judulnya boleh apa saja, yang dibatasi
+    /// hanya jumlah ayatnya.
+    #[test]
+    fn nama_surat_non_ascii_diterima() {
+        assert_eq!(baris_surat("البقرة", "286"), Some(("البقرة".to_string(), 286)));
     }
 }

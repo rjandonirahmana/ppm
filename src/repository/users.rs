@@ -446,16 +446,35 @@ pub async fn role_of_user(pool: &Pool, user_id: i64) -> Result<Option<String>> {
     Ok(row.map(|r| r.get(0)))
 }
 
-// Roles yang valid di sistem. SYNC dengan migration 44 database constraint.
-const VALID_ROLES: &[&str] = &[
+/// Peran yang sah di sistem — pagar terakhir sebelum `UPDATE users SET role`.
+///
+/// WAJIB SEPADAN PERSIS dengan CHECK `users_role_check` di basis data (kini
+/// migrasi 93). Keduanya menjaga hal yang sama dari dua sisi: daftar ini
+/// menolak lebih dulu dengan pesan yang bisa dibaca, CHECK menolak belakangan
+/// dengan galat constraint mentah.
+///
+/// Menyimpang ke arah mana pun sama-sama buruk, dan keduanya SUNYI:
+///   • ada di CHECK tapi tidak di sini → peran sah yang tak bisa diberikan,
+///     dijawab "Peran tidak valid atau pengguna tidak ditemukan" — kalimat yang
+///     menuduh datanya, padahal daftarnya yang kurang;
+///   • ada di sini tapi tidak di CHECK → lolos sampai database, lalu gagal
+///     dengan galat constraint yang tak menyebut peran sama sekali.
+///
+/// `pub` semata agar `tests/auth_and_labels.rs` bisa mengadunya dengan berkas
+/// migrasi. Kesepadanan itu dulu hanya dijanjikan komentar — dan komentarnya
+/// sendiri sudah basi, masih menyebut migrasi 44.
+pub const VALID_ROLES: &[&str] = &[
     "admin",
     "ketua",
     "dewan_guru",
+    // Dua peran dewan guru bertugas-tambahan (migrasi 93).
+    "dewan_guru_finance",
+    "dewan_guru_absensi",
+    "dewan_guru_sarpras",
     "santri",
     "santri_finance",
     "parent",
-    // Penjaga gerbang — memeriksa kecocokan data tamu (migrasi 83). WAJIB
-    // sepadan dengan CHECK `users_role_check` di basis data.
+    // Penjaga gerbang — memeriksa kecocokan data tamu (migrasi 83).
     "penjaga",
 ];
 

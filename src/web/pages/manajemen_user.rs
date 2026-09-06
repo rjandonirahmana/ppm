@@ -38,6 +38,11 @@ const PERAN: &[(&str, &str)] = &[
     ("santri", "Santri"),
     ("santri_finance", "Santri (Finance)"),
     ("dewan_guru", "Dewan Guru"),
+    // Migrasi 93. Tanpa baris ini peran barunya ada di database tapi tak bisa
+    // DIBERIKAN dari layar mana pun — persis yang sempat terjadi pada penjaga.
+    ("dewan_guru_finance", "Dewan Guru (Finance)"),
+    ("dewan_guru_absensi", "Dewan Guru (Absensi)"),
+    ("dewan_guru_sarpras", "Dewan Guru (Sarpras)"),
     ("parent", "Orang Tua"),
     // Penjaga gerbang (migrasi 83) — sempat terlewat di sini, jadi akun penjaga
     // tak bisa disaring maupun DIBUAT dari layar ini sama sekali.

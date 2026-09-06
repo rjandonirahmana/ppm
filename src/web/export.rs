@@ -55,7 +55,13 @@ async fn build_doc(state: &AppState, claims: &Claims) -> Result<ReportDoc, Statu
                 .collect();
             Ok(admin_doc(&admin, &outside, now))
         }
-        "teacher" | "dewan_guru" => {
+        // Peran bertugas-tambahan (migrasi 93) memakai dokumen yang SAMA:
+        // tugasnya tambahan, laporannya tetap laporan dewan guru.
+        "teacher"
+        | "dewan_guru"
+        | "dewan_guru_finance"
+        | "dewan_guru_absensi"
+        | "dewan_guru_sarpras" => {
             let teacher_id = (claims.role == "teacher").then_some(claims.user_id);
             let (analisis, extra) = tokio::join!(
                 crate::service::dashboard::analisis(&state.pool, &claims.name, teacher_id),

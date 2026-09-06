@@ -262,7 +262,19 @@ use crate::models::{SessionVerifyData, SessionVerifyItem};
 /// lihat (atau melihat baris yang keputusannya selalu gagal diam-diam).
 fn aktor_verifikasi(role: &str, user_id: i64) -> Option<i64> {
     // Admin/ketua mengawasi seluruh pondok; selain itu terikat sesinya sendiri.
-    (!crate::models::role_satisfies(role, &["admin"])).then_some(user_id)
+    //
+    // `dewan_guru_absensi` (migrasi 93) ikut tak terikat, dan ITULAH seluruh
+    // isi perannya: mengesahkan kehadiran di sesi yang bukan miliknya. Tanpa
+    // dia, sesi yang pengajarnya berhalangan menggantung sampai orang itu
+    // sendiri sempat membukanya — dan kehadiran yang tak pernah disahkan tak
+    // pernah menjadi poin bagi santri yang sudah datang.
+    //
+    // Ditulis di sini, bukan di daftar peran endpoint-nya, karena inilah
+    // satu-satunya tempat yang memutuskan "sesi siapa yang boleh ia sentuh".
+    // Daftar peran di `web/api.rs` sudah meloloskannya lewat `role_satisfies`
+    // (ia memenuhi `dewan_guru`); yang tersisa hanya batas kepemilikan ini.
+    let bebas = crate::models::role_satisfies(role, &["admin"]) || role == "dewan_guru_absensi";
+    (!bebas).then_some(user_id)
 }
 
 pub async fn session_verify(
@@ -466,8 +478,25 @@ mod tests {
     /// alasan `aktor_verifikasi` ada sebagai fungsi tersendiri.
     #[test]
     fn daftar_dan_keputusan_sepakat() {
-        for role in ["teacher", "dewan_guru", "admin", "ketua"] {
+        for role in ["teacher", "dewan_guru", "admin", "ketua", "dewan_guru_absensi"] {
             assert_eq!(aktor_verifikasi(role, 3), aktor_verifikasi(role, 3));
         }
+    }
+
+    /// `dewan_guru_absensi` (migrasi 93) mengesahkan kehadiran di sesi MANA PUN
+    /// — dan itu seluruh isi perannya. Kalau batas ini kembali, perannya tak
+    /// berbeda sedikit pun dari dewan guru biasa dan tak ada yang menyadarinya:
+    /// ia tetap bisa masuk layarnya, hanya daftarnya yang selalu kosong.
+    #[test]
+    fn dewan_guru_absensi_tak_terikat_sesinya() {
+        assert_eq!(aktor_verifikasi("dewan_guru_absensi", 7), None);
+    }
+
+    /// Tugas tambahan itu HANYA soal absensi. `dewan_guru_finance` tetap
+    /// terikat sesinya sendiri seperti dewan guru biasa — mengurus uang bukan
+    /// alasan untuk mengesahkan kehadiran kelas orang lain.
+    #[test]
+    fn dewan_guru_finance_tetap_terikat_sesinya() {
+        assert_eq!(aktor_verifikasi("dewan_guru_finance", 7), Some(7));
     }
 }

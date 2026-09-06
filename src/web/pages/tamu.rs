@@ -109,6 +109,27 @@ pub fn TamuPage() -> impl IntoView {
         }
     });
 
+    // Interval dihentikan juga saat halamannya DITINGGALKAN.
+    //
+    // Cabang `done` di atas hanya menutupnya pada satu akhir yang bahagia:
+    // tiketnya benar-benar terpakai selagi layarnya masih terbuka. Tamu yang
+    // menutup halaman sebelum itu — jauh lebih sering — meninggalkan interval
+    // 2,5 detik yang berjalan SELAMANYA, menembakkan permintaan status untuk
+    // tiket yang tak lagi ditonton siapa pun dan menahan closure-nya beserta
+    // sinyal yang ia tangkap.
+    //
+    // `on_cleanup`, bukan penjagaan tambahan di dalam intervalnya: yang
+    // menghentikan sesuatu seharusnya peristiwa "komponennya sudah tak ada",
+    // dan hanya Leptos yang tahu kapan itu terjadi.
+    #[cfg(target_arch = "wasm32")]
+    on_cleanup(move || {
+        if let (Some(id), Some(w)) = (interval_id.get_value(), web_sys::window()) {
+            w.clear_interval_with_handle(id);
+        }
+        interval_id.set_value(None);
+        held.set_value(None);
+    });
+
     let submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
         if submitting.get_untracked() {

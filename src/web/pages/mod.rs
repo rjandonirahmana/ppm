@@ -38,6 +38,7 @@ mod server_status;
 mod sesi;
 mod sesi_detail;
 mod sesi_live;
+mod sarana;
 mod staf;
 mod students;
 // `pub`: halaman pembayaran orang tua memakai form pengajuan & daftar
@@ -84,6 +85,7 @@ pub use sesi::{SesiContent, SesiPage};
 pub use sesi_detail::SesiDetailPage;
 pub use sesi_live::SesiLivePage;
 pub use students::{StudentBookPanel, StudentsPage};
+pub use sarana::SaranaPage;
 pub use staf::StafDashboardPage;
 pub use tagihan::{FinancePage, MyBillsPage};
 pub use tamu::TamuPage;

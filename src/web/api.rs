@@ -1764,6 +1764,66 @@ pub async fn delete_curriculum_action(id: i64) -> Result<(), ServerFnError> {
 
 // ── Materials Library (migrasi 17; admin/dewan_guru) ──────────────────────────
 
+// ── Sarana & prasarana ───────────────────────────────────────────────────────
+//
+// MEMBACA terbuka untuk seluruh staf: "kipas di aula rusak" adalah keterangan
+// yang berguna bagi siapa pun yang mengajar di sana, dan menutupnya hanya
+// memaksa orang bertanya lewat jalur lain.
+//
+// MENGUBAH tertutup untuk admin/ketua. Pendataan yang boleh disunting siapa
+// saja berhenti bisa dipakai melapor — dan yang paling mudah rusak bukan
+// datanya, melainkan kepercayaan bahwa angkanya benar.
+#[cfg(feature = "ssr")]
+const SARANA_VIEW_ROLES: &[&str] = &["admin", "ketua", "dewan_guru"];
+// `dewan_guru_sarpras` (migrasi 95) ikut MENGUBAH: orang yang benar-benar tahu
+// kursi mana yang patah adalah yang mengajar di ruangannya, bukan yang duduk di
+// kantor. Admin & ketua tetap di sini — sarana bukan urusan uang, jadi tak ada
+// alasan admin dikecualikan seperti pada tagihan.
+#[cfg(feature = "ssr")]
+const SARANA_MANAGE_ROLES: &[&str] = &["admin", "ketua", "dewan_guru_sarpras"];
+
+/// Daftar sarana + ringkasannya. Penyaring kosong = semua.
+#[server(GetSaranaData, "/api-fn")]
+pub async fn sarana_data(
+    kategori: String,
+    kondisi: String,
+) -> Result<crate::models::SaranaData, ServerFnError> {
+    require_roles(SARANA_VIEW_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::sarana::list(&state.pool, &kategori, &kondisi).await.map_err(err)
+}
+
+/// Tambah (id kosong) atau ubah (id terisi) satu baris sarana.
+///
+/// SATU server fn untuk keduanya karena validasinya sama persis; dua fungsi
+/// berarti dua salinan aturan yang cepat atau lambat menyimpang, dan yang
+/// menyimpang biasanya jalur ubah — yang lebih jarang dicoba orang.
+#[server(SimpanSaranaAction, "/api-fn")]
+pub async fn simpan_sarana_action(
+    id: Option<i64>,
+    nama: String,
+    kategori: String,
+    lokasi: String,
+    jumlah: i32,
+    kondisi: String,
+    catatan: String,
+) -> Result<i64, ServerFnError> {
+    let sess = require_roles(SARANA_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::sarana::simpan(
+        &state.pool, id, &nama, &kategori, &lokasi, jumlah, &kondisi, &catatan, sess.id,
+    )
+    .await
+    .map_err(err)
+}
+
+#[server(HapusSaranaAction, "/api-fn")]
+pub async fn hapus_sarana_action(id: i64) -> Result<(), ServerFnError> {
+    require_roles(SARANA_MANAGE_ROLES).await?;
+    let state = app_state().await?;
+    crate::service::sarana::hapus(&state.pool, id).await.map_err(err)
+}
+
 #[cfg(feature = "ssr")]
 const MATERIALS_ROLES: &[&str] = &["admin", "dewan_guru"];
 
@@ -2038,11 +2098,17 @@ pub async fn guest_status_action(
 // perlu daftar larangan terpisah. JANGAN tambahkan "admin" ke dua konstanta di
 // bawah tanpa memastikan itu memang yang diminta.
 //
-// FINANCE = lihat + tandai lunas + verifikasi (ketua, santri_finance).
+// FINANCE = lihat + tandai lunas + verifikasi (ketua, santri_finance,
+//           dewan_guru_finance).
 // BILL_ADMIN = catat/hapus pembayaran (ketua).
-
+//
+// `dewan_guru_finance` (migrasi 93) masuk FINANCE tapi TIDAK BILL_ADMIN —
+// cerminan persis `santri_finance`. Ia mengurus penagihan sehari-hari: melihat
+// siapa belum bayar, menandai lunas, memverifikasi bukti setoran. Mencatat dan
+// MENGHAPUS pembayaran tetap di ketua, karena itu yang mengubah catatan uang
+// secara permanen dan pantas berhenti di satu orang.
 #[cfg(feature = "ssr")]
-const FINANCE_ROLES: &[&str] = &["ketua", "santri_finance"];
+const FINANCE_ROLES: &[&str] = &["ketua", "santri_finance", "dewan_guru_finance"];
 #[cfg(feature = "ssr")]
 const BILL_ADMIN_ROLES: &[&str] = &["ketua"];
 

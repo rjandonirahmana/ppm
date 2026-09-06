@@ -349,6 +349,11 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/galeri") view=GaleriPage />
                 <Route path=path!("/kelola-artikel") view=KelolaArtikelPage />
                 <Route path=path!("/tagihan") view=FinancePage />
+                // Sarana & prasarana: dibaca seluruh staf, diubah admin/ketua.
+                // Gerbangnya di server (`SARANA_VIEW_ROLES`); rutenya sendiri
+                // tak perlu guard tambahan — halamannya menampilkan galat
+                // wewenang seperti layar staf lain bila dibuka yang tak berhak.
+                <Route path=path!("/sarana") view=SaranaPage />
                 <Route path=path!("/tagihan-saya") view=MyBillsPage />
                 <Route path=path!("/kontrol-pengguna") view=KontrolPenggunaPage />
                 <Route path=path!("/manajemen-user") view=ManajemenUserPage />

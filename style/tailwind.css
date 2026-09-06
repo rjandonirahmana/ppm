@@ -126,6 +126,11 @@ html, body { overflow-x: clip; }
      titiknya menempel pada garis lonceng dan terbaca sebagai bagian ikon. */
   box-shadow: 0 0 0 2px #f9f9ff;
 }
+/* Panel ini dipasang sebagai anak <body> lewat Portal (lihat `NotifBell`),
+   BUKAN di dalam header. Itu syarat agar z-index di bawah benar-benar berlaku:
+   header memakai `backdrop-filter`, yang membentuk stacking context, dan panel
+   yang lahir di dalamnya terkurung di lapisan header berapa pun z-index-nya.
+   Lapisannya: di atas sheet modal (50), di bawah penanda pratinjau (70). */
 .ppm-notif-panel {
   position: fixed; top: 4.25rem; left: .75rem; right: .75rem; z-index: 60;
   max-height: min(70vh, 32rem); max-height: min(70dvh, 32rem);

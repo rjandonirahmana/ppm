@@ -188,6 +188,74 @@ fn setiap_tautan_spa_menunjuk_rute_yang_ada() {
 
 // ── Tes untuk parsernya sendiri ──────────────────────────────────────────────
 
+/// Tiap petak di grid alat `/staf` harus menuju halaman yang PUNYA kerangka.
+///
+/// ── GEJALA YANG MELAHIRKAN TES INI ───────────────────────────────────────────
+/// "Halaman /sarana dibuka di desktop, tapi yang tampil UI ponsel."
+///
+/// Sebabnya bukan CSS halamannya. Kanvas lebar desktop (72rem) dan navbar
+/// digerbangi SATU hal yang sama: atribut `data-open="1"` pada sidebar, yang
+/// bernilai "1" hanya bila `nav_visible(path)` benar. Path yang tak terdaftar di
+/// `PREFIXES` karena itu tampil sebagai kolom ponsel 28rem TANPA navbar — di
+/// halaman yang secara kode sudah punya seluruh komposisi desktopnya.
+///
+/// Kegagalannya sunyi sempurna: tak ada galat, tak ada peringatan, dan
+/// halamannya berfungsi penuh — hanya terlihat salah. Ini kedua kalinya
+/// terjadi; yang pertama `/tamu-masuk` (lihat komentarnya di `nav_visible`).
+///
+/// Yang diadu di sini adalah dua daftar yang memang HARUS sepadan: setiap
+/// tautan yang ditawarkan grid alat, dan daftar path yang diakui `nav_visible`.
+#[test]
+fn setiap_petak_alat_punya_kerangka_desktop() {
+    let staf = baca("src/web/pages/staf.rs");
+    let komponen = baca("src/web/components.rs");
+
+    // Ambil isi PREFIXES apa adanya, lalu petik tiap literalnya.
+    let dalam = komponen
+        .split("const PREFIXES: &[&str] = &[")
+        .nth(1)
+        .expect("PREFIXES tak ditemukan di components.rs");
+    let dalam = &dalam[..dalam.find("];").expect("penutup PREFIXES tak ditemukan")];
+    let prefixes: Vec<String> = dalam
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(|x| x.to_string())
+        .collect();
+    assert!(!prefixes.is_empty(), "parser gagal membaca PREFIXES");
+
+    // Ambil kolom href dari tabel ALAT.
+    let alat = staf
+        .split("const ALAT: &[(&str, &str, &str, &[&str])] = &[")
+        .nth(1)
+        .expect("tabel ALAT tak ditemukan di staf.rs");
+    let alat = &alat[..alat.find("\n];").expect("penutup ALAT tak ditemukan")];
+    let hrefs: Vec<&str> = alat
+        .lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            (!l.starts_with("//")).then_some(l)?;
+            // Bentuk barisnya: ("ikon", "Label", "/tautan", &[…]),
+            let mut petik = l.split('"').skip(1).step_by(2);
+            petik.nth(2)
+        })
+        .filter(|h| h.starts_with('/'))
+        .collect();
+    assert!(hrefs.len() > 5, "hanya menemukan {} petak — parser rusak?", hrefs.len());
+
+    let tertinggal: Vec<&str> = hrefs
+        .iter()
+        .copied()
+        .filter(|h| !prefixes.iter().any(|p| *h == p || h.starts_with(&format!("{p}/"))))
+        .collect();
+    assert!(
+        tertinggal.is_empty(),
+        "petak grid alat menuju halaman yang TIDAK diakui `nav_visible`: {tertinggal:?}\n\
+         Akibatnya halaman itu tampil sebagai kolom ponsel tanpa navbar di desktop.\n\
+         Tambahkan path-nya ke `PREFIXES` di `web/components.rs`."
+    );
+}
+
 #[test]
 fn parser_membaca_rute_dan_tautan() {
     let rute = rute_spa();

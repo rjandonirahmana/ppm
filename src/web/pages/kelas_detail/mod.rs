@@ -99,6 +99,9 @@ fn DetailBody(
 ) -> impl IntoView {
     let class_id = d.id;
     let hero_can_manage = d.can_manage;
+    // Penanda kunci: siapa yang BOLEH menata kelas ini sehari-hari.
+    let boleh_tata = d.can_manage_jadwal;
+    let wali_nama = d.wali_kelas_name.clone();
     let member_count = d.members.len();
     let sched_count = d.schedules.len();
     let sesi_count = d.sessions.len();
@@ -146,6 +149,43 @@ fn DetailBody(
     };
 
     view! {
+        // ── Penanda: kelas ini bukan milik Anda ─────────────────────────────
+        //
+        // Wewenangnya sendiri sudah ditegakkan server (`can_manage_jadwal`
+        // dihitung di sana, dan tiap tombol menata sudah disembunyikan). Yang
+        // hilang adalah PENJELASANNYA: seorang dewan guru membuka kelas yang
+        // bukan asuhannya dan menemukan layar yang hampir kosong dari tombol,
+        // tanpa satu kalimat pun yang menyebut kenapa. Yang wajar ia simpulkan
+        // adalah aplikasinya rusak, bukan bahwa ini memang bukan kelasnya.
+        //
+        // Menyebut NAMA walinya, bukan sekadar "bukan wali kelas": pertanyaan
+        // berikutnya selalu "lalu siapa yang harus saya hubungi", dan
+        // jawabannya sudah ada di data yang sedang ditampilkan.
+        {(!boleh_tata)
+            .then(|| {
+                let pesan = if wali_nama.is_empty() {
+                    "Kelas ini belum punya wali kelas. Hanya wali kelasnya (atau admin) yang boleh menata jadwal, sesi, dan anggotanya."
+                        .to_string()
+                } else {
+                    format!(
+                        "Kelas ini diampu {wali_nama}. Hanya wali kelasnya (atau admin) yang boleh menata jadwal, sesi, dan anggotanya — Anda dapat melihat isinya.",
+                    )
+                };
+                view! {
+                    <div class="ppm-card p-4 flex items-start gap-3 border border-outline-variant/60">
+                        <span class="material-symbols-outlined text-on-surface-variant shrink-0">
+                            "lock"
+                        </span>
+                        <div class="min-w-0">
+                            <p class="text-body-sm font-bold text-on-background">
+                                "Hanya bisa dilihat"
+                            </p>
+                            <p class="text-body-sm text-on-surface-variant mt-0.5">{pesan}</p>
+                        </div>
+                    </div>
+                }
+            })}
+
         // ── Hero kelas (dgn Edit Detail: nama + kategori) ───────────────────
         <div class="spiritual-gradient rounded-2xl p-5 text-on-primary shadow-lg shadow-primary/20 anim-in">
             {move || {

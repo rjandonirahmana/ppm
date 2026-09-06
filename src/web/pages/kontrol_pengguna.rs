@@ -218,6 +218,14 @@ fn InvitePanel() -> impl IntoView {
         ("santri", "Santri"),
         ("parent", "Orang Tua"),
         ("dewan_guru", "Dewan Guru"),
+        // Migrasi 93. Daftar ini TERPISAH dari `PERAN` di manajemen_user.rs —
+        // yang itu untuk menyaring & MENGUBAH peran akun yang sudah ada, yang
+        // ini untuk MENCETAK undangan akun baru. Menambah peran hanya di salah
+        // satunya membuatnya bisa diberikan tapi tak bisa didaftarkan, atau
+        // sebaliknya.
+        ("dewan_guru_finance", "Dewan Guru (Finance)"),
+        ("dewan_guru_absensi", "Dewan Guru (Absensi)"),
+        ("dewan_guru_sarpras", "Dewan Guru (Sarpras)"),
         ("penjaga", "Penjaga"),
     ];
     let session = use_context::<Resource<Option<SessionUser>>>();

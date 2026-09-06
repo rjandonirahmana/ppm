@@ -86,6 +86,23 @@ fn AnalisisBody(
     } = d;
     let scope_note = if is_dewan { "Seluruh pesantren" } else { "Kelas yang Anda ampu" };
 
+    // Peran dibaca lewat Effect (klien saja), BUKAN langsung di dalam `view!`.
+    // Membacanya saat render berarti server merender tanpa sesi dan klien
+    // merender dengan sesi — dua pohon DOM berbeda, dan Leptos memperingatkan
+    // hydration mismatch. Pola yang sama dipakai `pages/staf.rs`.
+    let session = use_context::<Resource<Option<crate::models::SessionUser>>>();
+    let peran = RwSignal::new(String::new());
+    Effect::new(move |_| {
+        let r = session
+            .and_then(|s| s.get())
+            .flatten()
+            .map(|u| u.role)
+            .unwrap_or_default();
+        if peran.get_untracked() != r {
+            peran.set(r);
+        }
+    });
+
     view! {
         <div>
             <p class="text-body-sm text-on-surface-variant">{format!("Assalamu'alaikum, {name}")}</p>
@@ -119,6 +136,44 @@ fn AnalisisBody(
                 <span class="material-symbols-outlined text-primary">"event_busy"</span>
                 <span class="text-body-sm font-semibold text-on-background">"Sedang Izin"</span>
             </a>
+            // Pembayaran — HANYA `dewan_guru_finance` (migrasi 93).
+            //
+            // Petak yang sama sudah ada di grid /staf, tapi itu beranda ADMIN:
+            // `role_home("dewan_guru_finance")` mengarah ke /dewan-guru, jadi
+            // pemegang perannya tak pernah melihat pintu ke tugasnya sendiri.
+            // Wewenangnya sudah benar di server sejak awal (`FINANCE_ROLES`);
+            // yang hilang cuma jalannya ke sana.
+            {move || {
+                (peran.get() == "dewan_guru_finance")
+                    .then(|| {
+                        view! {
+                            <a href="/tagihan" class="ppm-card p-3 flex items-center gap-2 press">
+                                <span class="material-symbols-outlined text-primary">"payments"</span>
+                                <span class="text-body-sm font-semibold text-on-background">
+                                    "Pembayaran"
+                                </span>
+                            </a>
+                        }
+                    })
+            }}
+            // Sarana — hanya `dewan_guru_sarpras` (migrasi 95). Alasannya sama
+            // dengan Pembayaran di atas: perannya mendarat di /dewan-guru,
+            // sedangkan petak Sarana di grid alat ada di /staf.
+            {move || {
+                (peran.get() == "dewan_guru_sarpras")
+                    .then(|| {
+                        view! {
+                            <a href="/sarana" class="ppm-card p-3 flex items-center gap-2 press">
+                                <span class="material-symbols-outlined text-primary">
+                                    "inventory_2"
+                                </span>
+                                <span class="text-body-sm font-semibold text-on-background">
+                                    "Sarana"
+                                </span>
+                            </a>
+                        }
+                    })
+            }}
         </div>
 
         // Desktop: ringkasan harian (hero+progres+sesi hari ini) kolom utama

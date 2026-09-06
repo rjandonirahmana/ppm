@@ -67,6 +67,7 @@ pub mod recording;
 pub mod rekap;
 pub mod registration;
 pub mod santri;
+pub mod sarana;
 pub mod semester;
 pub mod server;
 pub mod sessions;

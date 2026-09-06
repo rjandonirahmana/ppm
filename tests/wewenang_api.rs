@@ -191,6 +191,50 @@ fn notifikasi_dijaga_login_bukan_peran() {
     }
 }
 
+/// SPEK — `dewan_guru_finance` mengurus penagihan, bukan catatan uangnya.
+///
+/// Ia cerminan `santri_finance`: melihat siapa belum bayar, menandai lunas,
+/// memverifikasi setoran. Mencatat dan MENGHAPUS pembayaran tetap di ketua,
+/// karena itu yang mengubah catatan uang secara permanen.
+///
+/// Diuji dari sumbernya supaya penambahan berikutnya ke `BILL_ADMIN_ROLES`
+/// berhenti di sini, bukan di rekening pesantren.
+#[test]
+fn dewan_guru_finance_boleh_tagihan_tapi_bukan_catatan_uang() {
+    let src = sumber_api();
+    let konst = konstanta_peran(&src);
+
+    let finance = konst.get("FINANCE_ROLES").expect("FINANCE_ROLES hilang");
+    assert!(
+        finance.iter().any(|r| r == "dewan_guru_finance"),
+        "dewan_guru_finance harus masuk FINANCE_ROLES: {finance:?}"
+    );
+
+    let bill_admin = konst.get("BILL_ADMIN_ROLES").expect("BILL_ADMIN_ROLES hilang");
+    assert!(
+        !bill_admin.iter().any(|r| r == "dewan_guru_finance"),
+        "dewan_guru_finance TIDAK boleh mencatat/menghapus pembayaran: {bill_admin:?}"
+    );
+    assert_eq!(bill_admin, &vec!["ketua".to_string()], "BILL_ADMIN tetap ketua saja");
+}
+
+/// Peran keuangan TIDAK membuka pintu keuangan bagi dewan guru biasa.
+///
+/// `role_satisfies` membuat `dewan_guru_finance` memenuhi `dewan_guru`, TAPI
+/// tidak sebaliknya. Kalau suatu saat "dewan_guru" polos ikut ditulis di
+/// `FINANCE_ROLES`, seluruh dewan guru mendadak melihat siapa yang menunggak —
+/// dan itu urusan keluarga santri, bukan ruang guru.
+#[test]
+fn dewan_guru_biasa_tak_masuk_keuangan() {
+    let konst = konstanta_peran(&sumber_api());
+    let finance = konst.get("FINANCE_ROLES").expect("FINANCE_ROLES hilang");
+    assert!(
+        !finance.iter().any(|r| r == "dewan_guru"),
+        "dewan_guru polos tak boleh masuk FINANCE_ROLES: {finance:?}"
+    );
+    assert!(!finance.iter().any(|r| r == "admin"), "admin sengaja di luar keuangan");
+}
+
 /// SPEK A — perizinan bukan urusan ketua/admin.
 ///
 /// Izin diputuskan orang yang mengenal santrinya, yaitu wali kelas KBM-nya.

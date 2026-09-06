@@ -21,6 +21,7 @@ pub mod parent;
 pub mod phone;
 pub mod rekap;
 pub mod santri;
+pub mod sarana;
 pub mod schedule;
 pub mod server;
 
@@ -43,5 +44,6 @@ pub use parent::*;
 pub use phone::*;
 pub use rekap::*;
 pub use santri::*;
+pub use sarana::*;
 pub use schedule::*;
 pub use server::*;

@@ -27,10 +27,38 @@ use crate::repository as repo;
 
 /// Peran yang boleh diundang mendaftar sendiri — TIDAK termasuk admin (sama
 /// aturan e-ticketing: "Admin accounts cannot self-register").
-// 'teacher' dihapus (digabung ke dewan_guru, migrasi 36). Peran finance baru
-// (ketua, santri_finance) TIDAK di sini — dibuat admin lewat kontrol pengguna,
-// bukan via link undangan publik.
-pub const INVITABLE_ROLES: &[&str] = &["dewan_guru", "santri", "parent", "penjaga"];
+// 'teacher' dihapus (digabung ke dewan_guru, migrasi 36).
+//
+// `ketua` dan `santri_finance` TETAP di luar daftar ini: keduanya diberikan
+// dengan menaikkan akun yang SUDAH ADA lewat /manajemen-user, bukan lewat link
+// yang bisa diteruskan siapa saja.
+//
+// Dua peran dewan guru bertugas-tambahan (migrasi 93) DIMASUKKAN atas permintaan
+// pengurus, supaya petugas baru bisa langsung didaftarkan pada perannya tanpa
+// dua langkah. Pagarnya ada tiga, dan ketiganya perlu:
+//   1. `create_invite_action` sudah menuntut admin/ketua untuk undangan APA PUN;
+//   2. keduanya terdaftar di `STAFF_INVITABLE_ROLES`, jadi `can_invite` menolak
+//      pembuatnya yang bukan admin bahkan bila gerbang pertama kelak dilonggarkan;
+//   3. kuotanya dibatasi 1 di `create_invite` — link yang menjadikan orang
+//      pemegang kunci keuangan tak boleh bisa dipakai seratus orang.
+pub const INVITABLE_ROLES: &[&str] = &[
+    "dewan_guru",
+    "dewan_guru_finance",
+    "dewan_guru_absensi",
+    "dewan_guru_sarpras",
+    "santri",
+    "parent",
+    "penjaga",
+];
+
+/// Peran yang undangannya WAJIB sekali pakai.
+///
+/// Undangan biasa boleh berkuota sampai 1000 — itu memang gunanya saat intake
+/// santri. Untuk peran yang memegang kunci (keuangan, pengesahan kehadiran
+/// lintas kelas) kuota besar berarti satu tautan yang bocor menghasilkan
+/// sejumlah petugas yang tak seorang pun berniat mengangkat.
+pub const SEKALI_PAKAI_ROLES: &[&str] =
+    &["dewan_guru_finance", "dewan_guru_absensi", "dewan_guru_sarpras"];
 
 // Kebijakan siapa-boleh-mengundang-siapa ada di models::can_invite —
 // SENGAJA di models, bukan di sini, karena dropdown peran di frontend (WASM)
@@ -139,7 +167,10 @@ pub async fn create_invite(
     if !crate::models::can_invite(by_role, role) {
         bail_user!("Hanya admin yang boleh membuat undangan untuk peran staf.");
     }
-    let max_uses = max_uses.clamp(1, 1000);
+    // Peran berkunci: sekali pakai, apa pun yang diminta pemanggil. Dibatasi di
+    // SERVER, bukan di layar — layar hanya menyarankan.
+    let batas_atas = if SEKALI_PAKAI_ROLES.contains(&role) { 1 } else { 1000 };
+    let max_uses = max_uses.clamp(1, batas_atas);
     let ttl_secs = (ttl_days.clamp(1, 30) as u64) * 86400;
     let mut bytes = [0u8; 16];
     rand::rng().fill(&mut bytes);
@@ -169,6 +200,9 @@ fn role_label(role: &str) -> &'static str {
     match role {
         "teacher" => "Guru",
         "dewan_guru" => "Dewan Guru",
+        "dewan_guru_finance" => "Dewan Guru (Finance)",
+        "dewan_guru_absensi" => "Dewan Guru (Absensi)",
+        "dewan_guru_sarpras" => "Dewan Guru (Sarpras)",
         "santri" => "Santri",
         "parent" => "Orang Tua",
         _ => "Pengguna",
