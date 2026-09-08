@@ -409,7 +409,7 @@ fn FormSarana(
 
     view! {
         <Sheet title=judul on_close=on_close>
-            <form class="space-y-3" on:submit=simpan>
+            <form class="space-y-3" method="post" on:submit=simpan>
                 {move || {
                     msg.get()
                         .map(|m| {

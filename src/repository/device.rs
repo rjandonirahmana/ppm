@@ -181,17 +181,29 @@ pub async fn backfill_api_key_hashes(pool: &Pool) -> Result<i64> {
         .await
         .context("backfill: ambil plaintext")?;
 
-    let mut n = 0i64;
-    for r in rows {
-        let id: i64 = r.get(0);
-        let plain: String = r.get(1);
-        c.execute(
-            "UPDATE rfid_devices SET api_key_hash = $2 WHERE id = $1",
-            &[&id, &crate::service::admin::hash_api_key(&plain)],
+    if rows.is_empty() {
+        return Ok(0);
+    }
+
+    // Hash dihitung di Rust (SHA-256 lewat `service::admin::hash_api_key`) —
+    // Postgres tak boleh yang melakukannya, karena aturan hashing-nya harus
+    // sama persis dengan yang dipakai saat perangkat menyapa `/api/rfid/*`.
+    // Yang bisa dibatch adalah PENULISANNYA, dan itulah yang dilakukan di sini:
+    // satu UPDATE untuk semua perangkat, bukan satu UPDATE per perangkat.
+    let ids: Vec<i64> = rows.iter().map(|r| r.get(0)).collect();
+    let hashes: Vec<String> = rows
+        .iter()
+        .map(|r| crate::service::admin::hash_api_key(&r.get::<_, String>(1)))
+        .collect();
+
+    let n = c
+        .execute(
+            "UPDATE rfid_devices d SET api_key_hash = t.h \
+               FROM unnest($1::bigint[], $2::text[]) AS t(id, h) \
+              WHERE d.id = t.id",
+            &[&ids, &hashes],
         )
         .await
         .context("backfill: tulis hash")?;
-        n += 1;
-    }
-    Ok(n)
+    Ok(n as i64)
 }

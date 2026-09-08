@@ -76,43 +76,88 @@ pub(crate) fn parse_dates(raw: &[String]) -> Vec<NaiveDate> {
         .collect()
 }
 
+/// Judul sesi yang lahir dari sebuah jadwal. Jadwal tanpa judul tetap harus
+/// menghasilkan sesi yang punya nama di layar.
+fn judul_sesi(title: String) -> String {
+    if title.trim().is_empty() {
+        "Sesi Kelas".to_string()
+    } else {
+        title
+    }
+}
+
+/// Tanggal-tanggal yang perlu dimaterialisasi untuk satu jadwal, dibatasi
+/// `end_date`-nya.
+///
+/// JANGAN materialisasi melewati `end_date` jadwal (BUG lama: selalu +7 hari
+/// → sesi di luar rentang dibuat ULANG tepat setelah update_schedule).
+fn tanggal_horizon(
+    rec: &str,
+    start_date: NaiveDate,
+    end_date: Option<NaiveDate>,
+    today: NaiveDate,
+    horizon: NaiveDate,
+) -> Vec<NaiveDate> {
+    let from = today.max(start_date);
+    let to = end_date.map_or(horizon, |ed| horizon.min(ed));
+    dates_in_range(rec, start_date, &[], from, to)
+}
+
 /// Auto-materialisasi sesi MENDATANG (hari ini s/d 7 hari ke depan) dari semua
-/// jadwal aktif kelas — idempotent (insert_sessions melewati duplikat). Dipanggil
-/// saat BUAT jadwal (bukan tiap buka halaman) agar sesi minggu ini siap diisi.
+/// jadwal aktif kelas — idempotent. Dipanggil saat BUAT jadwal (bukan tiap buka
+/// halaman) agar sesi minggu ini siap diisi.
+///
+/// Tanggal seluruh jadwal dikumpulkan dulu, baru disisipkan SEKALI. Bentuk
+/// sebelumnya menyisipkan per jadwal di dalam loop — dan ini jalur request.
 async fn ensure_upcoming_sessions(pool: &Pool, class_id: i64) -> Result<()> {
     let today = Utc::now().with_timezone(&wib()).date_naive();
     let horizon = today + Duration::days(7);
-    for (sid, title, rec, start_date, end_date) in repo::active_schedules_of(pool, class_id).await? {
-        let from = today.max(start_date);
-        // JANGAN materialisasi melewati end_date jadwal (BUG lama: selalu +7 hari
-        // → sesi di luar rentang dibuat ULANG tepat setelah update_schedule).
-        let to = end_date.map_or(horizon, |ed| horizon.min(ed));
-        let dates = dates_in_range(&rec, start_date, &[], from, to);
-        let title = if title.trim().is_empty() {
-            "Sesi Kelas".to_string()
-        } else {
-            title
-        };
-        // Best-effort: kegagalan satu jadwal tak menggagalkan pemuatan detail.
-        let _ = repo::insert_sessions(pool, class_id, sid, &title, &dates).await;
+    let jadwal = repo::active_schedules_of(pool, class_id).await?;
+
+    // Judul dipegang di Vec terpisah karena `SesiBaru` MEMINJAM `&str`-nya:
+    // satu jadwal melahirkan beberapa tanggal, dan menyimpan String di dalam
+    // struct akan menyalin judul yang sama sebanyak tanggalnya.
+    let judul: Vec<String> = jadwal.iter().map(|j| judul_sesi(j.1.clone())).collect();
+    let mut sesi: Vec<repo::SesiBaru> = Vec::new();
+    for ((sid, _, rec, start_date, end_date), title) in jadwal.iter().zip(&judul) {
+        for date in tanggal_horizon(rec, *start_date, *end_date, today, horizon) {
+            sesi.push(repo::SesiBaru {
+                class_id,
+                schedule_id: *sid,
+                title,
+                date,
+            });
+        }
     }
+
+    // Best-effort: kegagalan penyisipan tak menggagalkan pemuatan detail.
+    let _ = repo::insert_sessions_many(pool, &sesi).await;
     Ok(())
 }
 
 /// Materialisasi sesi mendatang untuk SEMUA kelas (dipakai task background
 /// main.rs, di luar jalur request). Idempotent. Return jumlah sesi baru.
+///
+/// SATU query untuk seluruh pesantren. Sebelumnya satu query per jadwal aktif —
+/// puluhan sampai ratusan perjalanan ke database tiap 24 jam.
 pub async fn ensure_upcoming_all(pool: &Pool) -> Result<i64> {
     let today = Utc::now().with_timezone(&wib()).date_naive();
     let horizon = today + Duration::days(7);
-    let mut total = 0i64;
-    for (class_id, sid, title, rec, start_date, end_date) in repo::active_schedules_all(pool).await? {
-        let from = today.max(start_date);
-        let to = end_date.map_or(horizon, |ed| horizon.min(ed));
-        let dates = dates_in_range(&rec, start_date, &[], from, to);
-        let title = if title.trim().is_empty() { "Sesi Kelas".to_string() } else { title };
-        total += repo::insert_sessions(pool, class_id, sid, &title, &dates).await.unwrap_or(0);
+    let jadwal = repo::active_schedules_all(pool).await?;
+
+    let judul: Vec<String> = jadwal.iter().map(|j| judul_sesi(j.2.clone())).collect();
+    let mut sesi: Vec<repo::SesiBaru> = Vec::new();
+    for ((class_id, sid, _, rec, start_date, end_date), title) in jadwal.iter().zip(&judul) {
+        for date in tanggal_horizon(rec, *start_date, *end_date, today, horizon) {
+            sesi.push(repo::SesiBaru {
+                class_id: *class_id,
+                schedule_id: *sid,
+                title,
+                date,
+            });
+        }
     }
-    Ok(total)
+    repo::insert_sessions_many(pool, &sesi).await
 }
 
 /// `end_date` jadwal (kalau diisi) WAJIB ≥ BESOK. Hari ini tak boleh jadi akhir:
@@ -1803,16 +1848,37 @@ pub async fn kelas_saya(
     } else {
         repo::classes_of_student(pool, user_id).await?
     };
+    // TIGA query untuk SELURUH kelas, bukan tiga query PER kelas.
+    //
+    // Bentuk sebelumnya memanggil versi satu-kelas di dalam loop. `tokio::join!`
+    // di sana memang memparalelkan ketiganya, tapi hanya di dalam satu putaran:
+    // putarannya sendiri tetap berurutan, jadi biayanya 3N query DAN 3N
+    // pengambilan koneksi dari pool yang cuma berisi 16. Seorang wali dengan
+    // delapan kelas membayar 24 perjalanan ke database tiap kali membuka
+    // halaman ini, dan tak ada yang membatasi jumlah kelas seseorang.
+    //
+    // Sekarang `join!` memparalelkan tiga query yang masing-masing sudah
+    // mencakup semua kelas sekaligus — totalnya 4, apa pun jumlah kelasnya.
+    let ids: Vec<i64> = kelas.iter().map(|k| k.id).collect();
+    let (cur_by_class, sched_by_class, members_by_class) = tokio::join!(
+        repo::class_curriculum_many(pool, &ids),
+        repo::class_schedules_many(pool, &ids),
+        repo::class_members_many(pool, &ids),
+    );
+    let mut cur_by_class = cur_by_class?;
+    let mut sched_by_class = sched_by_class?;
+    let mut members_by_class = members_by_class?;
+
+    // Dihitung SEKALI di luar loop: dulu diambil ulang tiap kelas, dan sebuah
+    // pergantian hari di tengah perulangan bisa membuat dua kelas disaring
+    // dengan tanggal yang berbeda.
+    let hari_ini = crate::service::fmt::today_wib();
     let mut items = Vec::with_capacity(kelas.len());
 
     for k in kelas {
-        let (cur_rows, sched_rows, members) = tokio::join!(
-            repo::class_curriculum(pool, k.id),
-            repo::class_schedules(pool, k.id),
-            repo::class_members(pool, k.id),
-        );
-
-        let curriculum = cur_rows?
+        let curriculum = cur_by_class
+            .remove(&k.id)
+            .unwrap_or_default()
             .into_iter()
             .map(|c| {
                 let category = c.book_category.clone().unwrap_or_default();
@@ -1868,8 +1934,9 @@ pub async fn kelas_saya(
         // jadwal kelas, termasuk yang `end_date`-nya sudah lewat dan yang
         // tanggal-tanggal khususnya sudah terlampaui semua. Tanpa saringan ini
         // santri melihat materi lama seolah masih berjalan.
-        let hari_ini = crate::service::fmt::today_wib();
-        let schedules = sched_rows?
+        let schedules = sched_by_class
+            .remove(&k.id)
+            .unwrap_or_default()
             .into_iter()
             .filter(|s| match s.end_date {
                 Some(akhir) => akhir >= hari_ini,
@@ -1902,7 +1969,9 @@ pub async fn kelas_saya(
             })
             .collect();
 
-        let members = members?
+        let members = members_by_class
+            .remove(&k.id)
+            .unwrap_or_default()
             .into_iter()
             .map(|(id, name, nis, tahun)| {
                 let nis = nis.unwrap_or_default();

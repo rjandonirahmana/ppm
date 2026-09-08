@@ -510,17 +510,26 @@ pub async fn sesi_perlu_pengingat(
         .collect())
 }
 
-/// Tandai pengingat sesi sudah terkirim. Dipanggil SETELAH WA berhasil dikirim
-/// — bila ditandai lebih dulu lalu pengirimannya gagal, walinya tak akan
-/// pernah diingatkan sama sekali.
-pub async fn tandai_pengingat_terkirim(pool: &Pool, session_id: i64) -> Result<()> {
+/// Tandai pengingat sesi sudah terkirim, untuk BANYAK sesi sekaligus.
+/// Dipanggil SETELAH WA berhasil dikirim — bila ditandai lebih dulu lalu
+/// pengirimannya gagal, walinya tak akan pernah diingatkan sama sekali.
+///
+/// Bentuk jamak karena pemanggilnya (`service::permits::ingatkan_wali_sesi`)
+/// memutari daftar sesi: versi satu-sesi berarti satu UPDATE dan satu
+/// pengambilan koneksi pool per sesi. Pengirimannya sendiri tetap satu per satu
+/// — itu panggilan HTTP ke WAHA, bukan database — tapi penandaannya dikumpulkan
+/// dan ditulis sekali di akhir.
+pub async fn tandai_pengingat_terkirim_many(pool: &Pool, session_ids: &[i64]) -> Result<()> {
+    if session_ids.is_empty() {
+        return Ok(());
+    }
     let c = pool.get().await?;
     c.execute(
-        "UPDATE class_sessions SET reminded_at = NOW() WHERE id = $1",
-        &[&session_id],
+        "UPDATE class_sessions SET reminded_at = NOW() WHERE id = ANY($1::bigint[])",
+        &[&session_ids],
     )
     .await
-    .context("tandai_pengingat_terkirim")?;
+    .context("tandai_pengingat_terkirim_many")?;
     Ok(())
 }
 

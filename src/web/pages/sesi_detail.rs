@@ -887,9 +887,6 @@ fn HafalanPanel(class_id: i64, students: Vec<(i64, String)>) -> impl IntoView {
     }
 }
 
-/// Panel verifikasi kehadiran PER-SESI (satu tahap: guru pengisi/wali kelas).
-/// Centang = setujui (default); hilangkan centang = tolak. Satu klik memproses
-
 /// Panel GABUNGAN absensi + verifikasi satu sesi.
 ///
 /// Dua hal yang sengaja berbeda dari versi sebelumnya:

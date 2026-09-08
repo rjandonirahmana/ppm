@@ -38,10 +38,22 @@ pub async fn notify_permit_splits(
     by_parent: bool,
 ) {
     let pemohon = if by_parent { "orang tua" } else { "santri sendiri" };
+
+    // SATU query untuk seluruh pecahan, bukan satu per pecahan. Pengiriman WA
+    // di bawah tetap satu per satu — itu HTTP ke WAHA, bukan database.
+    let kelas_ids: Vec<Option<i64>> = splits.iter().map(|sp| sp.class_id).collect();
+    let targets = match repo::permit_notify_targets_many(pool, student_id, &kelas_ids).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(student_id, "notifikasi izin: gagal ambil penerima: {e:#}");
+            return;
+        }
+    };
+
     for sp in splits {
-        let t = match repo::permit_notify_targets(pool, student_id, sp.class_id).await {
-            Ok(Some(t)) => t,
-            _ => continue,
+        // Kunci 0 = pecahan tanpa kelas tertentu (lihat repo::permit_notify_targets_many).
+        let Some(t) = targets.get(&sp.class_id.unwrap_or(0)) else {
+            continue;
         };
         let kelas = if sp.class_names.is_empty() {
             String::new()
@@ -417,10 +429,14 @@ pub async fn ingatkan_wali_sesi(
 ) -> Result<i64> {
     let sesi = repo::sesi_perlu_pengingat(pool, dari_menit, sampai_menit).await?;
     let mut terkirim = 0i64;
+    // Sesi yang boleh ditandai dikumpulkan dulu, ditulis SEKALI di akhir.
+    // Sebelumnya tiap sesi memicu UPDATE-nya sendiri di dalam loop.
+    let mut tandai: Vec<i64> = Vec::with_capacity(sesi.len());
+
     for s in sesi {
         if s.ada_guru {
             // Sudah lengkap — tandai supaya tak diperiksa lagi tiap tick.
-            let _ = repo::tandai_pengingat_terkirim(pool, s.session_id).await;
+            tandai.push(s.session_id);
             continue;
         }
         let msg = format!(
@@ -434,8 +450,10 @@ pub async fn ingatkan_wali_sesi(
             .is_ok()
         {
             // Ditandai HANYA setelah terkirim — kalau ditandai lebih dulu dan
-            // WA-nya gagal, walinya tak akan pernah diingatkan.
-            let _ = repo::tandai_pengingat_terkirim(pool, s.session_id).await;
+            // WA-nya gagal, walinya tak akan pernah diingatkan. Penundaan
+            // penulisan sampai akhir loop TIDAK mengubah aturan itu: yang gagal
+            // tak pernah masuk daftar.
+            tandai.push(s.session_id);
             terkirim += 1;
         } else {
             tracing::warn!(
@@ -444,6 +462,13 @@ pub async fn ingatkan_wali_sesi(
                 "pengingat sesi gagal terkirim — akan dicoba lagi tick berikutnya"
             );
         }
+    }
+
+    // Kegagalan menandai tak boleh menggagalkan tugas latar yang WA-nya sudah
+    // telanjur terkirim; akibatnya hanya satu pengingat ganda pada tick
+    // berikutnya, dan itu jauh lebih ringan daripada pengingat yang hilang.
+    if let Err(e) = repo::tandai_pengingat_terkirim_many(pool, &tandai).await {
+        tracing::warn!("gagal menandai {} pengingat sesi: {e:#}", tandai.len());
     }
     Ok(terkirim)
 }

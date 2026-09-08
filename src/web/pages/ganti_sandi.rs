@@ -63,7 +63,7 @@ pub fn GantiSandiPage() -> impl IntoView {
             <div class="min-h-screen bg-surface pb-24 max-w-md mx-auto ppm-wide">
                 <MobileHeader title="Ganti Kata Sandi" subtitle="Perbarui sandi akun Anda" back_href="/profil" />
                 <div class="px-5 pt-5">
-                    <form class="ppm-card p-6 space-y-4" on:submit=submit>
+                    <form class="ppm-card p-6 space-y-4" method="post" on:submit=submit>
                         {move || {
                             msg.get().map(|(ok, t)| {
                                 let cls = if ok {

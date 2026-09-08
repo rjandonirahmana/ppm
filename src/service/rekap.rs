@@ -229,23 +229,24 @@ pub async fn weekly_recap(pool: &Pool, offset: i32) -> Result<WeeklyRecapData> {
 
 /// Kreditkan reward mingguan (admin) untuk pekan `offset`. Idempotent per santri
 /// (weekly_rewards UNIQUE). Return (jumlah santri baru dikredit, total poin).
+///
+/// Seluruh santri dikreditkan dalam SATU pernyataan — lihat
+/// [`repo::credit_weekly_rewards_many`] untuk kenapa ini tak boleh kembali
+/// menjadi loop. `compute_rewards` memakai `BTreeMap` berkunci `user_id`, jadi
+/// daftar di bawah dijamin tak memuat santri yang sama dua kali.
 pub async fn credit_weekly_rewards(pool: &Pool, offset: i32) -> Result<(i64, i64)> {
     let (start, end) = week_range(offset);
     let counts = repo::weekly_counts_by_category(pool, start, end).await?;
     let credited = repo::credited_users_for_week(pool, start).await?;
     let rewards = compute_rewards(counts, &credited);
-    let mut n = 0i64;
-    let mut total = 0i64;
-    for r in rewards {
-        if r.credited {
-            continue;
-        }
-        if repo::credit_weekly_reward(pool, r.user_id, start, r.points, &r.detail).await? {
-            n += 1;
-            total += r.points as i64;
-        }
-    }
-    Ok((n, total))
+    // Yang sudah dikredit disaring lebih dulu supaya larik yang dikirim ke
+    // Postgres tak memuat baris yang sudah pasti kena ON CONFLICT.
+    let calon: Vec<(i64, i32, &str)> = rewards
+        .iter()
+        .filter(|r| !r.credited)
+        .map(|r| (r.user_id, r.points, r.detail.as_str()))
+        .collect();
+    repo::credit_weekly_rewards_many(pool, start, &calon).await
 }
 
 #[cfg(test)]

@@ -353,6 +353,60 @@ async fn main() -> Result<()> {
             move || shell(opts.clone())
         })
         .fallback(leptos_axum::file_and_error_handler(shell))
+        // ── POST ke rute halaman → muat ulang halamannya, bukan 405 ──────
+        //
+        // Tiap <form> di aplikasi ini ditulis `method="post"` tanpa `action`,
+        // jadi submit NATIF-nya menuju path halaman itu sendiri. Itu disengaja:
+        // `on:submit` (prevent_default + fetch WASM) baru aktif SESUDAH hidrasi,
+        // dan `method="post"` menjaga agar submit yang mendahului hidrasi tak
+        // melempar isian ke query string. Lihat catatan panjang di
+        // `web/pages/login.rs`.
+        //
+        // Yang catatan itu janjikan — "POST tanpa handler nyata → cuma render
+        // ulang halaman" — TIDAK pernah benar: `leptos_routes` mendaftarkan rute
+        // halaman untuk GET saja, jadi POST-nya dijawab 405 oleh axum dan
+        // pengguna melihat halaman galat peramban. Di HP lambat, yang menekan
+        // tombol sebelum WASM 20 MB selesai dimuat, itu bukan kasus langka.
+        //
+        // 303 See Other, BUKAN 307/308: hanya 303 yang memerintahkan peramban
+        // MENGULANG sebagai GET. 307/308 mempertahankan POST dan akan kembali
+        // ke 405 yang sama, selamanya.
+        //
+        // Hanya POST yang dialihkan. Kalau semua metode dialihkan, GET ke rute
+        // server fn (`/api-fn/...`, terdaftar POST saja) akan dijawab 303 ke
+        // dirinya sendiri — dan peramban berputar tanpa henti. Dengan syarat
+        // ini, permintaan hasil pengalihan sudah berupa GET sehingga tak pernah
+        // dialihkan untuk kedua kalinya.
+        .method_not_allowed_fallback(
+            |method: axum::http::Method, uri: axum::http::Uri| async move {
+                use axum::response::IntoResponse;
+                if method == axum::http::Method::POST {
+                    axum::response::Redirect::to(uri.path()).into_response()
+                } else {
+                    axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response()
+                }
+            },
+        )
+        // ── Memo sesi berumur satu permintaan ────────────────────────────
+        //
+        // `OnceCell` BARU untuk tiap permintaan yang masuk. Satu render SSR
+        // memanggil banyak server fn (laporan: 6 Resource, tagihan: 5) dan
+        // setiap `require_session` menanyakan baris users yang SAMA ke DB.
+        // Dengan ini pertanyaannya diajukan sekali per permintaan HTTP —
+        // bukan sekali per server fn.
+        //
+        // Dipasang di router INI karena `leptos_routes` mendaftarkan halaman
+        // SSR sekaligus seluruh rute server fn (`/api-fn/...`), jadi keduanya
+        // terlayani lapisan yang sama. Rute non-Leptos (unggahan, RFID, ekspor)
+        // tak memakainya dan tak perlu — masing-masing memeriksa sesi paling
+        // banyak sekali.
+        .layer(axum::middleware::from_fn(
+            |mut req: axum::extract::Request, next: axum::middleware::Next| async move {
+                req.extensions_mut()
+                    .insert(ppm::web::api::SesiCache::default());
+                next.run(req).await
+            },
+        ))
         // AppState untuk server functions (diekstrak via Extension).
         .layer(axum::Extension(state.clone()))
         .with_state(leptos_options)
@@ -436,6 +490,40 @@ async fn main() -> Result<()> {
         .route("/api/export/laporan", get(ppm::web::export::download))
         .layer(axum::Extension(state.clone()));
 
+    // ── Daftar header keamanan, dirakit SEKALI saat start ────────────────────
+    //
+    // Nilainya ada di `web::security`, bukan di sini: main.rs merakit router,
+    // bukan memutuskan kebijakan. Konversi ke tipe `http` dilakukan di sini
+    // karena modul itu ikut dikompilasi untuk wasm32, yang tak punya axum.
+    //
+    // HSTS hanya ikut saat LEPTOS_ENV=PROD. Di pengembangan (http://localhost)
+    // ia memaksa browser mencoba HTTPS ke port yang tak melayaninya, dan
+    // efeknya menetap di browser itu lama setelah header-nya dicabut.
+    let header_keamanan: std::sync::Arc<Vec<(axum::http::HeaderName, axum::http::HeaderValue)>> = {
+        use axum::http::{HeaderName, HeaderValue};
+        let mut v: Vec<(HeaderName, HeaderValue)> = Vec::new();
+        let mut tambah = |nama: &'static str, nilai: &'static str| {
+            match (HeaderName::from_bytes(nama.as_bytes()), HeaderValue::from_str(nilai)) {
+                (Ok(n), Ok(x)) => v.push((n, x)),
+                // Nilainya konstanta di web::security dan diuji di sana, jadi
+                // cabang ini seharusnya mustahil — tapi menjatuhkan server saat
+                // start karena satu header tak jauh lebih baik daripada berjalan
+                // tanpa header itu sambil memberi tahu.
+                _ => tracing::error!("header keamanan tak sah, dilewati: {nama}"),
+            }
+        };
+        for (nama, nilai) in ppm::web::security::HEADER_STATIS {
+            tambah(nama, nilai);
+        }
+        if ppm::web::security::produksi() {
+            let (nama, nilai) = ppm::web::security::HSTS;
+            tambah(nama, nilai);
+        } else {
+            tracing::info!("HSTS dilewati (LEPTOS_ENV bukan PROD)");
+        }
+        std::sync::Arc::new(v)
+    };
+
     let app: axum::Router = axum::Router::new()
         .route("/healthz", get(|| async { "ok" }))
         // Langganan kalender: diambil server Google, bukan peramban santri —
@@ -451,6 +539,32 @@ async fn main() -> Result<()> {
         .merge(export_routes)
         .merge(static_routes)
         .merge(leptos_router)
+        // ── Header keamanan, SEMUA rute ─────────────────────────────────
+        //
+        // Sebelum ini tak ada satu pun: tak ada nosniff, tak ada pembatasan
+        // iframe, tak ada Referrer-Policy — pada aplikasi yang memegang absensi,
+        // poin, izin, dan tagihan santri. CSP-nya sendiri TIDAK di sini melainkan
+        // sebagai <meta> di dalam <head>, karena ia butuh nonce yang baru lahir
+        // saat render; lihat web/security.rs untuk pembagian tugasnya.
+        //
+        // `if_not_present`, bukan `overriding`: bila suatu saat sebuah handler
+        // perlu melonggarkan salah satunya untuk dirinya sendiri, ia bisa —
+        // dan lapisan ini tak diam-diam membatalkannya.
+        .layer(axum::middleware::map_response(move |mut res: axum::response::Response| {
+            let daftar = header_keamanan.clone();
+            async move {
+                let h = res.headers_mut();
+                // Sisipkan hanya bila belum ada: kalau suatu saat sebuah handler
+                // perlu melonggarkan salah satunya untuk dirinya sendiri, ia
+                // bisa — dan lapisan ini tak diam-diam membatalkannya.
+                for (nama, nilai) in daftar.iter() {
+                    if !h.contains_key(nama) {
+                        h.insert(nama.clone(), nilai.clone());
+                    }
+                }
+                res
+            }
+        }))
         .layer(tower_http::compression::CompressionLayer::new())
         // Log akses. Fitur `trace` tower-http sudah ikut ter-compile sejak awal
         // tapi tak pernah dipasang — biayanya dibayar tanpa manfaat. Level DEBUG

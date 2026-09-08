@@ -113,6 +113,32 @@ mod ssr_helpers {
         }
     }
 
+    /// Memo jawaban DB tentang sesi, berumur SATU permintaan HTTP.
+    ///
+    /// ── MASALAH YANG DISELESAIKANNYA ─────────────────────────────────────
+    /// `require_session` menanyakan peran & keaktifan ke database pada SETIAP
+    /// pemanggilan server fn — itu yang membuat pencabutan akses berlaku
+    /// seketika, dan itu tak boleh hilang. Tapi saat SSR, satu halaman
+    /// memanggil banyak server fn di dalam satu permintaan yang sama:
+    /// `pages/laporan.rs` punya enam `Resource`, `pages/tagihan.rs` lima.
+    /// Enam pertanyaan identik, ke baris yang sama, dalam hitungan milidetik —
+    /// beserta enam pengambilan koneksi dari pool yang berisi 16.
+    ///
+    /// ── KENAPA INI TIDAK MELONGGARKAN PENCABUTAN ─────────────────────────
+    /// Umurnya persis satu permintaan HTTP: lapisannya (lihat `main.rs`)
+    /// membuat `OnceCell` BARU untuk tiap permintaan yang masuk. Sesudah
+    /// hidrasi, tiap server fn adalah permintaan POST-nya sendiri dan
+    /// karenanya mendapat cache kosong — jumlah query-nya tak berubah sama
+    /// sekali di sana, dan memang begitu seharusnya.
+    ///
+    /// `get_or_try_init` hanya menyimpan hasil yang BERHASIL. Kegagalan
+    /// transport tidak ikut di-cache, jadi jatuh-kembali-ke-klaim tetap
+    /// keputusan per pemanggilan seperti semula.
+    #[derive(Clone, Default)]
+    pub struct SesiCache(
+        pub std::sync::Arc<tokio::sync::OnceCell<Option<SessionUser>>>,
+    );
+
     /// Sesi wajib — Err("unauth") bila belum login/token invalid.
     pub async fn require_session() -> Result<SessionUser, ServerFnError> {
         let state = app_state().await?;
@@ -166,7 +192,22 @@ mod ssr_helpers {
         // kelonggaran ini hanya berlaku selama detik-detik DB tak terjangkau,
         // saat mana tindakan apa pun yang berarti toh akan gagal di query
         // berikutnya.
-        match crate::repository::session_user_aktif(&state.pool, claims.user_id).await {
+        // Jawaban DB dipakai bersama oleh SELURUH server fn dalam SATU permintaan
+        // yang sama — lihat [`SesiCache`]. Kalau cache-nya tak ada (rute yang tak
+        // melewati lapisannya), pertanyaannya diajukan langsung; itu perilaku
+        // lama, dan tetap benar.
+        let jawaban = match leptos_axum::extract::<axum::Extension<SesiCache>>().await {
+            Ok(axum::Extension(cache)) => {
+                cache
+                    .0
+                    .get_or_try_init(|| crate::repository::session_user_aktif(&state.pool, claims.user_id))
+                    .await
+                    .cloned()
+            }
+            Err(_) => crate::repository::session_user_aktif(&state.pool, claims.user_id).await,
+        };
+
+        match jawaban {
             Ok(Some(u)) => Ok(u),
             Ok(None) => {
                 let _ = clear_auth_cookie();
@@ -255,6 +296,10 @@ mod ssr_helpers {
 
 #[cfg(feature = "ssr")]
 use ssr_helpers::*;
+// Dipakai `main.rs` untuk memasang lapisannya. Hanya tipe ini yang perlu keluar
+// dari modul — sisa pembantu di dalamnya tetap urusan berkas ini sendiri.
+#[cfg(feature = "ssr")]
+pub use ssr_helpers::SesiCache;
 
 // ── Server functions ───────────────────────────────────────────────────────────
 

@@ -289,3 +289,67 @@ fn penanda_pelepas_dikenali() {
         );
     }
 }
+
+/// Setiap `<script>` inline WAJIB membawa `nonce`.
+///
+/// ── KENAPA INI PERLU DIJAGA TES ──────────────────────────────────────────────
+/// Sejak CSP dipasang (`web/security.rs`), `script-src` hanya menerima skrip
+/// inline yang nonce-nya cocok dengan nonce permintaan itu. Skrip inline yang
+/// ditambahkan tanpa `nonce=` akan DIBLOKIR peramban — dan diblokirnya tak
+/// terlihat di mana pun kecuali konsol pengembang: halamannya tetap ter-render,
+/// tombolnya tetap tergambar, hanya perilakunya yang hilang.
+///
+/// Itu persis bentuk kegagalan yang sudah beberapa kali dikejar proyek ini
+/// ("terlihat tapi tak bisa diklik"), dan kompilator tak bisa menangkapnya:
+/// `view!` menerima `<script>` tanpa atribut apa pun dengan senang hati.
+///
+/// Skrip yang dihasilkan Leptos sendiri (`HydrationScripts`, `AutoReload`)
+/// mengambil nonce-nya sendiri dari context dan tak lewat sini.
+#[test]
+fn script_inline_selalu_bernonce() {
+    let mut tanpa_nonce = Vec::new();
+
+    for berkas in berkas_ui() {
+        let src = fs::read_to_string(&berkas).unwrap_or_default();
+
+        for (n, baris) in src.lines().enumerate() {
+            // `<script>` di dalam KOMENTAR bukan skrip — berkas ini sendiri
+            // menjelaskan aturannya dengan menyebut tagnya, dan versi pertama
+            // tes ini menuduh kalimat-kalimat itu.
+            let kode = match baris.find("//") {
+                Some(k) => &baris[..k],
+                None => baris,
+            };
+            let Some(i) = kode.find("<script") else { continue };
+
+            // Atribut boleh tersebar ke baris-baris berikutnya:
+            //     <script
+            //         nonce=…
+            //         inner_html=…
+            //     ></script>
+            // Jadi jendelanya dibuka dari sini sampai `>` penutup tag pembuka,
+            // melintasi baris. `inner_html` sering memuat `>` di dalam JS-nya,
+            // tapi `nonce` selalu ditulis sebelum itu — dan jendela yang
+            // kepanjangan hanya membuat tes ini lebih pemaaf, tak salah tuduh.
+            let mulai = src
+                .lines()
+                .take(n)
+                .map(|l| l.len() + 1)
+                .sum::<usize>()
+                + i;
+            let ekor = &src[mulai..];
+            let batas = ekor.find('>').unwrap_or(ekor.len());
+            if !ekor[..batas].contains("nonce") {
+                tanpa_nonce.push(format!("  {berkas}:{}", n + 1));
+            }
+        }
+    }
+
+    assert!(
+        tanpa_nonce.is_empty(),
+        "{} <script> inline tanpa nonce — akan diblokir CSP dan gagal DIAM-DIAM.\n\
+         Tambahkan `nonce=leptos::nonce::use_nonce()` (lihat web/security.rs):\n{}",
+        tanpa_nonce.len(),
+        tanpa_nonce.join("\n")
+    );
+}

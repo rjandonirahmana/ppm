@@ -128,20 +128,23 @@ pub async fn izin_diajukan(pool: &Pool, permit_ids: &[i64]) {
         }
     };
 
-    for &permit_id in permit_ids {
-        let d = match repo::permit_detail(pool, permit_id).await {
-            Ok(Some(d)) => d,
-            Ok(None) => continue,
-            Err(e) => {
-                tracing::warn!(permit_id, "notif izin baru: gagal baca detail: {e}");
-                continue;
-            }
-        };
+    // Detail SELURUH pengajuan diambil sekali, dan seluruh notifikasi ditulis
+    // sekali. Bentuk sebelumnya melakukan keduanya PER pengajuan di dalam loop —
+    // dua query per baris untuk pekerjaan yang muat dalam dua query total.
+    let details = match repo::permit_detail_many(pool, permit_ids).await {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("notif izin baru: gagal baca detail: {e}");
+            return;
+        }
+    };
 
+    let mut items: Vec<NotifBaru> = Vec::new();
+    for d in &details {
         let penerima = penerima(&admins, d.wali_kelas_id);
 
         if penerima.is_empty() {
-            tracing::warn!(permit_id, "notif izin baru: tak ada penerima");
+            tracing::warn!(permit_id = d.id, "notif izin baru: tak ada penerima");
             continue;
         }
 
@@ -155,20 +158,17 @@ pub async fn izin_diajukan(pool: &Pool, permit_ids: &[i64]) {
             (d.requested_by != d.user_id).then_some((&d.requester_name, &d.requester_role)),
         );
 
-        let items: Vec<NotifBaru> = penerima
-            .into_iter()
-            .map(|user_id| NotifBaru {
-                user_id,
-                kind: jenis::IZIN_BARU.into(),
-                title: title.clone(),
-                body: body.clone(),
-                link: Some("/izin-staf".into()),
-            })
-            .collect();
+        items.extend(penerima.into_iter().map(|user_id| NotifBaru {
+            user_id,
+            kind: jenis::IZIN_BARU.into(),
+            title: title.clone(),
+            body: body.clone(),
+            link: Some("/izin-staf".into()),
+        }));
+    }
 
-        if let Err(e) = repo::notif_insert_many(pool, &items).await {
-            tracing::warn!(permit_id, "notif izin baru gagal ditulis: {e}");
-        }
+    if let Err(e) = repo::notif_insert_many(pool, &items).await {
+        tracing::warn!("notif izin baru gagal ditulis ({} baris): {e}", items.len());
     }
 }
 

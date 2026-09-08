@@ -19,10 +19,30 @@ use crate::web::pages::*;
 
 /// Shell HTML — dipanggil Axum untuk tiap SSR request.
 pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
+    // Nonce dibuat SEKALI per permintaan dan dititipkan lewat context, sebelum
+    // apa pun di bawah dirender. `HydrationScripts` dan `AutoReload` mengambil
+    // sendiri dari sana (lihat leptos/src/hydration/mod.rs); dua <script>
+    // inline di berkas ini harus memintanya sendiri lewat `use_nonce()`.
+    //
+    // Fitur `leptos/nonce` sudah dinyalakan di Cargo.toml sejak lama — tapi
+    // sampai sekarang tak ada satu pun pemanggil. Biayanya dibayar tiap render
+    // tanpa ada CSP yang memanfaatkannya.
+    #[cfg(feature = "ssr")]
+    leptos::nonce::provide_nonce();
+    let nonce = leptos::nonce::use_nonce();
+    let csp = crate::web::security::csp_dengan_nonce(nonce.as_deref());
+
     view! {
         <!DOCTYPE html>
         <html lang="id" class="light">
             <head>
+                // ── CSP: WAJIB JADI ELEMEN PERTAMA ────────────────────────
+                // Kebijakan lewat <meta> hanya mengikat apa yang datang
+                // SESUDAHNYA. Digeser ke bawah dua <script> inline di berkas
+                // ini, skripnya lolos tanpa diperiksa dan kebijakannya jadi
+                // hiasan. Lihat web/security.rs untuk isi & alasan tiap
+                // direktifnya, termasuk kenapa frame-ancestors TIDAK di sini.
+                <meta http-equiv="Content-Security-Policy" content=csp />
                 <meta charset="utf-8" />
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
                 <meta name="theme-color" content="#003527" />
@@ -54,12 +74,17 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
                 // ── Interaktivitas: scroll-reveal + count-up angka ───────────
                 // 1) Tandai <html> reveal-js SINKRON → [data-reveal] hanya
                 //    disembunyikan saat JS aktif (tanpa JS konten tetap tampil).
-                <script inner_html="document.documentElement.classList.add('reveal-js');"></script>
+                <script
+                    nonce=nonce.clone()
+                    inner_html="document.documentElement.classList.add('reveal-js');"
+                ></script>
                 // 2) IntersectionObserver utk [data-reveal]; count-up utk
                 //    [data-count] (angka naik 0→target saat terlihat).
                 //    MutationObserver menangkap konten Suspense/SPA. Guard
                 //    data-counted mencegah loop (mutasi textContent sendiri).
-                <script inner_html=r#"
+                <script
+                    nonce=nonce.clone()
+                    inner_html=r#"
 (function(){
   if(window.__ppmFx) return; window.__ppmFx=true;
   /* bfcache: halaman yang dipulihkan tombol Back masih memegang state sesi

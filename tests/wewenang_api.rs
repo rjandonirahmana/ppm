@@ -255,6 +255,43 @@ fn keputusan_izin_tertutup_untuk_ketua_dan_admin() {
     }
 }
 
+/// Pengawas boleh MELIHAT antrean izin, tapi tetap tak boleh memutuskannya.
+///
+/// Dua kebutuhan yang mudah tercampur, dan mencampurnya merusak spek A:
+///   • `izin_menunggu_data` — BACAAN. Terbuka untuk admin & ketua, karena
+///     angka "N Menunggu" di beranda staf tak berarti apa-apa kalau isinya tak
+///     bisa ditelusuri: yang dicari pengawas adalah mana yang menggantung dan
+///     sejak kapan.
+///   • `permit_queue_data` / `decide_permit_action` — KEPUTUSAN. Tetap
+///     tertutup untuk keduanya (diuji di atas).
+///
+/// Godaannya nanti adalah "cukup tambahkan admin ke permit_queue_data" — satu
+/// baris yang menghapus pemisahan ini sekaligus. Uji ini menahan kedua sisinya.
+#[test]
+fn pengawas_melihat_izin_tanpa_memutuskan() {
+    let eps = endpoints();
+
+    let baca = cari(&eps, "izin_menunggu_data");
+    for peran in ["admin", "ketua"] {
+        assert!(
+            baca.peran.iter().any(|r| r == peran),
+            "`{peran}` harus bisa MELIHAT antrean izin: {:?}",
+            baca.peran
+        );
+    }
+
+    // Dan pintu keputusannya tetap tertutup untuk keduanya.
+    for nama in ["permit_queue_data", "decide_permit_action"] {
+        let e = cari(&eps, nama);
+        for peran in ["admin", "ketua"] {
+            assert!(
+                !e.peran.iter().any(|r| r == peran),
+                "`{nama}` tak boleh menerima `{peran}` — itu jalur KEPUTUSAN"
+            );
+        }
+    }
+}
+
 /// SPEK B — admin biasa tak menyentuh uang santri.
 ///
 /// `ketua` boleh (ia admin + keuangan) dan `santri_finance` boleh (untuk audit),

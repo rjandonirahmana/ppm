@@ -124,46 +124,71 @@ pub async fn weekly_counts_by_category(
         .collect())
 }
 
-/// Kreditkan reward mingguan satu santri (idempotent: UNIQUE user_id,week_start).
-/// Return true bila BARU dikreditkan; false bila sudah pernah (skip). Menulis
-/// weekly_rewards + point_logs + menaikkan users.points dalam satu transaksi.
-pub async fn credit_weekly_reward(
+/// Kreditkan reward mingguan SEKALIGUS untuk banyak santri — satu pernyataan,
+/// satu perjalanan ke database. Return `(jumlah santri baru dikredit, total poin)`.
+///
+/// ── KENAPA SET-BASED, BUKAN SATU FUNGSI PER SANTRI ───────────────────────────
+/// Versi sebelumnya mengkreditkan SATU santri per panggilan, dan pemanggilnya
+/// (`service::rekap::credit_weekly_rewards`) menjalankannya di dalam loop. Tiap
+/// putaran mengambil koneksi dari pool lalu membuka transaksinya sendiri:
+/// `pool.get()` → BEGIN → INSERT weekly_rewards → INSERT point_logs → COMMIT.
+/// Lima perjalanan bolak-balik per santri, dijalankan berurutan. Untuk 300
+/// santri itu ±1.500 perjalanan dan 300 transaksi terpisah — sambil menahan
+/// slot pool yang cuma 16, jadi seluruh aplikasi ikut tersendat selama admin
+/// menekan satu tombol.
+///
+/// Sekarang keduanya jadi satu pernyataan. Transaksi eksplisit tak lagi
+/// diperlukan: SATU pernyataan SQL di Postgres sudah atomik dengan sendirinya,
+/// jadi mustahil ada weekly_rewards yang tertulis tanpa point_logs-nya.
+///
+/// ── KENAPA `jejak` TAK DIRUJUK QUERY UTAMA ───────────────────────────────────
+/// Ia tetap dijalankan. Postgres menjamin pernyataan yang MENGUBAH DATA di
+/// dalam `WITH` dieksekusi tepat sekali dan sampai tuntas, terlepas dari apakah
+/// query utama membaca keluarannya. Yang dibaca query utama adalah `baru`,
+/// karena itulah yang perlu dihitung.
+///
+/// `ON CONFLICT DO NOTHING ... RETURNING` hanya mengembalikan baris yang
+/// BENAR-BENAR tersisip, jadi `baru` otomatis sudah menyaring santri yang pekan
+/// itu sudah pernah dikredit — idempotensinya sama persis dengan versi lama,
+/// dan yang jadi wasitnya tetap UNIQUE (user_id, week_start) dari migrasi 31.
+///
+/// `users.points` tetap diperbarui trigger `trg_point_logs_balance` (migrasi
+/// 32); cukup menulis point_logs.
+pub async fn credit_weekly_rewards_many(
     pool: &Pool,
-    user_id: i64,
     week_start: NaiveDate,
-    points: i32,
-    detail: &str,
-) -> Result<bool> {
-    if points <= 0 {
-        return Ok(false);
+    calon: &[(i64, i32, &str)],
+) -> Result<(i64, i64)> {
+    // Poin nol/negatif disaring DI SINI, bukan diserahkan ke pemanggil: guard
+    // `points <= 0` versi lama ada di fungsi ini, dan memindahkannya keluar
+    // berarti aturannya bisa hilang diam-diam di pemanggil berikutnya.
+    let user_ids: Vec<i64> = calon.iter().filter(|c| c.1 > 0).map(|c| c.0).collect();
+    if user_ids.is_empty() {
+        return Ok((0, 0));
     }
-    let mut c = pool.get().await?;
-    let tx = c.transaction().await.context("credit_weekly_reward tx")?;
-    let ins = tx
-        .query_opt(
-            "INSERT INTO weekly_rewards (user_id, week_start, points, detail) \
-             VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, week_start) DO NOTHING \
-             RETURNING id",
-            &[&user_id, &week_start, &points, &detail],
+    let points: Vec<i32> = calon.iter().filter(|c| c.1 > 0).map(|c| c.1).collect();
+    let details: Vec<&str> = calon.iter().filter(|c| c.1 > 0).map(|c| c.2).collect();
+    let reason = format!("Reward mingguan {week_start}");
+
+    let c = pool.get().await?;
+    let row = c
+        .query_one(
+            "WITH baru AS ( \
+                 INSERT INTO weekly_rewards (user_id, week_start, points, detail) \
+                 SELECT t.u, $4, t.p, t.d \
+                   FROM unnest($1::bigint[], $2::int[], $3::text[]) AS t(u, p, d) \
+                 ON CONFLICT (user_id, week_start) DO NOTHING \
+                 RETURNING user_id, points \
+             ), jejak AS ( \
+                 INSERT INTO point_logs (user_id, delta, reason, category) \
+                 SELECT user_id, points, $5, 'achievement' FROM baru \
+             ) \
+             SELECT COUNT(*)::bigint, COALESCE(SUM(points), 0)::bigint FROM baru",
+            &[&user_ids, &points, &details, &week_start, &reason],
         )
         .await
-        .context("credit_weekly_reward insert")?;
-    if ins.is_none() {
-        tx.rollback().await.ok();
-        return Ok(false);
-    }
-    let reason = format!("Reward mingguan {week_start}");
-    // users.points diperbarui OTOMATIS oleh trigger trg_point_logs_balance
-    // (migrasi 32) — cukup tulis point_logs.
-    tx.execute(
-        "INSERT INTO point_logs (user_id, delta, reason, category) \
-         VALUES ($1, $2, $3, 'achievement')",
-        &[&user_id, &points, &reason],
-    )
-    .await
-    .context("credit_weekly_reward point_logs")?;
-    tx.commit().await.context("credit_weekly_reward commit")?;
-    Ok(true)
+        .context("credit_weekly_rewards_many")?;
+    Ok((row.get(0), row.get(1)))
 }
 
 /// Set user_id yang SUDAH menerima reward pekan `week_start` (agar UI tahu).
@@ -181,7 +206,6 @@ pub async fn credited_users_for_week(pool: &Pool, week_start: NaiveDate) -> Resu
 
 /// Rekap kehadiran per-santri untuk rentang tanggal (WIB). Semua santri aktif
 /// dimasukkan (LEFT JOIN) walau tanpa catatan pekan itu (semua nol).
-
 pub async fn weekly_recap(
     pool: &Pool,
     start: NaiveDate,

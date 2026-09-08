@@ -336,16 +336,15 @@ async fn serahkan_ketua(pool: &Pool, actor_id: i64, target_id: i64) -> Result<St
     let detail_naik = "Peran baru: Ketua (jabatan diserahkan)";
     let _ = repo::insert_log(pool, actor_id, Some(target_id), "user.role_change", Some(detail_naik))
         .await;
-    for id in &diturunkan {
-        let _ = repo::insert_log(
-            pool,
-            actor_id,
-            Some(*id),
-            "user.role_change",
-            Some("Peran baru: Admin — jabatan Ketua diserahkan ke orang lain"),
-        )
-        .await;
-    }
+    // Satu INSERT untuk semua yang diturunkan, bukan satu per orang.
+    let _ = repo::insert_log_many(
+        pool,
+        actor_id,
+        &diturunkan,
+        "user.role_change",
+        Some("Peran baru: Admin — jabatan Ketua diserahkan ke orang lain"),
+    )
+    .await;
 
     Ok(if diturunkan.contains(&actor_id) {
         "Jabatan Ketua diserahkan. Peran Anda sendiri kini Admin.".to_string()

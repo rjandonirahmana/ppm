@@ -294,10 +294,29 @@ fn PasswordToggleScript() -> impl IntoView {
     var b=e.target.closest('#toggle-password'); if(!b) return;
     var inp=document.getElementById('password'); var ic=b.querySelector('span');
     if(!inp) return;
-    if(inp.type==='password'){ inp.type='text'; if(ic) ic.textContent='visibility_off'; }
-    else { inp.type='password'; if(ic) ic.textContent='visibility'; }
+    /* `ic.textContent = …` MEMBUANG simpul teks lama lalu memasang yang baru —
+       dan simpul itu milik Leptos, dipegangnya sebagai jangkar hidrasi. Sesudah
+       dibuang, jangkarnya menunjuk simpul yang tak ada lagi di dokumen, dan
+       penulisan berikutnya (termasuk pemasangan view rute baru) menulis ke luar
+       dokumen: layar diam, URL sudah berganti, hanya muat ulang yang memulihkan.
+       Persis anti-pola yang catatan panjang di web/app.rs larang untuk countUp —
+       tempat ini terlewat.
+
+       `.data = …` mengubah ISI simpul teks yang sudah ada, di tempat. Tak ada
+       simpul yang lahir atau mati, jadi jangkarnya tetap sah. Bila isinya
+       ternyata bukan satu simpul teks tunggal, ikonnya dibiarkan apa adanya —
+       yang hilang cuma pergantian gambar mata, jauh lebih murah daripada
+       merusak struktur milik Leptos. */
+    var ganti=function(t){
+      var tn=ic&&ic.firstChild;
+      if(tn&&tn.nodeType===3&&tn===ic.lastChild) tn.data=t;
+    };
+    if(inp.type==='password'){ inp.type='text'; ganti('visibility_off'); }
+    else { inp.type='password'; ganti('visibility'); }
   });
 })();
 "#;
-    view! { <script inner_html=js></script> }
+    // Nonce wajib: CSP di shell hanya mengizinkan <script> inline yang membawanya
+    // (lihat web/security.rs). Tanpa ini tombol lihat/sembunyi sandi mati diam-diam.
+    view! { <script nonce=leptos::nonce::use_nonce() inner_html=js></script> }
 }

@@ -28,104 +28,15 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-// ── Pembacaan sumber ─────────────────────────────────────────────────────────
-
-fn berkas_repository() -> Vec<PathBuf> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/repository");
-    let mut out: Vec<PathBuf> = fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("gagal membaca {}: {e}", dir.display()))
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "rs"))
-        .collect();
-    out.sort();
-    assert!(!out.is_empty(), "tak menemukan satu pun berkas di src/repository");
-    out
-}
-
-/// Buang isi `#[cfg(test)] mod tests { … }` — SQL contoh di dalam tes tak perlu
-/// tunduk pada aturan ini, dan menyertakannya hanya melahirkan alarm palsu.
-fn tanpa_blok_tes(src: &str) -> String {
-    match src.find("#[cfg(test)]") {
-        Some(i) => src[..i].to_string(),
-        None => src.to_string(),
-    }
-}
-
-// ── Pemenggalan literal string Rust ──────────────────────────────────────────
-
-/// Semua literal string di `src`, beserta posisi awalnya. Escape dihormati agar
-/// `\"` di tengah SQL tak dikira penutup.
-fn literal_string(src: &str) -> Vec<(usize, String)> {
-    let b = src.as_bytes();
-    let (mut out, mut i) = (Vec::new(), 0usize);
-    while i < b.len() {
-        // Lewati komentar baris — `//` kerap memuat contoh SQL.
-        if b[i] == b'/' && i + 1 < b.len() && b[i + 1] == b'/' {
-            while i < b.len() && b[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        if b[i] != b'"' {
-            i += 1;
-            continue;
-        }
-        let awal = i;
-        i += 1;
-        let mut isi = String::new();
-        while i < b.len() && b[i] != b'"' {
-            if b[i] == b'\\' && i + 1 < b.len() {
-                // `\` di ujung baris = sambungan; sisanya escape biasa.
-                isi.push(if b[i + 1] == b'\n' { ' ' } else { b[i + 1] as char });
-                i += 2;
-                continue;
-            }
-            isi.push(b[i] as char);
-            i += 1;
-        }
-        i += 1;
-        out.push((awal, isi));
-    }
-    out
-}
-
-/// Rapatkan spasi berlebih supaya pola SQL mudah dicocokkan.
-fn rapikan(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// Semua `const NAMA: &str = "…";` di `src/repository`, untuk menyulih `{NAMA}`
-/// pada query yang dirakit `format!`.
-fn konstanta_sql() -> HashMap<String, String> {
-    let mut out = HashMap::new();
-    for path in berkas_repository() {
-        let src = fs::read_to_string(&path).unwrap();
-        for (pos, isi) in literal_string(&src) {
-            let Some(eq) = src[..pos].rfind('=') else { continue };
-            let kepala = src[..eq].trim_end();
-            let Some(k) = kepala.rfind("const ") else { continue };
-            let nama = kepala[k + "const ".len()..].split(':').next().unwrap_or("").trim();
-            // Hanya nama bergaya konstanta, dan hanya yang berdempetan dengan
-            // literalnya — supaya `const` lain di berkas yang sama tak terpungut.
-            if !nama.is_empty()
-                && nama.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-                && src[eq..pos].trim() == "="
-            {
-                out.insert(nama.to_string(), rapikan(&isi));
-            }
-        }
-    }
-    out
-}
-
-fn sql_beneran(s: &str) -> bool {
-    let t = s.trim_start().to_ascii_uppercase();
-    ["SELECT ", "INSERT ", "UPDATE ", "DELETE ", "WITH "]
-        .iter()
-        .any(|k| t.starts_with(k))
-}
+// Pembacaan & pemenggalan SQL dipakai bersama dengan `skema_postgres.rs`.
+// Dua pemeriksa harus membaca himpunan query yang SAMA; salinan kedua akan
+// menyimpang diam-diam.
+mod common;
+use common::{
+    berkas_repository, konstanta_sql, literal_string, rapikan, sql_beneran, tanpa_blok_tes,
+};
 
 // ── Pencacah ─────────────────────────────────────────────────────────────────
 
@@ -286,7 +197,13 @@ fn petak_query(src: &str) -> Vec<Petak> {
     let lits: Vec<(usize, String)> = literal_string(src)
         .into_iter()
         .map(|(p, s)| (p, rapikan(&s)))
-        .filter(|(_, s)| sql_beneran(s))
+        // Literal yang DIAWALI `{KONSTANTA}` ikut masuk. Sebelumnya tidak, dan
+        // itu berarti query yang daftar kolomnya diangkat ke sebuah `const`
+        // — justru bentuk yang dipakai supaya versi satu-baris dan versi
+        // banyak-baris tak bisa menyimpang — lolos dari pemeriksaan ini sama
+        // sekali. `bisa_dicacah` yang memutuskan apakah ia benar-benar SQL,
+        // SESUDAH konstantanya disulih.
+        .filter(|(_, s)| sql_beneran(s) || s.starts_with('{'))
         .collect();
 
     let mut out = Vec::new();
@@ -367,11 +284,6 @@ fn potong_di_pemetaan_kedua(ekor: &str) -> String {
 /// Pemeriksa yang sering salah tuduh akan dimatikan orang, dan sesudah itu ia
 /// tak menangkap apa pun lagi.
 fn bisa_dicacah(sql: &str, konstanta: &HashMap<String, String>) -> Option<String> {
-    let t = sql.trim_start().to_ascii_uppercase();
-    if !(t.starts_with("SELECT ") || t.starts_with("WITH ")) {
-        return None;
-    }
-
     let mut hasil = String::with_capacity(sql.len());
     let mut sisa = sql;
     while let Some(i) = sisa.find('{') {
@@ -387,6 +299,15 @@ fn bisa_dicacah(sql: &str, konstanta: &HashMap<String, String>) -> Option<String
         sisa = &sisa[i + j + 1..];
     }
     hasil.push_str(sisa);
+
+    // Diperiksa SESUDAH penyulihan, bukan sebelum. Query yang ditulis
+    // `format!("{KOLOM_SELECT} WHERE …")` diawali `{`, bukan `SELECT` — dengan
+    // urutan lama ia langsung ditolak di sini dan tak pernah dicacah, padahal
+    // isinya SELECT yang utuh begitu konstantanya disulih.
+    let t = hasil.trim_start().to_ascii_uppercase();
+    if !(t.starts_with("SELECT ") || t.starts_with("WITH ")) {
+        return None;
+    }
     Some(hasil)
 }
 

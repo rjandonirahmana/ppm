@@ -1156,6 +1156,84 @@ const FK_KE_USERS_SQL: &str = "SELECT c.conrelid::regclass::text, quote_ident(a.
 ///
 /// TIDAK menyentuh berkas di penyimpanan objek (foto kegiatan, lampiran izin).
 /// Barisnya hilang; berkasnya menjadi sampah yang harus dibersihkan terpisah.
+/// Satu lintasan pembersihan FK, dalam SATU pernyataan.
+///
+/// `lepas_dulu = true`  → kolom yang boleh NULL: penunjuknya DILEPAS.
+/// `lepas_dulu = false` → kolom NOT NULL: barisnya DIHAPUS.
+///
+/// Seluruh tabel dalam satu lintasan dirakit menjadi satu pernyataan berisi
+/// banyak CTE pengubah data, lalu `count(*)` tiap CTE dibaca kembali supaya
+/// laporan "baris apa saja yang terhapus" tetap sedetail semula. Bentuk
+/// sebelumnya menjalankan satu DELETE/UPDATE per tabel di dalam loop —
+/// sekitar tiga puluh perjalanan bolak-balik untuk satu penghapusan akun.
+///
+/// Dipanggil DUA KALI oleh [`delete_user_cascade`], dan keduanya sengaja tetap
+/// pernyataan yang terpisah: seluruh CTE di dalam satu pernyataan berbagi
+/// snapshot yang sama dan tak punya urutan di antara mereka, jadi menyatukan
+/// kedua lintasan akan membuang jaminan "lepas dulu, baru hapus".
+#[cfg(feature = "ssr")]
+async fn bereskan_penunjuk(
+    tx: &tokio_postgres::Transaction<'_>,
+    fks: &[tokio_postgres::Row],
+    user_id: i64,
+    lepas_dulu: bool,
+    baris: &mut Vec<(String, i64)>,
+) -> Result<()> {
+    // Nama tabel & kolom datang dari katalog (regclass/quote_ident), bukan dari
+    // masukan siapa pun — jadi merangkainya aman.
+    let sasaran: Vec<(String, String, bool)> = fks
+        .iter()
+        .filter_map(|r| {
+            let aksi: String = r.get(3);
+            // 'a' = NO ACTION, 'r' = RESTRICT → keduanya menghalangi DELETE dan
+            // harus dibereskan di sini. 'c'/'n'/'d' dikerjakan basis data.
+            if aksi != "a" && aksi != "r" {
+                return None;
+            }
+            let wajib_isi: bool = r.get(2);
+            if wajib_isi == lepas_dulu {
+                return None;
+            }
+            Some((r.get(0), r.get(1), wajib_isi))
+        })
+        .collect();
+
+    if sasaran.is_empty() {
+        return Ok(());
+    }
+
+    let cte: Vec<String> = sasaran
+        .iter()
+        .enumerate()
+        .map(|(i, (tabel, kolom, wajib_isi))| {
+            let aksi = if *wajib_isi {
+                format!("DELETE FROM {tabel} WHERE {kolom} = $1")
+            } else {
+                format!("UPDATE {tabel} SET {kolom} = NULL WHERE {kolom} = $1")
+            };
+            // `RETURNING 1` supaya barisnya bisa dihitung; isinya tak dipakai.
+            format!("t{i} AS ({aksi} RETURNING 1)")
+        })
+        .collect();
+    let hitung: Vec<String> = (0..sasaran.len())
+        .map(|i| format!("(SELECT count(*) FROM t{i})::bigint"))
+        .collect();
+    let sql = format!("WITH {} SELECT {}", cte.join(", "), hitung.join(", "));
+
+    let row = tx.query_one(&sql, &[&user_id]).await.with_context(|| {
+        let lintasan = if lepas_dulu { "lepas penunjuk" } else { "hapus baris" };
+        format!("delete_user_cascade lintasan '{lintasan}'")
+    })?;
+
+    for (i, (tabel, kolom, _)) in sasaran.iter().enumerate() {
+        let n: i64 = row.get(i);
+        if n > 0 {
+            baris.push((format!("{tabel}.{kolom}"), n));
+        }
+    }
+    Ok(())
+}
+
 pub async fn delete_user_cascade(pool: &Pool, user_id: i64) -> Result<Option<UserTerhapus>> {
     let mut c = pool.get().await?;
     let tx = c.transaction().await.context("delete_user_cascade tx")?;
@@ -1166,40 +1244,18 @@ pub async fn delete_user_cascade(pool: &Pool, user_id: i64) -> Result<Option<Use
         .context("delete_user_cascade katalog FK")?;
 
     let mut baris: Vec<(String, i64)> = Vec::new();
-    // Dua lintasan: LEPASKAN dulu penunjuk yang boleh NULL, baru hapus barisnya.
-    // Urutan ini tak wajib pada skema sekarang (tak ada RESTRICT antar tabel
-    // selain dari `users`), tapi ia yang benar bila kelak ada — melepas
-    // penunjuk tak pernah bisa gagal karena baris lain.
-    for lepas_dulu in [true, false] {
-        for r in &fks {
-            let tabel: String = r.get(0);
-            let kolom: String = r.get(1);
-            let wajib_isi: bool = r.get(2);
-            let aksi: String = r.get(3);
-            // 'a' = NO ACTION, 'r' = RESTRICT → keduanya menghalangi DELETE dan
-            // harus dibereskan di sini. 'c'/'n'/'d' dikerjakan basis data.
-            if aksi != "a" && aksi != "r" {
-                continue;
-            }
-            if wajib_isi == lepas_dulu {
-                continue;
-            }
-            // Nama tabel & kolom datang dari katalog (regclass/quote_ident),
-            // bukan dari masukan siapa pun — jadi merangkainya aman.
-            let sql = if wajib_isi {
-                format!("DELETE FROM {tabel} WHERE {kolom} = $1")
-            } else {
-                format!("UPDATE {tabel} SET {kolom} = NULL WHERE {kolom} = $1")
-            };
-            let n = tx
-                .execute(&sql, &[&user_id])
-                .await
-                .with_context(|| format!("delete_user_cascade {tabel}.{kolom}"))?;
-            if n > 0 {
-                baris.push((format!("{tabel}.{kolom}"), n as i64));
-            }
-        }
-    }
+    // DUA LINTASAN, dan urutannya yang penting: LEPASKAN dulu penunjuk yang
+    // boleh NULL, baru hapus barisnya. Urutan ini tak wajib pada skema sekarang
+    // (tak ada RESTRICT antar tabel selain dari `users`), tapi ia yang benar
+    // bila kelak ada — melepas penunjuk tak pernah bisa gagal karena baris lain.
+    //
+    // Ditulis sebagai dua panggilan terbuka, bukan `for lepas_dulu in [true,
+    // false]`: loop dua-putaran itu tak menghemat apa pun, dan ia satu-satunya
+    // tempat di berkas ini yang menjalankan query di dalam loop — bentuk yang
+    // dijaga `tests/tanpa_query_dalam_loop.rs`. Lihat `bereskan_penunjuk` untuk
+    // isi tiap lintasan dan kenapa keduanya tak boleh disatukan.
+    bereskan_penunjuk(&tx, &fks, user_id, true, &mut baris).await?;
+    bereskan_penunjuk(&tx, &fks, user_id, false, &mut baris).await?;
 
     let row = tx
         .query_opt(

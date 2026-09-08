@@ -992,24 +992,51 @@ pub async fn set_class_staff(
 /// resmi pondok dipakai: `500032760078240001` diawali "5000", bukan tahun, jadi
 /// angkatannya kosong untuk SEMUA santri. Kolomnya sendiri sudah terisi sejak
 /// impor daftar induk (migrasi 74) — tinggal dibaca.
+/// Anggota BANYAK kelas sekaligus → `class_id` → santrinya, urut nama.
+/// Lihat [`class_curriculum_many`] untuk alasan bentuk ini.
+///
+/// `DISTINCT` mencakup `cp.class_id` juga: seorang santri bisa terdaftar dua
+/// kali di kelas yang sama lewat jadwal berbeda, dan itulah yang dulu disaring
+/// `DISTINCT` versi satu-kelas. Karena kolom kelasnya kini ikut terbawa,
+/// penyaringan itu tetap berlaku PER KELAS, bukan lintas kelas — santri yang
+/// ada di dua kelas tetap muncul di dua-duanya.
+pub async fn class_members_many(
+    pool: &Pool,
+    class_ids: &[i64],
+) -> Result<std::collections::HashMap<i64, Vec<(i64, String, Option<String>, Option<i16>)>>> {
+    if class_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            "SELECT DISTINCT cp.class_id, u.id, u.full_name, u.nis, u.entry_year \
+             FROM class_participants cp JOIN users u ON u.id = cp.user_id \
+             WHERE cp.class_id = ANY($1::bigint[]) AND u.role IN ('santri', 'santri_finance') \
+             ORDER BY cp.class_id, u.full_name",
+            &[&class_ids],
+        )
+        .await
+        .context("class_members_many")?;
+    let mut out: std::collections::HashMap<i64, Vec<(i64, String, Option<String>, Option<i16>)>> =
+        std::collections::HashMap::new();
+    for r in &rows {
+        out.entry(r.get(0))
+            .or_default()
+            .push((r.get(1), r.get(2), r.get(3), r.get(4)));
+    }
+    Ok(out)
+}
+
+/// Anggota SATU kelas. Dibangun di atas versi banyak-kelas — satu SQL, satu pemeta.
 pub async fn class_members(
     pool: &Pool,
     class_id: i64,
 ) -> Result<Vec<(i64, String, Option<String>, Option<i16>)>> {
-    let c = pool.get().await?;
-    let rows = c
-        .query(
-            "SELECT DISTINCT u.id, u.full_name, u.nis, u.entry_year \
-             FROM class_participants cp JOIN users u ON u.id = cp.user_id \
-             WHERE cp.class_id = $1 AND u.role IN ('santri', 'santri_finance') ORDER BY u.full_name",
-            &[&class_id],
-        )
-        .await
-        .context("class_members")?;
-    Ok(rows
-        .into_iter()
-        .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3)))
-        .collect())
+    Ok(class_members_many(pool, &[class_id])
+        .await?
+        .remove(&class_id)
+        .unwrap_or_default())
 }
 
 pub struct SchedRow {
@@ -1087,11 +1114,8 @@ fn json_dates(v: &serde_json::Value) -> Vec<String> {
 }
 
 /// Jadwal-jadwal milik kelas.
-pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>> {
-    let c = pool.get().await?;
-    let rows = c
-        .query(
-            "SELECT cs.id, COALESCE(cs.title, ''), cs.start_time, cs.end_time, \
+/// Kolom jadwal kelas. Kolom 0 SELALU `class_id` — lihat [`CURRICULUM_SELECT`].
+const SCHEDULES_SELECT: &str = "SELECT cs.class_id, cs.id, COALESCE(cs.title, ''), cs.start_time, cs.end_time, \
                     cs.limit_entery_time, cs.recurrence_type, cs.start_date, cs.end_date, \
                     cs.category, cs.present_points, cs.late_points, cs.absent_points, \
                     cs.room_id, dev.device_name, cs.custom_dates, cs.activity_type, \
@@ -1099,39 +1123,67 @@ pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>
                     cs.current_surah, cs.current_unit \
              FROM class_schedules cs \
              LEFT JOIN rfid_devices dev ON dev.id = cs.room_id \
-             LEFT JOIN books cb ON cb.id = cs.current_book_id \
-             WHERE cs.class_id = $1 ORDER BY cs.start_time",
-            &[&class_id],
+             LEFT JOIN books cb ON cb.id = cs.current_book_id";
+
+fn map_sched(r: &tokio_postgres::Row) -> SchedRow {
+    SchedRow {
+        id: r.get(1),
+        title: r.get(2),
+        start_time: r.get(3),
+        end_time: r.get(4),
+        limit_time: r.get(5),
+        recurrence_type: r.get(6),
+        start_date: r.get(7),
+        end_date: r.get(8),
+        category: r.get(9),
+        present_points: r.get(10),
+        late_points: r.get(11),
+        absent_points: r.get(12),
+        room_id: r.get(13),
+        room_name: r.get(14),
+        custom_dates: json_dates(&r.get::<_, serde_json::Value>(15)),
+        activity_type: r.get(16),
+        current_book_id: r.get(17),
+        current_book_title: r.get(18),
+        current_book_category: r.get(19),
+        current_book_surahs: r.get(20),
+        current_surah: r.get(21),
+        current_unit: r.get(22),
+    }
+}
+
+/// Jadwal BANYAK kelas sekaligus → `class_id` → jadwalnya, urut `start_time`.
+/// Lihat [`class_curriculum_many`] untuk alasan bentuk ini.
+pub async fn class_schedules_many(
+    pool: &Pool,
+    class_ids: &[i64],
+) -> Result<std::collections::HashMap<i64, Vec<SchedRow>>> {
+    if class_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            &format!("{SCHEDULES_SELECT} WHERE cs.class_id = ANY($1::bigint[]) \
+                      ORDER BY cs.class_id, cs.start_time"),
+            &[&class_ids],
         )
         .await
-        .context("class_schedules")?;
-    Ok(rows
-        .into_iter()
-        .map(|r| SchedRow {
-            id: r.get(0),
-            title: r.get(1),
-            start_time: r.get(2),
-            end_time: r.get(3),
-            limit_time: r.get(4),
-            recurrence_type: r.get(5),
-            start_date: r.get(6),
-            end_date: r.get(7),
-            category: r.get(8),
-            present_points: r.get(9),
-            late_points: r.get(10),
-            absent_points: r.get(11),
-            room_id: r.get(12),
-            room_name: r.get(13),
-            custom_dates: json_dates(&r.get::<_, serde_json::Value>(14)),
-            activity_type: r.get(15),
-            current_book_id: r.get(16),
-            current_book_title: r.get(17),
-            current_book_category: r.get(18),
-            current_book_surahs: r.get(19),
-            current_surah: r.get(20),
-            current_unit: r.get(21),
-        })
-        .collect())
+        .context("class_schedules_many")?;
+    let mut out: std::collections::HashMap<i64, Vec<SchedRow>> =
+        std::collections::HashMap::new();
+    for r in &rows {
+        out.entry(r.get(0)).or_default().push(map_sched(r));
+    }
+    Ok(out)
+}
+
+/// Jadwal SATU kelas. Dibangun di atas versi banyak-kelas — satu SQL, satu pemeta.
+pub async fn class_schedules(pool: &Pool, class_id: i64) -> Result<Vec<SchedRow>> {
+    Ok(class_schedules_many(pool, &[class_id])
+        .await?
+        .remove(&class_id)
+        .unwrap_or_default())
 }
 
 /// Setel materi & posisi yang SEDANG BERJALAN pada satu jadwal (migrasi 57).
@@ -1505,19 +1557,38 @@ pub async fn schedule_info(
     Ok(row.map(|r| (r.get(0), r.get(1), r.get(2), r.get(3))))
 }
 
-/// Insert BANYAK sesi sekaligus (generate bulanan/mendatang) dalam SATU query
-/// set-based (`unnest` + `NOT EXISTS`) — cepat & idempotent, tak menggandakan
-/// (schedule, tanggal) yang sudah ada. Return jumlah sesi baru.
-pub async fn insert_sessions(
-    pool: &Pool,
-    class_id: i64,
-    schedule_id: i64,
-    title: &str,
-    dates: &[chrono::NaiveDate],
-) -> Result<i64> {
-    if dates.is_empty() {
+/// Satu sesi yang akan dimaterialisasi. Dikemas jadi struct, bukan empat larik
+/// sejajar: larik sejajar yang panjangnya berbeda satu sama lain tetap lolos
+/// compiler dan baru ketahuan sebagai baris yang salah pasangan di produksi.
+pub struct SesiBaru<'a> {
+    pub class_id: i64,
+    pub schedule_id: i64,
+    pub title: &'a str,
+    pub date: chrono::NaiveDate,
+}
+
+/// Insert BANYAK sesi dari BANYAK jadwal sekaligus — satu query, apa pun jumlah
+/// jadwalnya. Idempotent; return jumlah sesi yang benar-benar baru.
+///
+/// ── KENAPA VERSI LINTAS-JADWAL INI ADA ───────────────────────────────────────
+/// `service::kelas::ensure_upcoming_all` memanggil [`insert_sessions`] di dalam
+/// loop atas SELURUH jadwal aktif pesantren: satu query dan satu pengambilan
+/// koneksi pool per jadwal, tiap 24 jam. Lima puluh kelas dengan lima jadwal
+/// masing-masing = 250 perjalanan ke database untuk pekerjaan yang muat dalam
+/// satu pernyataan. `ensure_upcoming_sessions` melakukan hal yang sama di JALUR
+/// REQUEST, saat jadwal baru dibuat.
+///
+/// Sesi kembar di dalam satu batch tak jadi soal: `ON CONFLICT DO NOTHING`
+/// menyaringnya sama seperti menyaring yang sudah ada di tabel.
+pub async fn insert_sessions_many(pool: &Pool, sesi: &[SesiBaru<'_>]) -> Result<i64> {
+    if sesi.is_empty() {
         return Ok(0);
     }
+    let class_ids: Vec<i64> = sesi.iter().map(|s| s.class_id).collect();
+    let schedule_ids: Vec<i64> = sesi.iter().map(|s| s.schedule_id).collect();
+    let titles: Vec<&str> = sesi.iter().map(|s| s.title).collect();
+    let dates: Vec<chrono::NaiveDate> = sesi.iter().map(|s| s.date).collect();
+
     let c = pool.get().await?;
     let n = c
         .execute(
@@ -1526,14 +1597,30 @@ pub async fn insert_sessions(
             // membaca "belum ada" lalu sama-sama menyisipkan. Constraint
             // uq_session_schedule_date (migrasi 52) yang jadi wasitnya.
             "INSERT INTO class_sessions (class_id, class_schedule_id, title, session_date) \
-             SELECT $1, $2, $3, d FROM unnest($4::date[]) AS d \
+             SELECT * FROM unnest($1::bigint[], $2::bigint[], $3::text[], $4::date[]) \
              ON CONFLICT (class_schedule_id, session_date) \
                 WHERE class_schedule_id IS NOT NULL DO NOTHING",
-            &[&class_id, &schedule_id, &title, &dates],
+            &[&class_ids, &schedule_ids, &titles, &dates],
         )
         .await
-        .context("insert_sessions")?;
+        .context("insert_sessions_many")?;
     Ok(n as i64)
+}
+
+/// Insert banyak sesi untuk SATU jadwal. Dibangun di atas
+/// [`insert_sessions_many`] supaya SQL-nya cuma ada satu salinan.
+pub async fn insert_sessions(
+    pool: &Pool,
+    class_id: i64,
+    schedule_id: i64,
+    title: &str,
+    dates: &[chrono::NaiveDate],
+) -> Result<i64> {
+    let sesi: Vec<SesiBaru> = dates
+        .iter()
+        .map(|&date| SesiBaru { class_id, schedule_id, title, date })
+        .collect();
+    insert_sessions_many(pool, &sesi).await
 }
 
 /// Apakah kelas ini KBM? Penentu apakah ia boleh punya wali kelas, berjenjang,
@@ -1999,41 +2086,79 @@ pub struct CurriculumRow {
 }
 
 /// Cakupan materi/kitab kelas ini, terurut sesuai order_index.
-pub async fn class_curriculum(pool: &Pool, class_id: i64) -> Result<Vec<CurriculumRow>> {
-    let c = pool.get().await?;
-    let rows = c
-        .query(
-            "SELECT cu.id, cu.title, \
+/// Daftar kolom kurikulum. Kolom 0 SELALU `class_id` — itulah yang membuat
+/// versi satu-kelas dan versi banyak-kelas bisa berbagi satu query dan satu
+/// pemeta baris, sehingga mustahil keduanya lama-lama menyimpang.
+const CURRICULUM_SELECT: &str = "SELECT cu.class_id, cu.id, cu.title, \
                     cu.order_index, cu.book_id, b.title, \
                     b.category, b.surahs, b.total_pages, \
                     cu.start_surah, cu.start_unit, cu.end_surah, cu.end_unit, \
                     cu.current_surah, cu.current_unit \
              FROM curriculum cu \
-             LEFT JOIN books b ON b.id = cu.book_id \
-             WHERE cu.class_id = $1 ORDER BY cu.order_index, cu.id",
-            &[&class_id],
+             LEFT JOIN books b ON b.id = cu.book_id";
+
+fn map_curriculum(r: &tokio_postgres::Row) -> CurriculumRow {
+    CurriculumRow {
+        id: r.get(1),
+        title: r.get(2),
+        order_index: r.get(3),
+        book_id: r.get(4),
+        book_title: r.get(5),
+        book_category: r.get(6),
+        book_surahs: r.get(7),
+        book_total_pages: r.get(8),
+        start_surah: r.get(9),
+        start_unit: r.get(10),
+        end_surah: r.get(11),
+        end_unit: r.get(12),
+        current_surah: r.get(13),
+        current_unit: r.get(14),
+    }
+}
+
+/// Kurikulum BANYAK kelas sekaligus → `class_id` → barisnya, urut `order_index`.
+///
+/// Ada karena `service::kelas::kelas_saya` dulu memanggil versi satu-kelas di
+/// dalam loop: tiga query DAN tiga pengambilan koneksi pool untuk SETIAP kelas.
+/// Seorang wali dengan delapan kelas membayar 24 perjalanan ke database tiap
+/// kali membuka halamannya, dan jumlah kelas seseorang tak dibatasi apa pun.
+///
+/// Kelas tanpa baris kurikulum TIDAK muncul di peta — pemanggil memakai
+/// `unwrap_or_default()`, sama seperti versi satu-kelas mengembalikan Vec kosong.
+pub async fn class_curriculum_many(
+    pool: &Pool,
+    class_ids: &[i64],
+) -> Result<std::collections::HashMap<i64, Vec<CurriculumRow>>> {
+    if class_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let c = pool.get().await?;
+    let rows = c
+        .query(
+            // `class_id` didahulukan di ORDER BY supaya baris tiap kelas datang
+            // berurutan; urutan DI DALAM kelas tetap `order_index, id` seperti
+            // semula, dan pengelompokan di bawah mempertahankannya apa adanya.
+            &format!("{CURRICULUM_SELECT} WHERE cu.class_id = ANY($1::bigint[]) \
+                      ORDER BY cu.class_id, cu.order_index, cu.id"),
+            &[&class_ids],
         )
         .await
-        .context("class_curriculum")?;
-    Ok(rows
-        .into_iter()
-        .map(|r| CurriculumRow {
-            id: r.get(0),
-            title: r.get(1),
-            order_index: r.get(2),
-            book_id: r.get(3),
-            book_title: r.get(4),
-            book_category: r.get(5),
-            book_surahs: r.get(6),
-            book_total_pages: r.get(7),
-            start_surah: r.get(8),
-            start_unit: r.get(9),
-            end_surah: r.get(10),
-            end_unit: r.get(11),
-            current_surah: r.get(12),
-            current_unit: r.get(13),
-        })
-        .collect())
+        .context("class_curriculum_many")?;
+    let mut out: std::collections::HashMap<i64, Vec<CurriculumRow>> =
+        std::collections::HashMap::new();
+    for r in &rows {
+        out.entry(r.get(0)).or_default().push(map_curriculum(r));
+    }
+    Ok(out)
+}
+
+/// Kurikulum SATU kelas. Dibangun di atas versi banyak-kelas supaya SQL dan
+/// pemeta barisnya cuma ada satu salinan.
+pub async fn class_curriculum(pool: &Pool, class_id: i64) -> Result<Vec<CurriculumRow>> {
+    Ok(class_curriculum_many(pool, &[class_id])
+        .await?
+        .remove(&class_id)
+        .unwrap_or_default())
 }
 
 /// Rentang materi kurikulum (migrasi 57).

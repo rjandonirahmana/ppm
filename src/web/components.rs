@@ -1780,7 +1780,6 @@ pub fn LencanaAdmin() -> impl IntoView {
 
 // ── Utilitas bersama halaman ─────────────────────────────────────────────────
 
-/// Ambil bagian pesan galat yang layak dibaca pengguna.
 // ── Warna status kehadiran ───────────────────────────────────────────────────
 //
 // Pemetaan status → warna dulu disalin di TUJUH halaman (riwayat, ortu_riwayat,
@@ -1855,6 +1854,7 @@ pub fn aksen_kehadiran(kind: &str) -> &'static str {
 // mengubah tampilan halaman yang sudah benar sekaligus memaksa font tumbuh —
 // dua hal yang tak diminta siapa pun.
 
+/// Ambil bagian pesan galat yang layak dibaca pengguna.
 ///
 /// `ServerFnError` merangkai konteksnya dengan ": " (mis.
 /// "error running server function: Poin telat wajib diisi"). Yang berguna cuma

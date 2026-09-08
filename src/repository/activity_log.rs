@@ -22,6 +22,33 @@ pub async fn insert_log(
     Ok(())
 }
 
+/// Catat SATU tindakan atas BANYAK sasaran sekaligus — pelaku, aksi, dan
+/// keterangannya sama, yang berbeda hanya siapa yang dikenai.
+///
+/// Bentuknya begini karena itulah kejadian yang sesungguhnya di
+/// `service::admin::serahkan_ketua`: satu penyerahan jabatan menurunkan
+/// beberapa orang, dan mencatatnya di dalam loop berarti satu INSERT per orang.
+pub async fn insert_log_many(
+    pool: &Pool,
+    actor_id: i64,
+    target_ids: &[i64],
+    action: &str,
+    detail: Option<&str>,
+) -> Result<()> {
+    if target_ids.is_empty() {
+        return Ok(());
+    }
+    let c = pool.get().await?;
+    c.execute(
+        "INSERT INTO activity_logs (actor_id, target_user_id, action, detail) \
+         SELECT $1, t, $3, $4 FROM unnest($2::bigint[]) AS t",
+        &[&actor_id, &target_ids, &action, &detail],
+    )
+    .await
+    .context("insert_log_many")?;
+    Ok(())
+}
+
 pub struct ActivityLogRow {
     pub actor_name: Option<String>,
     pub target_name: Option<String>,

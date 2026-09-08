@@ -2,9 +2,152 @@ name: Rust Docker CI/CD
 on:
   push:
     branches: ["main"]
+  # Pull request TIDAK men-deploy apa pun — hanya job `test` yang jalan (job
+  # `build-and-push` disaring `if` di bawah). Tanpa ini, satu-satunya kesempatan
+  # menjalankan tes adalah SESUDAH kodenya masuk main, yaitu sesudah terlambat.
+  pull_request:
+    branches: ["main"]
+
 jobs:
+  # ── GERBANG: tes + lint, WAJIB hijau sebelum apa pun ter-deploy ─────────────
+  #
+  # Proyek ini punya ±297 tes, termasuk tests/sql_repository.rs yang ditulis
+  # khusus setelah dua kerusakan produksi 14 Agustus 2026 (kolom bergeser,
+  # placeholder yatim) — dua-duanya lolos `cargo check`. Jaring itu tak ada
+  # gunanya kalau tak pernah dipasang di jalan masuk: sebelum job ini ada, push
+  # ke main yang tesnya merah tetap ter-build dan ter-deploy tanpa hambatan.
+  #
+  # Toolchain diambil dari rust-toolchain.toml (nightly yang dipin), jadi
+  # tesnya berjalan di kompilator yang SAMA dengan yang membangun image.
+  test:
+    runs-on: ubuntu-latest
+
+    # Postgres sungguhan untuk tests/skema_postgres.rs. Tanpa ini tes itu
+    # melewati dirinya sendiri dan nama kolom yang salah ketik tetap lolos
+    # sampai produksi — persis lubang yang disebut di kepala berkas itu.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ppm
+          POSTGRES_PASSWORD: ppm
+          POSTGRES_DB: ppm_test
+        ports: ["5432:5432"]
+        # Tanpa health-check, langkah migrasi bisa mulai sebelum Postgres siap
+        # menerima koneksi, dan gagal dengan "connection refused" yang terlihat
+        # seperti salah konfigurasi.
+        options: >-
+          --health-cmd "pg_isready -U ppm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgres://ppm:ppm@localhost:5432/ppm_test
+      # `[profile.dev]` menyalakan `incremental = true`, dan komentar panjang di
+      # Cargo.toml sudah menerangkan akibatnya: artefak inkremental yang basi
+      # menghasilkan kegagalan LINK ("undefined symbol: anon.<hash>.llvm") pada
+      # kode yang `cargo check`-nya bersih. Komentar itu menutup dengan "Workflow
+      # sudah menyetel CARGO_INCREMENTAL=0 — biarkan begitu."
+      #
+      # Sampai baris ini ditulis, TIDAK ADA yang menyetelnya, di mana pun. Build
+      # CI selalu dingin sehingga inkremental tak menghemat apa pun di sini,
+      # sementara ia tetap membuka pintu bagi kegagalan link yang tak berhubungan
+      # dengan perubahan siapa pun. Sekarang kalimat di Cargo.toml itu benar.
+      CARGO_INCREMENTAL: 0
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup membaca rust-toolchain.toml sendiri; `rustup show` yang memicu
+      # pemasangannya beserta komponen rustfmt+clippy dan target wasm32.
+      - name: Pasang toolchain (dari rust-toolchain.toml)
+        run: rustup show
+
+      # Cache berbasis Cargo.lock. Tanpa ini tiap PR mengompilasi ulang seluruh
+      # pohon dependensi Leptos dari nol — belasan menit untuk menjalankan tes
+      # yang hitungan detik.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-test
+
+      # `cargo fmt --check` SENGAJA TIDAK DIJADIKAN GERBANG.
+      #
+      # Diuji sebelum diputuskan: rustfmt ingin mengubah 761 tempat di 126
+      # berkas — pada kode yang sudah ada, bukan kode baru. Sebagian besar
+      # adalah hal yang di proyek ini justru ditata dengan tangan karena
+      # alasannya jelas: literal SQL multi-baris yang kolomnya disejajarkan
+      # supaya `r.get(n)` bisa dihitung mata, dan blok komentar panjang yang
+      # merapat ke kode yang dijelaskannya. rustfmt (style edition 2024) juga
+      # mengurutkan ulang setiap `use` — perubahan murni kosmetik yang akan
+      # mengubur perubahan sungguhan di setiap diff sesudahnya.
+      #
+      # Menyalakannya berarti satu commit raksasa tanpa manfaat perilaku, lalu
+      # riwayat git yang lebih sulit dibaca selamanya. Yang diperiksa di bawah
+      # adalah hal yang bisa SALAH, bukan hal yang bisa terlihat beda.
+
+      # ── KENAPA BUKAN `-D warnings` ───────────────────────────────────────
+      #
+      # Diuji sebelum diputuskan: clippy punya 88 peringatan pada kode yang
+      # sudah ada. Nol di antaranya di grup `correctness`; semuanya soal gaya
+      # dan kerumitan (`too_many_arguments` pada fungsi yang argumennya memang
+      # sebanyak itu, `type_complexity` pada peta hasil query, `unused_unit`
+      # yang keluar dari dalam makro `view!` Leptos dan bukan milik kita).
+      #
+      # `-D warnings` berarti gerbangnya merah sejak hari pertama, dan gerbang
+      # yang merah sejak hari pertama akan dimatikan orang dalam sepekan —
+      # sesudah itu ia tak menangkap apa pun lagi.
+      #
+      # Yang di-DENY adalah dua grup yang isinya "ini hampir pasti bug":
+      # `correctness` (kode yang jelas salah) dan `suspicious` (kode yang
+      # bentuknya menandakan salah ketik). Keduanya HIJAU hari ini — tiga
+      # temuan `suspicious` yang ada ternyata komentar dokumentasi yatim, dan
+      # sudah dibetulkan. Sisa peringatan tetap tercetak di log sebagai
+      # peringatan, jadi tak ada yang disembunyikan.
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D clippy::correctness -D clippy::suspicious
+
+      # Seluruh 93 migrasi diterapkan dari NOL ke database kosong. Ini
+      # sekaligus menguji hal yang selama ini tak pernah diuji: bahwa urutan
+      # migrasi memang bisa diputar ulang dari awal. Kalau ada migrasi yang
+      # diam-diam bergantung pada data produksi, ia gagal DI SINI — bukan saat
+      # seseorang menyiapkan server baru.
+      - name: Terapkan migrasi
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: ./scripts/migrate.sh up
+
+      - name: Tes
+        run: cargo test --all-targets
+
+      # Sisi WASM tak ikut terperiksa oleh tiga langkah di atas: semuanya
+      # dikompilasi untuk target host dengan fitur `ssr`. Kode di balik
+      # `#[cfg(feature = "hydrate")]` baru terbukti kompilasi di sini — dan
+      # kalau ia patah, halamannya tetap ter-render SSR tapi tak pernah
+      # terhidrasi, yang di layar terlihat sebagai "tombolnya tak bisa diklik".
+      - name: Periksa target hydrate (wasm32)
+        run: cargo check --lib --target wasm32-unknown-unknown --no-default-features --features hydrate
+
+      # Migrasi tak boleh punya dua berkas bernomor sama: scripts/migrate.sh
+      # melacaknya lewat `version` yang jadi PRIMARY KEY, jadi nomor kembar
+      # berarti migrasi kedua DIAM-DIAM tak pernah jalan di produksi.
+      - name: Nomor migrasi unik
+        run: |
+          set -euo pipefail
+          kembar=$(ls migration/*.sql | xargs -n1 basename \
+                   | sed -E 's/^([0-9]+).*/\1/' | sort -n | uniq -d)
+          if [ -n "$kembar" ]; then
+            echo "Nomor migrasi kembar: $kembar"
+            exit 1
+          fi
+          echo "Nomor migrasi unik."
+
   build-and-push:
     runs-on: ubuntu-latest
+    # Gerbangnya di sini: build & deploy tak pernah mulai kalau tes merah.
+    needs: test
+    # Pull request berhenti di job `test`. Deploy hanya dari push ke main.
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -50,7 +193,29 @@ jobs:
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
-          password: ${{ secrets.SERVER_PASSWORD }}
+          # ── KUNCI, BUKAN SANDI ────────────────────────────────────────
+          #
+          # Sebelumnya `password: ${{ secrets.SERVER_PASSWORD }}`. Itu bukan
+          # sekadar pilihan gaya: agar bekerja, sshd server WAJIB menyalakan
+          # `PasswordAuthentication yes` — dan begitu ia menyala, port 22 milik
+          # server menerima tebakan sandi dari seluruh internet, terus-menerus,
+          # dari siapa pun. Yang dilindungi di balik pintu itu bukan cuma
+          # aplikasi ini: berkas `/opt/ppm/deploy.txt` memuat SELURUH env
+          # rahasia produksi (DATABASE_URL, JWT_SECRET, kunci RustFS).
+          #
+          # LANGKAH DI SERVER (sekali, sebelum push berikutnya):
+          #   1. Buat kunci khusus deploy — jangan pakai kunci pribadi:
+          #        ssh-keygen -t ed25519 -C "gh-actions-ppm" -f ~/.ssh/ppm_deploy -N ""
+          #   2. Pasang publiknya:
+          #        cat ~/.ssh/ppm_deploy.pub >> ~/.ssh/authorized_keys
+          #   3. Simpan ISI ~/.ssh/ppm_deploy (privat, termasuk baris BEGIN/END)
+          #      sebagai secret repo bernama SERVER_SSH_KEY.
+          #   4. Uji dari mesin lain, lalu di /etc/ssh/sshd_config setel
+          #        PasswordAuthentication no
+          #      dan `systemctl reload sshd`. Jangan lakukan langkah 4 sebelum
+          #      langkah 3 terbukti jalan — kalau tidak, tak ada jalan masuk.
+          #   5. Hapus secret SERVER_PASSWORD yang lama.
+          key: ${{ secrets.SERVER_SSH_KEY }}
           # `script_stop` + `set -e`: tanpa keduanya, satu perintah yang gagal
           # di tengah tetap berakhir dengan status 0 dan deploy dilaporkan
           # BERHASIL padahal containernya tak pernah naik.

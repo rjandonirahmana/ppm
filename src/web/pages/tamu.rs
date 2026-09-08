@@ -239,7 +239,7 @@ pub fn TamuPage() -> impl IntoView {
                     } else {
                         // ── STATE 1: form data diri ───────────────────────────
                         view! {
-                            <form class="ppm-card p-6 space-y-4" on:submit=submit>
+                            <form class="ppm-card p-6 space-y-4" method="post" on:submit=submit>
                                 {move || {
                                     (!err.get().is_empty())
                                         .then(|| view! {

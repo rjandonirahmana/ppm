@@ -317,12 +317,23 @@ pub struct PengajuanAnak {
 /// mengirim dua kali berarti ia harus memotret bukti yang sama dua kali dan
 /// pengurus menerima dua kiriman yang tak terlihat berhubungan.
 ///
-/// SATU TRANSAKSI. Kalau baris kedua gagal, yang pertama ikut dibatalkan:
+/// SEMUA-ATAU-TIDAK SAMA SEKALI. Kalau satu baris gagal, tak ada yang tersimpan:
 /// kiriman separuh masuk jauh lebih buruk daripada gagal seluruhnya — keluarga
 /// melihat satu anak tercatat dan menyimpulkan yang lain hilang, lalu mengirim
 /// ulang, dan setorannya tercatat dua kali.
 ///
+/// Jaminan itu dulu ditegakkan transaksi eksplisit yang membungkus satu INSERT
+/// per anak. Sekarang seluruhnya SATU pernyataan, dan satu pernyataan SQL sudah
+/// atomik dengan sendirinya — jaminannya sama persis, tanpa N perjalanan
+/// bolak-balik ke database. (Benturan `uq_bills_pengajuan_menunggu` pun tetap
+/// membatalkan seluruh kiriman, seperti sebelumnya.)
+///
 /// `proof_url` sengaja SAMA untuk semua baris: buktinya memang satu lembar.
+///
+/// Urutan `id` yang dikembalikan TIDAK dijamin sepadan dengan urutan `items` —
+/// `RETURNING` bebas menentukan urutannya. Itu tak apa: pemanggilnya
+/// (`web::bills`) meneruskannya sebagai daftar dan jumlah, bukan memasangkannya
+/// kembali ke anak tertentu.
 pub async fn ajukan_pembayaran_batch(
     pool: &Pool,
     items: &[PengajuanAnak],
@@ -330,27 +341,25 @@ pub async fn ajukan_pembayaran_batch(
     proof_url: &str,
     catatan: &str,
 ) -> Result<Vec<i64>> {
-    let mut c = pool.get().await?;
-    let tx = c.transaction().await.context("ajukan_batch: begin")?;
-    let stmt = tx
-        .prepare(
+    if items.is_empty() {
+        return Ok(Vec::new());
+    }
+    let user_ids: Vec<i64> = items.iter().map(|i| i.student_id).collect();
+    let amounts: Vec<i64> = items.iter().map(|i| i.amount).collect();
+
+    let c = pool.get().await?;
+    let rows = c
+        .query(
             "INSERT INTO bills (user_id, title, price, status, proof_url, note, \
                                 submitted_by, submitted_at) \
-             VALUES ($1, 'Pengajuan pembayaran', $2, 'menunggu', $3, $4, $5, NOW()) \
+             SELECT t.u, 'Pengajuan pembayaran', t.p, 'menunggu', $3, $4, $5, NOW() \
+               FROM unnest($1::bigint[], $2::bigint[]) AS t(u, p) \
              RETURNING id",
+            &[&user_ids, &amounts, &proof_url, &catatan, &submitted_by],
         )
         .await
-        .context("ajukan_batch: prepare")?;
-    let mut ids = Vec::with_capacity(items.len());
-    for it in items {
-        let row = tx
-            .query_one(&stmt, &[&it.student_id, &it.amount, &proof_url, &catatan, &submitted_by])
-            .await
-            .context("ajukan_batch: insert")?;
-        ids.push(row.get(0));
-    }
-    tx.commit().await.context("ajukan_batch: commit")?;
-    Ok(ids)
+        .context("ajukan_batch: insert")?;
+    Ok(rows.iter().map(|r| r.get(0)).collect())
 }
 
 /// Apakah galat ini benturan dengan `uq_bills_pengajuan_menunggu` (migrasi 76)?

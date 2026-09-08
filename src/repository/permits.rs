@@ -21,30 +21,57 @@ pub struct PermitNotifyTargets {
     pub wali_phone: Option<String>,
 }
 
-/// Wali kelas yang harus diberi tahu bahwa ada izin baru di kelasnya.
-pub async fn permit_notify_targets(
+/// Wali kelas yang harus diberi tahu bahwa ada izin baru — untuk BANYAK kelas
+/// sekaligus. Return `class_id` → targetnya.
+///
+/// Satu izin bisa terpecah ke banyak kelas (migrasi 46), dan pemanggilnya
+/// (`service::permits::notify_permit_splits`) memutari pecahan itu. Versi
+/// satu-kelas di dalam loop berarti satu query per kelas terdampak — izin tiga
+/// hari bisa menyentuh belasan.
+///
+/// Kelas `NULL` (izin tanpa kelas tertentu) dipetakan ke kunci `0`: pemanggil
+/// yang membawa `class_id: None` mencarinya di situ. Nol bukan id kelas yang
+/// sah, jadi tak mungkin bertabrakan dengan kelas sungguhan.
+pub async fn permit_notify_targets_many(
     pool: &Pool,
     student_id: i64,
-    class_id: Option<i64>,
-) -> Result<Option<PermitNotifyTargets>> {
+    class_ids: &[Option<i64>],
+) -> Result<std::collections::HashMap<i64, PermitNotifyTargets>> {
+    if class_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    // None → 0 supaya seluruh daftar bisa dikirim sebagai satu larik bigint.
+    // `LEFT JOIN classes tc ON tc.id = k` tak akan pernah cocok untuk 0, jadi
+    // perilakunya sama persis dengan `$2 = NULL` pada versi lama: jatuh ke
+    // wali kelas utama santri lewat lateral di bawah.
+    let kunci: Vec<i64> = class_ids.iter().map(|c| c.unwrap_or(0)).collect();
     let c = pool.get().await?;
     let sql = format!(
-        "SELECT u.full_name, w.phone_number \
-           FROM users u \
-           LEFT JOIN classes tc ON tc.id = $2 \
+        "SELECT k.kelas, u.full_name, w.phone_number \
+           FROM unnest($2::bigint[]) AS k(kelas) \
+           CROSS JOIN users u \
+           LEFT JOIN classes tc ON tc.id = k.kelas \
            {kelas} \
            LEFT JOIN users w ON w.id = COALESCE(tc.wali_kelas_id, cl.wali_kelas_id) \
           WHERE u.id = $1",
         kelas = super::kelas_utama_lateral("u.id"),
     );
-    let row = c
-        .query_opt(&sql, &[&student_id, &class_id])
+    let rows = c
+        .query(&sql, &[&student_id, &kunci])
         .await
-        .context("permit_notify_targets")?;
-    Ok(row.map(|r| PermitNotifyTargets {
-        student_name: r.get(0),
-        wali_phone: r.get(1),
-    }))
+        .context("permit_notify_targets_many")?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            (
+                r.get::<_, i64>(0),
+                PermitNotifyTargets {
+                    student_name: r.get(1),
+                    wali_phone: r.get(2),
+                },
+            )
+        })
+        .collect())
 }
 
 pub struct KelasKbmSantri {
@@ -334,9 +361,10 @@ pub struct PermitDetailRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-pub async fn permit_detail(pool: &Pool, permit_id: i64) -> Result<Option<PermitDetailRow>> {
-    let c = pool.get().await?;
-    let sql = format!(
+/// Badan query detail izin. Satu salinan, dipakai versi satu-baris dan
+/// versi banyak-baris — yang berbeda hanya klausa WHERE-nya.
+fn permit_detail_sql(where_clause: &str) -> String {
+    format!(
         "SELECT p.id, p.user_id, u.full_name, p.type, p.reason, \
                 p.start_time, p.end_time, p.guru_status, \
                 COALESCE(tc.name, cl.name), \
@@ -348,11 +376,13 @@ pub async fn permit_detail(pool: &Pool, permit_id: i64) -> Result<Option<PermitD
          LEFT JOIN classes tc ON tc.id = p.class_id \
          {kelas} \
          LEFT JOIN users w ON w.id = COALESCE(p.wali_kelas_id, tc.wali_kelas_id, cl.wali_kelas_id) \
-         WHERE p.id = $1",
+         WHERE {where_clause}",
         kelas = super::kelas_utama_lateral("p.user_id"),
-    );
-    let row = c.query_opt(&sql, &[&permit_id]).await.context("permit_detail")?;
-    Ok(row.map(|r| PermitDetailRow {
+    )
+}
+
+fn map_permit_detail(r: &tokio_postgres::Row) -> PermitDetailRow {
+    PermitDetailRow {
         id: r.get(0),
         user_id: r.get(1),
         student_name: r.get(2),
@@ -368,7 +398,35 @@ pub async fn permit_detail(pool: &Pool, permit_id: i64) -> Result<Option<PermitD
         requester_name: r.get::<_, Option<String>>(12).unwrap_or_default(),
         requester_role: r.get::<_, Option<String>>(13).unwrap_or_default(),
         created_at: r.get(14),
-    }))
+    }
+}
+
+/// Detail BANYAK pengajuan izin sekaligus.
+///
+/// Ada karena `service::notifications::izin_diajukan` menerima `&[i64]` lalu
+/// memutarinya: satu query detail DAN satu insert notifikasi per pengajuan.
+/// Hari ini isinya selalu satu baris (migrasi 65), tapi bentuk jamaknya sengaja
+/// dipertahankan — dan bentuk jamak yang di dalamnya berisi loop query adalah
+/// N+1 yang cuma sedang menunggu datanya bertambah.
+pub async fn permit_detail_many(pool: &Pool, permit_ids: &[i64]) -> Result<Vec<PermitDetailRow>> {
+    if permit_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let c = pool.get().await?;
+    let rows = c
+        .query(&permit_detail_sql("p.id = ANY($1::bigint[])"), &[&permit_ids])
+        .await
+        .context("permit_detail_many")?;
+    Ok(rows.iter().map(map_permit_detail).collect())
+}
+
+pub async fn permit_detail(pool: &Pool, permit_id: i64) -> Result<Option<PermitDetailRow>> {
+    let c = pool.get().await?;
+    let row = c
+        .query_opt(&permit_detail_sql("p.id = $1"), &[&permit_id])
+        .await
+        .context("permit_detail")?;
+    Ok(row.as_ref().map(map_permit_detail))
 }
 
 /// Ubah isi pengajuan izin yang MASIH menunggu keputusan.
